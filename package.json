@@ -2,8 +2,8 @@
   "name": "codex-login",
   "displayName": "Codex login",
   "version": "0.0.1",
-  "description": "A basic Plasmo extension.",
-  "author": "Plasmo Corp. <foss@plasmo.com>",
+  "description": "code-login",
+  "author": "xuhq",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",

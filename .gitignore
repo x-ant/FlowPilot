@@ -31,3 +31,9 @@ dist/
 
 # typescript
 .tsbuildinfo
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
