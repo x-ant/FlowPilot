@@ -10,6 +10,7 @@
     "package": "plasmo package"
   },
   "dependencies": {
+    "antd": "^6.4.4",
     "plasmo": "0.90.5",
     "react": "18.2.0",
     "react-dom": "18.2.0"
@@ -21,11 +22,18 @@
     "@types/react": "18.2.48",
     "@types/react-dom": "18.2.18",
     "prettier": "3.2.4",
-    "typescript": "5.3.3"
+    "typescript": "5.9"
   },
   "manifest": {
+    "permissions": [
+      "sidePanel",
+      "storage"
+    ],
     "host_permissions": [
       "https://*/*"
-    ]
+    ],
+    "action": {
+      "default_title": "Codex login"
+    }
   }
 }
