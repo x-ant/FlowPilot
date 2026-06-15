@@ -27,9 +27,12 @@
   "manifest": {
     "permissions": [
       "sidePanel",
-      "storage"
+      "storage",
+      "tabs",
+      "scripting"
     ],
     "host_permissions": [
+      "http://192.168.10.10:8317/*",
       "https://*/*"
     ],
     "action": {

@@ -34,6 +34,13 @@ type Stats = {
   failed: number
 }
 
+type StartCodexLoginResponse = {
+  ok: boolean
+  message: string
+  tabId?: number
+  url?: string
+}
+
 const STORAGE_KEY = "codex-login:settings"
 
 const initialStats: Stats = {
@@ -50,13 +57,14 @@ const getStorage = () => {
   return chrome.storage.local
 }
 
-const getTime = () =>
-  new Intl.DateTimeFormat("zh-CN", {
+const getTime = () => {
+  return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false
   }).format(new Date())
+}
 
 const maskEmail = (email?: string) => {
   if (!email) {
@@ -72,6 +80,42 @@ const maskEmail = (email?: string) => {
   return `${visibleName}${name.length > 3 ? "***" : "*"}@${domain}`
 }
 
+const sendStartCodexLogin = (loginUrl: string) => {
+  return new Promise<StartCodexLoginResponse>((resolve) => {
+    if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+      resolve({
+        ok: false,
+        message: "当前环境无法调用 Chrome 扩展后台脚本"
+      })
+      return
+    }
+
+    chrome.runtime.sendMessage(
+      {
+        type: "codex-login:start",
+        payload: { loginUrl }
+      },
+      (response?: StartCodexLoginResponse) => {
+        const error = chrome.runtime.lastError
+        if (error) {
+          resolve({
+            ok: false,
+            message: error.message || "后台脚本未响应"
+          })
+          return
+        }
+
+        resolve(
+          response ?? {
+            ok: false,
+            message: "后台脚本未返回执行结果"
+          }
+        )
+      }
+    )
+  })
+}
+
 function SidePanel() {
   const [form] = Form.useForm<Settings>()
   const [status, setStatus] = useState("准备就绪")
@@ -82,14 +126,16 @@ function SidePanel() {
   const storage = useMemo(getStorage, [])
 
   const addLog = (message: string) => {
-    setLogs((current) => [
-      {
-        id: `${Date.now()}-${current.length}`,
-        time: getTime(),
-        message
-      },
-      ...current
-    ])
+    setLogs((current) => {
+      return [
+        {
+          id: `${Date.now()}-${current.length}`,
+          time: getTime(),
+          message
+        },
+        ...current
+      ]
+    })
   }
 
   useEffect(() => {
@@ -107,24 +153,53 @@ function SidePanel() {
   }
 
   const handleRun = async () => {
+    let account = "未填写账号"
+
     try {
       setLoading(true)
       const values = await form.validateFields()
-      const account = maskEmail(values.email)
+      account = maskEmail(values.email)
 
-      setStatus("已接收执行请求")
-      setStats((current) => ({
-        ...current,
-        total: current.total + 1
-      }))
-      addLog(`${account} 表单校验通过，自动登录流程待接入`)
+      setStatus("正在打开 Codex 管理页")
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1
+        }
+      })
+      addLog(`${account} 表单校验通过，准备点击登录入口`)
+
+      const result = await sendStartCodexLogin(values.loginUrl)
+
+      if (!result.ok) {
+        setStatus("登录入口点击失败")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        addLog(`${account} ${result.message}`)
+        return
+      }
+
+      setStatus("已触发 Codex 登录")
+      setStats((current) => {
+        return {
+          ...current,
+          success: current.success + 1
+        }
+      })
+      addLog(`${account} ${result.message}`)
     } catch {
       setStatus("表单需要补充")
-      setStats((current) => ({
-        ...current,
-        total: current.total + 1,
-        failed: current.failed + 1
-      }))
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1,
+          failed: current.failed + 1
+        }
+      })
       addLog("登录地址、2925 邮箱和密码不能为空")
     } finally {
       setLoading(false)
@@ -226,12 +301,14 @@ function SidePanel() {
             }>
             {logs.length > 0 ? (
               <div className="log-list">
-                {logs.map((log) => (
-                  <div className="log-row" key={log.id}>
-                    <span className="log-time">{log.time}</span>
-                    <span className="log-message">{log.message}</span>
-                  </div>
-                ))}
+                {logs.map((log) => {
+                  return (
+                    <div className="log-row" key={log.id}>
+                      <span className="log-time">{log.time}</span>
+                      <span className="log-message">{log.message}</span>
+                    </div>
+                  )
+                })}
               </div>
             ) : (
               <Empty
