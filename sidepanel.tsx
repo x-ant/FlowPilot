@@ -42,6 +42,7 @@ type StartCodexLoginResponse = {
 }
 
 const STORAGE_KEY = "codex-login:settings"
+const STEP_CLICK_CODEX_LOGIN = "click-codex-login"
 
 const initialStats: Stats = {
   total: 0,
@@ -121,7 +122,7 @@ function SidePanel() {
   const [status, setStatus] = useState("准备就绪")
   const [stats, setStats] = useState(initialStats)
   const [logs, setLogs] = useState<LogItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [runningStep, setRunningStep] = useState<string | null>(null)
 
   const storage = useMemo(getStorage, [])
 
@@ -152,13 +153,15 @@ function SidePanel() {
     storage?.set({ [STORAGE_KEY]: values })
   }
 
-  const handleRun = async () => {
-    let account = "未填写账号"
-
+  const handleClickCodexLoginStep = async () => {
     try {
-      setLoading(true)
-      const values = await form.validateFields()
-      account = maskEmail(values.email)
+      setRunningStep(STEP_CLICK_CODEX_LOGIN)
+      const values = await form.validateFields(["loginUrl"])
+      const loginUrl = values.loginUrl?.trim()
+
+      if (!loginUrl) {
+        throw new Error("Codex 登录地址不能为空")
+      }
 
       setStatus("正在打开 Codex 管理页")
       setStats((current) => {
@@ -167,32 +170,32 @@ function SidePanel() {
           total: current.total + 1
         }
       })
-      addLog(`${account} 表单校验通过，准备点击登录入口`)
+      addLog("步骤 1 准备点击“开始codex登录”按钮")
 
-      const result = await sendStartCodexLogin(values.loginUrl)
+      const result = await sendStartCodexLogin(loginUrl)
 
       if (!result.ok) {
-        setStatus("登录入口点击失败")
+        setStatus("步骤 1 执行失败")
         setStats((current) => {
           return {
             ...current,
             failed: current.failed + 1
           }
         })
-        addLog(`${account} ${result.message}`)
+        addLog(`步骤 1 ${result.message}`)
         return
       }
 
-      setStatus("已触发 Codex 登录")
+      setStatus("步骤 1 已完成")
       setStats((current) => {
         return {
           ...current,
           success: current.success + 1
         }
       })
-      addLog(`${account} ${result.message}`)
+      addLog(`步骤 1 ${result.message}`)
     } catch {
-      setStatus("表单需要补充")
+      setStatus("步骤 1 需要登录地址")
       setStats((current) => {
         return {
           ...current,
@@ -200,9 +203,9 @@ function SidePanel() {
           failed: current.failed + 1
         }
       })
-      addLog("登录地址、2925 邮箱和密码不能为空")
+      addLog("步骤 1 Codex 登录地址不能为空")
     } finally {
-      setLoading(false)
+      setRunningStep(null)
     }
   }
 
@@ -263,15 +266,24 @@ function SidePanel() {
                 <Input.Password placeholder="请输入密码" />
               </Form.Item>
 
-              <Button
-                className="primary-action"
-                type="primary"
-                size="large"
-                loading={loading}
-                onClick={handleRun}>
-                执行
-              </Button>
             </Form>
+          </Card>
+
+          <Card className="panel-card" title="执行步骤">
+            <div className="step-list">
+              <div className="step-row">
+                <div className="step-copy">
+                  <span className="step-index">步骤 1</span>
+                  <span className="step-title">点击开始codex登录</span>
+                </div>
+                <Button
+                  type="primary"
+                  loading={runningStep === STEP_CLICK_CODEX_LOGIN}
+                  onClick={handleClickCodexLoginStep}>
+                  执行
+                </Button>
+              </div>
+            </div>
           </Card>
 
           <Card className="panel-card" title="执行统计">
