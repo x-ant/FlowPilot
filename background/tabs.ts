@@ -6,6 +6,7 @@
  *
  * @param tabId 要等待的 Chrome 标签页 id
  * @param timeoutMs 最大等待时间，单位毫秒
+ * @return 等待完成后 resolve 的 Promise。
  */
 export const waitForTabLoaded = (tabId: number, timeoutMs = 15000) => {
   return new Promise<void>((resolve) => {
@@ -51,7 +52,7 @@ export const waitForTabLoaded = (tabId: number, timeoutMs = 15000) => {
  * 和 /management.html#/oauth 会被认为是同一个管理页。
  *
  * @param value 原始 URL 字符串
- * @returns 用于匹配标签页的基础 URL
+ * @return 用于匹配标签页的基础 URL。
  */
 export const normalizeUrlForTabMatch = (value: string) => {
   const url = new URL(value)
@@ -65,7 +66,7 @@ export const normalizeUrlForTabMatch = (value: string) => {
  * chrome.scripting.executeScript 用来指定脚本注入目标。
  *
  * @param loginUrl 侧边栏里填写的 Codex 登录地址
- * @returns 可以注入脚本的 Chrome 标签页 id
+ * @return 可以注入脚本的 Chrome 标签页 id。
  */
 export const findOrOpenTab = async (loginUrl: string) => {
   const targetBaseUrl = normalizeUrlForTabMatch(loginUrl)

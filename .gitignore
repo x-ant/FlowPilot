@@ -30,7 +30,7 @@ dist/
 .plasmo
 
 # typescript
-.tsbuildinfo
+*.tsbuildinfo
 
 ### IntelliJ IDEA ###
 .idea

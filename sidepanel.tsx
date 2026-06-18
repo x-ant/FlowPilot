@@ -55,6 +55,13 @@ const initialStats: Stats = {
   failed: 0
 }
 
+/**
+ * 获取 Chrome 扩展的本地存储对象。
+ *
+ * 这里先做环境判断，避免在非扩展环境下直接访问 chrome.storage 导致报错。
+ *
+ * @return Chrome 扩展本地存储对象；如果当前环境不是扩展环境则返回 null。
+ */
 const getStorage = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) {
     return null
@@ -63,6 +70,11 @@ const getStorage = () => {
   return chrome.storage.local
 }
 
+/**
+ * 生成当前时间字符串，用于日志显示。
+ *
+ * @return 按 `HH:mm:ss` 格式生成的当前时间字符串。
+ */
 const getTime = () => {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -72,6 +84,12 @@ const getTime = () => {
   }).format(new Date())
 }
 
+/**
+ * 对邮箱做简单脱敏，方便在日志里展示但不直接暴露完整账号。
+ *
+ * @param email 原始邮箱地址。
+ * @return 脱敏后的邮箱字符串；如果没有传入邮箱则返回“未填写账号”。
+ */
 const maskEmail = (email?: string) => {
   if (!email) {
     return "未填写账号"
@@ -86,6 +104,15 @@ const maskEmail = (email?: string) => {
   return `${visibleName}${name.length > 3 ? "***" : "*"}@${domain}`
 }
 
+/**
+ * 向后台发送通用的 Codex 登录控制消息。
+ *
+ * 这个方法把侧边栏和 background 的消息协议统一封装起来，避免重复写 sendMessage。
+ *
+ * @param type 要发送的消息类型。
+ * @param loginUrl 侧边栏里填写的 Codex 登录地址。
+ * @return 后台返回的执行结果；如果发送失败，会返回 ok=false 的错误对象。
+ */
 const sendCodexLoginMessage = (
   type: CodexLoginMessageType,
   loginUrl: string
@@ -125,14 +152,31 @@ const sendCodexLoginMessage = (
   })
 }
 
+/**
+ * 发送“开始 Codex 登录”步骤消息。
+ *
+ * @param loginUrl 侧边栏里填写的 Codex 登录地址。
+ * @return 后台返回的执行结果。
+ */
 const sendStartCodexLogin = (loginUrl: string) => {
   return sendCodexLoginMessage("codex-login:start", loginUrl)
 }
 
+/**
+ * 发送“打开授权链接”步骤消息。
+ *
+ * @param loginUrl 侧边栏里填写的 Codex 登录地址。
+ * @return 后台返回的执行结果。
+ */
 const sendOpenCodexAuthLink = (loginUrl: string) => {
   return sendCodexLoginMessage("codex-login:open-auth-link", loginUrl)
 }
 
+/**
+ * 侧边栏主组件，负责展示表单、执行步骤、统计信息和日志。
+ *
+ * @return React 侧边栏视图组件。
+ */
 function SidePanel() {
   const [form] = Form.useForm<Settings>()
   const [status, setStatus] = useState("准备就绪")
@@ -142,6 +186,12 @@ function SidePanel() {
 
   const storage = useMemo(getStorage, [])
 
+  /**
+   * 把新日志插到列表最前面，便于先看到最新执行结果。
+   *
+   * @param message 要记录的日志内容。
+   * @return 无。
+   */
   const addLog = (message: string) => {
     setLogs((current) => {
       return [
@@ -156,6 +206,7 @@ function SidePanel() {
   }
 
   useEffect(() => {
+    // 页面初始化时尝试读取本地保存的登录配置。
     storage?.get(STORAGE_KEY, (result) => {
       const saved = result?.[STORAGE_KEY] as Settings | undefined
       if (saved) {
@@ -165,10 +216,22 @@ function SidePanel() {
     })
   }, [form, storage])
 
+  /**
+   * 监听表单变化并即时保存到本地。
+   *
+   * @param _ 当前字段变更摘要，保留给 antd Form 使用。
+   * @param values 当前表单完整值。
+   * @return 无。
+   */
   const handleValuesChange = (_: Partial<Settings>, values: Settings) => {
     storage?.set({ [STORAGE_KEY]: values })
   }
 
+  /**
+   * 执行步骤 1：点击“开始 codex 登录”按钮。
+   *
+   * @return 无，执行结果通过状态、统计和日志反馈。
+   */
   const handleClickCodexLoginStep = async () => {
     try {
       setRunningStep(STEP_CLICK_CODEX_LOGIN)
@@ -225,6 +288,11 @@ function SidePanel() {
     }
   }
 
+  /**
+   * 执行步骤 2：先清理旧 cookie，再点击“打开链接”按钮。
+   *
+   * @return 无，执行结果通过状态、统计和日志反馈。
+   */
   const handleOpenAuthLinkStep = async () => {
     try {
       setRunningStep(STEP_OPEN_AUTH_LINK)
@@ -235,14 +303,14 @@ function SidePanel() {
         throw new Error("Codex 登录地址不能为空")
       }
 
-      setStatus("正在打开授权链接")
+      setStatus("正在清理旧登录信息并打开授权链接")
       setStats((current) => {
         return {
           ...current,
           total: current.total + 1
         }
       })
-      addLog("步骤 2 准备点击“打开链接”按钮")
+      addLog("步骤 2 准备清理旧登录信息并点击“打开链接”按钮")
 
       const result = await sendOpenCodexAuthLink(loginUrl)
 
@@ -281,6 +349,11 @@ function SidePanel() {
     }
   }
 
+  /**
+   * 清空当前会话的日志列表。
+   *
+   * @return 无。
+   */
   const handleClearLogs = () => {
     setLogs([])
     setStatus("日志已清空")

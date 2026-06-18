@@ -1,33 +1,38 @@
-This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
+# codex-login
 
-## Getting Started
+这是一个基于 Plasmo 的 Chrome 扩展，目标是做一个个人本地使用的登录辅助工具。
 
-First, run the development server:
+## 项目定位
+
+- 本地学习项目
+- 个人使用
+- Chrome 侧边栏为主
+- 使用 React + TypeScript + Plasmo
+
+## 主要功能
+
+- 保存 Codex 登录地址
+- 保存单个 2925 邮箱账号和密码
+- 自动进入登录流程
+- 自动填写邮箱、密码和验证码
+- 显示执行状态、统计和日志
+
+## 开发命令
 
 ```bash
-pnpm dev
-# or
 npm run dev
-```
-
-Open your browser and load the appropriate development build. For example, if you are developing for the chrome browser, using manifest v3, use: `build/chrome-mv3-dev`.
-
-You can start editing the popup by modifying `popup.tsx`. It should auto-update as you make changes. To add an options page, simply add a `options.tsx` file to the root of the project, with a react component default exported. Likewise to add a content page, add a `content.ts` file to the root of the project, importing some module and do some logic, then reload the extension on your browser.
-
-For further guidance, [visit our Documentation](https://docs.plasmo.com/)
-
-## Making production build
-
-Run the following:
-
-```bash
-pnpm build
-# or
 npm run build
+npm run package
 ```
 
-This should create a production bundle for your extension, ready to be zipped and published to the stores.
+## 入口文件
 
-## Submit to the webstores
+- `sidepanel.tsx`: 侧边栏主界面
+- `background/`: 后台逻辑
+- `assets/`: 图标和静态资源
 
-The easiest way to deploy your Plasmo extension is to use the built-in [bpp](https://bpp.browser.market) GitHub action. Prior to using this action however, make sure to build your extension and upload the first version to the store to establish the basic credentials. Then, simply follow [this setup instruction](https://docs.plasmo.com/framework/workflows/submit) and you should be on your way for automated submission!
+## 说明
+
+- 项目优先在本地使用，不考虑对外分发
+- 文档和代码中如果涉及中文内容，统一按 UTF-8 处理
+- 如果后续新增 SVG 资源，可以再考虑引入 `svgo` 一类的优化工具

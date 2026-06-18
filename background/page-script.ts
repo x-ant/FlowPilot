@@ -10,7 +10,7 @@ import type { ClickPageButtonResult } from "./types"
  * @param timeoutMs 最多等待按钮出现的时间，单位毫秒
  * @param successMessage 点击成功时返回给 background 的提示
  * @param failureMessage 找不到按钮时返回给 background 的提示
- * @returns 点击结果和提示信息
+ * @return 点击结果和提示信息。
  */
 export const clickPageButtonByTextsInPage = (
   buttonTexts: string[],
@@ -20,6 +20,13 @@ export const clickPageButtonByTextsInPage = (
 ): Promise<ClickPageButtonResult> => {
   return new Promise((resolve) => {
     const startedAt = Date.now()
+
+    /**
+     * 统一按钮文案格式，去掉空白并转小写，提升匹配命中率。
+     *
+     * @param value 原始按钮文案。
+     * @return 规范化后的文案。
+     */
     const normalizeText = (value: string) => {
       return value.replace(/\s+/g, "").toLowerCase()
     }
@@ -28,6 +35,11 @@ export const clickPageButtonByTextsInPage = (
     const candidateSelector =
       "button,a,[role='button'],input[type='button'],input[type='submit']"
 
+    /**
+     * 在页面里尝试提取授权链接，方便 background 在需要时直接打开。
+     *
+     * @return 找到时返回授权链接，否则返回 undefined。
+     */
     const findAuthUrl = () => {
       const authLink = document.querySelector(
         'a[href*="auth.openai.com/oauth/authorize"]'
@@ -45,8 +57,12 @@ export const clickPageButtonByTextsInPage = (
       return match?.[0]
     }
 
-    // 同时读取 textContent、aria-label、title 和 input value，
-    // 兼容普通按钮、图标按钮、链接按钮和 input 按钮。
+    /**
+     * 读取按钮可见文案和辅助属性，兼容普通按钮、图标按钮和 input 按钮。
+     *
+     * @param element 页面上的候选元素。
+     * @return 用于匹配的按钮文本。
+     */
     const getElementText = (element: Element) => {
       const inputValue =
         element instanceof HTMLInputElement ? element.value : ""
@@ -63,7 +79,12 @@ export const clickPageButtonByTextsInPage = (
       )
     }
 
-    // 跳过明显不可点击的元素，避免点击禁用态按钮造成误判。
+    /**
+     * 跳过明显不可点击的元素，避免误点禁用态按钮。
+     *
+     * @param element 页面上的候选元素。
+     * @return 如果元素明显不可点击则返回 true。
+     */
     const isUnavailable = (element: Element) => {
       const htmlElement = element as HTMLElement
       return (
@@ -73,6 +94,11 @@ export const clickPageButtonByTextsInPage = (
       )
     }
 
+    /**
+     * 在候选元素里查找文案匹配的按钮。
+     *
+     * @return 匹配到的按钮元素；如果没有找到则返回 undefined。
+     */
     const findButton = () => {
       return Array.from(document.querySelectorAll(candidateSelector)).find(
         (element) => {
@@ -88,7 +114,11 @@ export const clickPageButtonByTextsInPage = (
       ) as HTMLElement | undefined
     }
 
-    // 找到按钮就点击，并把结果返回给 background。
+    /**
+     * 找到按钮就点击，并把结果返回给 background。
+     *
+     * @return 如果已经找到并点击按钮，则返回 true；否则返回 false。
+     */
     const tryClick = () => {
       const button = findButton()
       if (button) {
@@ -118,8 +148,11 @@ export const clickPageButtonByTextsInPage = (
       return
     }
 
-    // 页面可能是前端异步渲染，按钮不一定首次检查就存在；
-    // 这里短轮询最多等待 timeoutMs。
+    /**
+     * 页面可能是异步渲染的，所以用短轮询等待按钮出现。
+     *
+     * @return 无。
+     */
     const intervalId = window.setInterval(() => {
       if (tryClick()) {
         clearInterval(intervalId)
