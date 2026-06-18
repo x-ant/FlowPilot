@@ -41,8 +41,13 @@ type StartCodexLoginResponse = {
   url?: string
 }
 
+type CodexLoginMessageType =
+  | "codex-login:start"
+  | "codex-login:open-auth-link"
+
 const STORAGE_KEY = "codex-login:settings"
 const STEP_CLICK_CODEX_LOGIN = "click-codex-login"
+const STEP_OPEN_AUTH_LINK = "open-auth-link"
 
 const initialStats: Stats = {
   total: 0,
@@ -81,7 +86,10 @@ const maskEmail = (email?: string) => {
   return `${visibleName}${name.length > 3 ? "***" : "*"}@${domain}`
 }
 
-const sendStartCodexLogin = (loginUrl: string) => {
+const sendCodexLoginMessage = (
+  type: CodexLoginMessageType,
+  loginUrl: string
+) => {
   return new Promise<StartCodexLoginResponse>((resolve) => {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
       resolve({
@@ -93,7 +101,7 @@ const sendStartCodexLogin = (loginUrl: string) => {
 
     chrome.runtime.sendMessage(
       {
-        type: "codex-login:start",
+        type,
         payload: { loginUrl }
       },
       (response?: StartCodexLoginResponse) => {
@@ -115,6 +123,14 @@ const sendStartCodexLogin = (loginUrl: string) => {
       }
     )
   })
+}
+
+const sendStartCodexLogin = (loginUrl: string) => {
+  return sendCodexLoginMessage("codex-login:start", loginUrl)
+}
+
+const sendOpenCodexAuthLink = (loginUrl: string) => {
+  return sendCodexLoginMessage("codex-login:open-auth-link", loginUrl)
 }
 
 function SidePanel() {
@@ -209,6 +225,62 @@ function SidePanel() {
     }
   }
 
+  const handleOpenAuthLinkStep = async () => {
+    try {
+      setRunningStep(STEP_OPEN_AUTH_LINK)
+      const values = await form.validateFields(["loginUrl"])
+      const loginUrl = values.loginUrl?.trim()
+
+      if (!loginUrl) {
+        throw new Error("Codex 登录地址不能为空")
+      }
+
+      setStatus("正在打开授权链接")
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1
+        }
+      })
+      addLog("步骤 2 准备点击“打开链接”按钮")
+
+      const result = await sendOpenCodexAuthLink(loginUrl)
+
+      if (!result.ok) {
+        setStatus("步骤 2 执行失败")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        addLog(`步骤 2 ${result.message}`)
+        return
+      }
+
+      setStatus("步骤 2 已完成")
+      setStats((current) => {
+        return {
+          ...current,
+          success: current.success + 1
+        }
+      })
+      addLog(`步骤 2 ${result.message}`)
+    } catch {
+      setStatus("步骤 2 需要登录地址")
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1,
+          failed: current.failed + 1
+        }
+      })
+      addLog("步骤 2 Codex 登录地址不能为空")
+    } finally {
+      setRunningStep(null)
+    }
+  }
+
   const handleClearLogs = () => {
     setLogs([])
     setStatus("日志已清空")
@@ -280,6 +352,18 @@ function SidePanel() {
                   type="primary"
                   loading={runningStep === STEP_CLICK_CODEX_LOGIN}
                   onClick={handleClickCodexLoginStep}>
+                  执行
+                </Button>
+              </div>
+              <div className="step-row">
+                <div className="step-copy">
+                  <span className="step-index">步骤 2</span>
+                  <span className="step-title">打开授权链接</span>
+                </div>
+                <Button
+                  type="primary"
+                  loading={runningStep === STEP_OPEN_AUTH_LINK}
+                  onClick={handleOpenAuthLinkStep}>
                   执行
                 </Button>
               </div>

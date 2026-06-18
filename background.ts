@@ -2,7 +2,6 @@ import { MESSAGE_HANDLERS } from "./background/message-handlers"
 import { setupSidePanelBehavior } from "./background/side-panel"
 import type {
   BackgroundMessage,
-  BackgroundMessageType,
   BackgroundResponse
 } from "./background/types"
 
@@ -19,26 +18,35 @@ chrome.runtime.onMessage.addListener(
     _sender,
     sendResponse: (response: BackgroundResponse) => void
   ) => {
-    const handler =
-      message?.type &&
-      MESSAGE_HANDLERS[message.type as BackgroundMessageType]
-
-    if (!handler) {
-      return false
+    switch (message.type) {
+      case "codex-login:start":
+        MESSAGE_HANDLERS["codex-login:start"](message)
+          .then(sendResponse)
+          .catch((error) => {
+            sendResponse({
+              ok: false,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "执行 Codex 登录入口点击失败"
+            })
+          })
+        return true
+      case "codex-login:open-auth-link":
+        MESSAGE_HANDLERS["codex-login:open-auth-link"](message)
+          .then(sendResponse)
+          .catch((error) => {
+            sendResponse({
+              ok: false,
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "执行 Codex 授权链接打开失败"
+            })
+          })
+        return true
+      default:
+        return false
     }
-
-    handler(message)
-      .then(sendResponse)
-      .catch((error) => {
-        sendResponse({
-          ok: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "执行 Codex 登录入口点击失败"
-        })
-      })
-
-    return true
   }
 )

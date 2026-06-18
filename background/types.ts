@@ -20,20 +20,33 @@ export type StartCodexLoginMessage = BackgroundMessageBase<
 >
 
 /**
+ * 步骤 2：点击目标页面里的“打开链接”按钮。
+ */
+export type OpenCodexAuthLinkMessage = BackgroundMessageBase<
+  "codex-login:open-auth-link",
+  {
+    loginUrl: string
+  }
+>
+
+/**
  * 所有 background 可以处理的消息联合类型。
  *
  * 后续新增步骤时，把新的 Message 类型用 | 加到这里。
  */
-export type BackgroundMessage = StartCodexLoginMessage
+export type BackgroundMessage =
+  | StartCodexLoginMessage
+  | OpenCodexAuthLinkMessage
 
 /**
- * 步骤 1 的后台响应结构。
+ * Codex 登录步骤的后台响应结构。
  */
 export type StartCodexLoginResponse = {
   ok: boolean
   message: string
   tabId?: number
   url?: string
+  authUrl?: string
 }
 
 /**
@@ -44,12 +57,13 @@ export type StartCodexLoginResponse = {
 export type BackgroundResponse = StartCodexLoginResponse
 
 /**
- * 注入目标网页后，点击“开始codex登录”按钮的执行结果。
+ * 注入目标网页后，点击页面按钮的执行结果。
  */
-export type ClickCodexLoginButtonResult = {
+export type ClickPageButtonResult = {
   ok: boolean
   message: string
   buttonText?: string
+  authUrl?: string
 }
 
 /**

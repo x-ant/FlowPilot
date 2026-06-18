@@ -1,8 +1,9 @@
-import { startCodexLogin } from "./codex-login"
+import { openCodexAuthLink, startCodexLogin } from "./codex-login"
 import type {
   BackgroundMessage,
   BackgroundMessageHandler,
   BackgroundMessageType,
+  OpenCodexAuthLinkMessage,
   StartCodexLoginMessage
 } from "./types"
 
@@ -28,5 +29,8 @@ type BackgroundMessageHandlerMap = {
 export const MESSAGE_HANDLERS: BackgroundMessageHandlerMap = {
   "codex-login:start": (message: StartCodexLoginMessage) => {
     return startCodexLogin(message.payload.loginUrl)
+  },
+  "codex-login:open-auth-link": (message: OpenCodexAuthLinkMessage) => {
+    return openCodexAuthLink(message.payload.loginUrl)
   }
 }

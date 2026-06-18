@@ -1,19 +1,23 @@
-import type { ClickCodexLoginButtonResult } from "./types"
+import type { ClickPageButtonResult } from "./types"
 
 /**
- * 在目标网页中查找并点击“开始codex登录”按钮。
+ * 在目标网页中按文案查找并点击按钮。
  *
  * 这个函数会被注入到目标网页里执行，因此只能使用页面环境里可用的 DOM API。
  * 函数内部的小工具函数需要留在函数体内，避免注入到网页后找不到外部闭包变量。
  *
  * @param buttonTexts 可接受的按钮文案列表
  * @param timeoutMs 最多等待按钮出现的时间，单位毫秒
+ * @param successMessage 点击成功时返回给 background 的提示
+ * @param failureMessage 找不到按钮时返回给 background 的提示
  * @returns 点击结果和提示信息
  */
-export const clickCodexLoginButtonInPage = (
+export const clickPageButtonByTextsInPage = (
   buttonTexts: string[],
-  timeoutMs: number
-): Promise<ClickCodexLoginButtonResult> => {
+  timeoutMs: number,
+  successMessage: string,
+  failureMessage: string
+): Promise<ClickPageButtonResult> => {
   return new Promise((resolve) => {
     const startedAt = Date.now()
     const normalizeText = (value: string) => {
@@ -23,6 +27,23 @@ export const clickCodexLoginButtonInPage = (
     const targetTexts = buttonTexts.map(normalizeText)
     const candidateSelector =
       "button,a,[role='button'],input[type='button'],input[type='submit']"
+
+    const findAuthUrl = () => {
+      const authLink = document.querySelector(
+        'a[href*="auth.openai.com/oauth/authorize"]'
+      ) as HTMLAnchorElement | null
+
+      if (authLink?.href) {
+        return authLink.href
+      }
+
+      const pageText = document.body?.textContent || ""
+      const match = pageText.match(
+        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
+      )
+
+      return match?.[0]
+    }
 
     // 同时读取 textContent、aria-label、title 和 input value，
     // 兼容普通按钮、图标按钮、链接按钮和 input 按钮。
@@ -83,8 +104,9 @@ export const clickCodexLoginButtonInPage = (
         button.click()
         resolve({
           ok: true,
-          message: "已点击“开始codex登录”按钮",
-          buttonText
+          message: successMessage,
+          buttonText,
+          authUrl: findAuthUrl()
         })
         return true
       }
@@ -108,8 +130,7 @@ export const clickCodexLoginButtonInPage = (
         clearInterval(intervalId)
         resolve({
           ok: false,
-          message:
-            "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
+          message: failureMessage
         })
       }
     }, 300)
