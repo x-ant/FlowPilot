@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Button,
   Card,
@@ -149,21 +149,31 @@ function SidePanel() {
   const [logs, setLogs] = useState<LogItem[]>([])
   const [authTabId, setAuthTabId] = useState<number | null>(null)
   const [runningStep, setRunningStep] = useState<string | null>(null)
+  const logListRef = useRef<HTMLDivElement | null>(null)
 
   const storage = useMemo(getStorage, [])
   const log = createUiLogger((level, message) => {
     setLogs((current) => {
       return [
+        ...current,
         {
           id: `${Date.now()}-${current.length}`,
           time: getTimeLabel(),
           level,
           message
-        },
-        ...current
+        }
       ]
     })
   })
+
+  useEffect(() => {
+    const element = logListRef.current
+    if (!element) {
+      return
+    }
+
+    element.scrollTop = element.scrollHeight
+  }, [logs])
 
   useEffect(() => {
     // 页面初始化时尝试读取本地保存的登录配置。
@@ -659,7 +669,7 @@ function SidePanel() {
               </Button>
             }>
             {logs.length > 0 ? (
-              <div className="log-list">
+              <div className="log-list" ref={logListRef}>
                 {logs.map((log) => {
                   const levelMeta = LOG_LEVEL_META[log.level]
                   return (
