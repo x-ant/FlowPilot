@@ -1,3 +1,7 @@
+import { createConsoleLogger } from "../shared/logging"
+
+const log = createConsoleLogger("side-panel")
+
 /**
  * 让用户点击扩展图标时打开 Chrome 侧边栏。
  *
@@ -15,7 +19,7 @@ export const setupSidePanelBehavior = () => {
     void chrome.sidePanel
       .setPanelBehavior({ openPanelOnActionClick: true })
       .catch((error) => {
-        console.warn("设置点击扩展图标打开侧边栏失败", error)
+        log.warn("设置点击扩展图标打开侧边栏失败", error)
       })
   }
 

@@ -1,8 +1,13 @@
-import { openCodexAuthLink, startCodexLogin } from "./codex-login"
+import {
+  fillOpenaiLoginEmail,
+  openCodexAuthLink,
+  startCodexLogin
+} from "./codex-login"
 import type {
   BackgroundMessage,
   BackgroundMessageHandler,
   BackgroundMessageType,
+  FillOpenaiLoginEmailMessage,
   OpenCodexAuthLinkMessage,
   StartCodexLoginMessage
 } from "./types"
@@ -28,7 +33,7 @@ type BackgroundMessageHandlerMap = {
  * @return 步骤执行结果。
  */
 const handleStartCodexLogin = (message: StartCodexLoginMessage) => {
-  return startCodexLogin(message.payload.loginUrl)
+  return startCodexLogin(message.payload.targetUrl)
 }
 
 /**
@@ -38,7 +43,19 @@ const handleStartCodexLogin = (message: StartCodexLoginMessage) => {
  * @return 步骤执行结果。
  */
 const handleOpenCodexAuthLink = (message: OpenCodexAuthLinkMessage) => {
-  return openCodexAuthLink(message.payload.loginUrl)
+  return openCodexAuthLink(message.payload.targetUrl)
+}
+
+/**
+ * 处理“填写邮箱并继续”消息。
+ *
+ * @param message 步骤 3 消息，包含登录地址和邮箱。
+ * @return 步骤执行结果。
+ */
+const handleFillOpenaiLoginEmail = (
+  message: FillOpenaiLoginEmailMessage
+) => {
+  return fillOpenaiLoginEmail(message.payload.tabId, message.payload.email)
 }
 
 /**
@@ -50,5 +67,6 @@ const handleOpenCodexAuthLink = (message: OpenCodexAuthLinkMessage) => {
  */
 export const MESSAGE_HANDLERS: BackgroundMessageHandlerMap = {
   "codex-login:start": handleStartCodexLogin,
-  "codex-login:open-auth-link": handleOpenCodexAuthLink
+  "codex-login:open-auth-link": handleOpenCodexAuthLink,
+  "codex-login:fill-auth-email": handleFillOpenaiLoginEmail
 }

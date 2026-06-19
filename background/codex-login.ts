@@ -1,4 +1,8 @@
-import { clickPageButtonByTextsInPage } from "./page-script"
+import {
+  performPageActionByTextsInPage,
+  type PageActionByTextsArgs,
+  type PageActionByTextsOptions
+} from "./page-script"
 import { findOrOpenTab, waitForTabLoaded } from "./tabs"
 import type { StartCodexLoginResponse } from "./types"
 
@@ -10,6 +14,39 @@ const CODEX_LOGIN_BUTTON_TEXTS = [
 ]
 
 const CODEX_AUTH_LINK_BUTTON_TEXTS = ["打开链接", "打开授权链接"]
+const OPENAI_LOGIN_BUTTON_TEXTS = [
+  "continue",
+  "next",
+  "submit",
+  "sign in",
+  "log in",
+  "登录",
+  "继续",
+  "下一步"
+]
+const OPENAI_LOGIN_INPUT_SELECTORS = [
+  "input[type='email']",
+  "input[autocomplete='email']",
+  "input[name='email']",
+  "input[name='username']",
+  "input[autocomplete='username']",
+  "input[id*='email' i]",
+  "input[id*='username' i]",
+  "input[placeholder*='email' i]",
+  "input[placeholder*='username' i]",
+  "input[placeholder*='Email']",
+  "input[placeholder*='电子邮件']",
+  "input[placeholder*='邮箱']",
+  "input[placeholder*='メール']",
+  "input[aria-label*='email' i]",
+  "input[aria-label*='username' i]",
+  "input[aria-label*='电子邮件']",
+  "input[aria-label*='邮箱']",
+  "input[aria-label*='メール']"
+]
+const CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE = "已填写邮箱并点击“继续”按钮"
+const CODEX_AUTH_CONTINUE_FAILURE_MESSAGE =
+  "未找到邮箱输入框或“继续”按钮，请确认页面已打开到 OpenAI 登录页"
 const CODEX_SESSION_COOKIE_DOMAINS = ["openai.com", "chatgpt.com"]
 const CODEX_SESSION_STORAGE_HOSTNAMES = [
   "auth.openai.com",
@@ -314,26 +351,16 @@ const hasNewAuthTab = async (beforeTabIds: Set<number>) => {
   })
 }
 
-/**
- * 打开或复用目标页面后，在页面里点击指定按钮。
- *
- * @param targetUrl 需要打开或复用的目标页面地址。
- * @param buttonTexts 目标按钮可接受的文案列表。
- * @param successMessage 点击成功后返回的提示。
- * @param failureMessage 找不到按钮时返回的提示。
- * @return 注入脚本后的执行结果。
- */
-const clickButtonInPage = async (
+const runPageActionInTab = async (
   targetUrl: string,
-  buttonTexts: string[],
-  successMessage: string,
-  failureMessage: string
+  actionOptions: PageActionByTextsOptions,
+  actionArgs?: PageActionByTextsArgs
 ): Promise<StartCodexLoginResponse> => {
   const tabId = await findOrOpenTab(targetUrl)
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: clickPageButtonByTextsInPage,
-    args: [buttonTexts, 15000, successMessage, failureMessage]
+    func: performPageActionByTextsInPage,
+    args: [actionOptions, actionArgs || {}]
   })
 
   const value = result?.result
@@ -342,7 +369,7 @@ const clickButtonInPage = async (
   if (!value?.ok) {
     return {
       ok: false,
-      message: value?.message || failureMessage,
+      message: value?.message || actionOptions.failureMessage,
       tabId,
       url: tab.url
     }
@@ -358,40 +385,100 @@ const clickButtonInPage = async (
 }
 
 /**
+ * 在已有标签页里直接执行页面动作。
+ *
+ * @param tabId 要操作的标签页 id。
+ * @param actionOptions 页面动作配置。
+ * @param actionArgs 页面动作参数。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+const runPageActionInExistingTab = async (
+  tabId: number,
+  actionOptions: PageActionByTextsOptions,
+  actionArgs?: PageActionByTextsArgs
+): Promise<StartCodexLoginResponse> => {
+  try {
+    const tab = await chrome.tabs.get(tabId)
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: performPageActionByTextsInPage,
+      args: [actionOptions, actionArgs || {}]
+    })
+
+    const value = result?.result
+    const currentTab = await chrome.tabs.get(tabId)
+
+    if (!value?.ok) {
+      return {
+        ok: false,
+        message: value?.message || actionOptions.failureMessage,
+        tabId,
+        url: currentTab.url || tab.url
+      }
+    }
+
+    return {
+      ok: true,
+      message: value.message,
+      tabId,
+      url: currentTab.url || tab.url,
+      authUrl: value.authUrl
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "未找到可操作的登录页标签，请先执行步骤 2"
+    }
+  }
+}
+
+/**
  * 执行完整的 Codex 登录入口点击流程。
  *
  * 流程：打开/复用管理页 -> 等页面加载 -> 注入页面脚本点击按钮。
  *
- * @param loginUrl 侧边栏里填写的 Codex 登录地址
+ * @param targetUrl 侧边栏里填写的 Codex 登录地址
  * @return 返回给侧边栏展示的执行结果。
  */
 export const startCodexLogin = async (
-  loginUrl: string
+  targetUrl: string
 ): Promise<StartCodexLoginResponse> => {
   // 第一步只负责触发管理页里的“开始登录”按钮。
-  return clickButtonInPage(
-    loginUrl,
-    CODEX_LOGIN_BUTTON_TEXTS,
-    "已点击“开始codex登录”按钮",
-    "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
-  )
+  return runPageActionInTab(targetUrl, {
+    targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
+    timeoutMs: 15000,
+    successMessage: "已点击“开始codex登录”按钮",
+    failureMessage: "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
+  })
 }
 
 /**
- * 点击 OAuth 页面里的“打开链接”按钮。
+ * 打开 OpenAI 登录页并清理旧会话。
  *
- * 该按钮出现于“开始 Codex 登录”之后，点击后会打开授权链接。
+ * 这个步骤只负责把页面打开到目标地址，不再自动填写邮箱。
  *
- * @param loginUrl 侧边栏里填写的 Codex 登录地址
+ * @param targetUrl 侧边栏里填写的 OpenAI 登录地址。
  * @return 返回给侧边栏展示的执行结果。
  */
 export const openCodexAuthLink = async (
-  loginUrl: string
+  targetUrl: string
 ): Promise<StartCodexLoginResponse> => {
   // 打开授权链接前先清理旧 cookie，减少复用到失效登录态的概率。
   const cleanupResult = await clearCodexSessionCookies()
   const storageResult = await clearCodexSessionStorage()
   const cleanupMessage = `${cleanupResult.message}；${storageResult.message}，`
+  if (targetUrl.startsWith("https://auth.openai.com/log-in")) {
+    const tabId = await findOrOpenTab(targetUrl)
+    const tab = await chrome.tabs.get(tabId)
+
+    return {
+      ok: true,
+      message: `${cleanupMessage}已打开 OpenAI 登录页，等待填写邮箱`,
+      tabId,
+      url: tab.url
+    }
+  }
+
   const beforeTabs = await chrome.tabs.query({})
   const beforeTabIds = new Set(
     beforeTabs
@@ -404,12 +491,12 @@ export const openCodexAuthLink = async (
       })
   )
 
-  const result = await clickButtonInPage(
-    loginUrl,
-    CODEX_AUTH_LINK_BUTTON_TEXTS,
-    "已点击“打开链接”按钮",
-    "未找到“打开链接”按钮，请先执行步骤 1 并确认授权链接已生成"
-  )
+  const result = await runPageActionInTab(targetUrl, {
+    targetTexts: CODEX_AUTH_LINK_BUTTON_TEXTS,
+    timeoutMs: 15000,
+    successMessage: "已点击“打开链接”按钮",
+    failureMessage: "未找到“打开链接”按钮，请先执行步骤 1 并确认授权链接已生成"
+  })
 
   if (!result.ok) {
     return {
@@ -470,4 +557,29 @@ export const openCodexAuthLink = async (
     ...result,
     message: `${cleanupMessage}${result.message}`
   }
+}
+
+/**
+ * 在 OpenAI 登录页填写邮箱并提交。
+ *
+ * @param tabId 要操作的登录页标签页 id。
+ * @param email 2925 邮箱地址。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+export const fillOpenaiLoginEmail = async (
+  tabId: number,
+  email: string
+): Promise<StartCodexLoginResponse> => {
+  const result = await runPageActionInExistingTab(tabId, {
+    targetTexts: OPENAI_LOGIN_BUTTON_TEXTS,
+    timeoutMs: 15000,
+    successMessage: CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE,
+    failureMessage: CODEX_AUTH_CONTINUE_FAILURE_MESSAGE,
+    submitStrategy: "requestSubmit"
+  }, {
+    inputSelectors: OPENAI_LOGIN_INPUT_SELECTORS,
+    inputValue: email
+  })
+
+  return result
 }

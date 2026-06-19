@@ -15,17 +15,18 @@ import zhCN from "antd/locale/zh_CN"
 import "antd/dist/reset.css"
 
 import "./sidepanel.css"
+import {
+  LOG_LEVEL_META,
+  createUiLogger,
+  getTimeLabel,
+  type LogItem
+} from "./shared/logging"
+import type { StartCodexLoginResponse } from "./background/types"
 
 type Settings = {
   loginUrl?: string
   email?: string
   password?: string
-}
-
-type LogItem = {
-  id: string
-  time: string
-  message: string
 }
 
 type Stats = {
@@ -34,20 +35,24 @@ type Stats = {
   failed: number
 }
 
-type StartCodexLoginResponse = {
-  ok: boolean
-  message: string
-  tabId?: number
-  url?: string
-}
-
 type CodexLoginMessageType =
   | "codex-login:start"
   | "codex-login:open-auth-link"
+  | "codex-login:fill-auth-email"
+
+type CodexLoginPayload =
+  | {
+      targetUrl: string
+    }
+  | {
+      tabId: number
+      email: string
+    }
 
 const STORAGE_KEY = "codex-login:settings"
 const STEP_CLICK_CODEX_LOGIN = "click-codex-login"
 const STEP_OPEN_AUTH_LINK = "open-auth-link"
+const STEP_FILL_AUTH_EMAIL = "fill-auth-email"
 
 const initialStats: Stats = {
   total: 0,
@@ -68,20 +73,6 @@ const getStorage = () => {
   }
 
   return chrome.storage.local
-}
-
-/**
- * 生成当前时间字符串，用于日志显示。
- *
- * @return 按 `HH:mm:ss` 格式生成的当前时间字符串。
- */
-const getTime = () => {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(new Date())
 }
 
 /**
@@ -110,66 +101,40 @@ const maskEmail = (email?: string) => {
  * 这个方法把侧边栏和 background 的消息协议统一封装起来，避免重复写 sendMessage。
  *
  * @param type 要发送的消息类型。
- * @param loginUrl 侧边栏里填写的 Codex 登录地址。
- * @return 后台返回的执行结果；如果发送失败，会返回 ok=false 的错误对象。
+ * @param targetUrl 当前要操作的页面地址。
+ * @return 后台返回的执行结果；如果消息通道异常，会直接 reject。
  */
 const sendCodexLoginMessage = (
   type: CodexLoginMessageType,
-  loginUrl: string
+  payload: CodexLoginPayload
 ) => {
-  return new Promise<StartCodexLoginResponse>((resolve) => {
+  return new Promise<StartCodexLoginResponse>((resolve, reject) => {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-      resolve({
-        ok: false,
-        message: "当前环境无法调用 Chrome 扩展后台脚本"
-      })
+      reject(new Error("当前环境无法调用 Chrome 扩展后台脚本"))
       return
     }
 
     chrome.runtime.sendMessage(
       {
         type,
-        payload: { loginUrl }
+        payload
       },
       (response?: StartCodexLoginResponse) => {
         const error = chrome.runtime.lastError
         if (error) {
-          resolve({
-            ok: false,
-            message: error.message || "后台脚本未响应"
-          })
+          reject(new Error(error.message || "后台脚本未响应"))
           return
         }
 
-        resolve(
-          response ?? {
-            ok: false,
-            message: "后台脚本未返回执行结果"
-          }
-        )
+        if (!response) {
+          reject(new Error("后台脚本未返回执行结果"))
+          return
+        }
+
+        resolve(response)
       }
     )
   })
-}
-
-/**
- * 发送“开始 Codex 登录”步骤消息。
- *
- * @param loginUrl 侧边栏里填写的 Codex 登录地址。
- * @return 后台返回的执行结果。
- */
-const sendStartCodexLogin = (loginUrl: string) => {
-  return sendCodexLoginMessage("codex-login:start", loginUrl)
-}
-
-/**
- * 发送“打开授权链接”步骤消息。
- *
- * @param loginUrl 侧边栏里填写的 Codex 登录地址。
- * @return 后台返回的执行结果。
- */
-const sendOpenCodexAuthLink = (loginUrl: string) => {
-  return sendCodexLoginMessage("codex-login:open-auth-link", loginUrl)
 }
 
 /**
@@ -182,28 +147,23 @@ function SidePanel() {
   const [status, setStatus] = useState("准备就绪")
   const [stats, setStats] = useState(initialStats)
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [authTabId, setAuthTabId] = useState<number | null>(null)
   const [runningStep, setRunningStep] = useState<string | null>(null)
 
   const storage = useMemo(getStorage, [])
-
-  /**
-   * 把新日志插到列表最前面，便于先看到最新执行结果。
-   *
-   * @param message 要记录的日志内容。
-   * @return 无。
-   */
-  const addLog = (message: string) => {
+  const log = createUiLogger((level, message) => {
     setLogs((current) => {
       return [
         {
           id: `${Date.now()}-${current.length}`,
-          time: getTime(),
+          time: getTimeLabel(),
+          level,
           message
         },
         ...current
       ]
     })
-  }
+  })
 
   useEffect(() => {
     // 页面初始化时尝试读取本地保存的登录配置。
@@ -235,11 +195,40 @@ function SidePanel() {
   const handleClickCodexLoginStep = async () => {
     try {
       setRunningStep(STEP_CLICK_CODEX_LOGIN)
-      const values = await form.validateFields(["loginUrl"])
+      const values = await form.validateFields(["loginUrl"]).catch((error) => {
+        setStatus("步骤 1 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(
+          `步骤 1 参数异常：${
+            error instanceof Error ? error.message : "Codex 登录地址不能为空"
+          }`
+        )
+        return null
+      })
+
+      if (!values) {
+        return
+      }
+
       const loginUrl = values.loginUrl?.trim()
 
       if (!loginUrl) {
-        throw new Error("Codex 登录地址不能为空")
+        setStatus("步骤 1 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 1 参数异常：Codex 登录地址不能为空")
+        return
       }
 
       setStatus("正在打开 Codex 管理页")
@@ -249,9 +238,28 @@ function SidePanel() {
           total: current.total + 1
         }
       })
-      addLog("步骤 1 准备点击“开始codex登录”按钮")
+      log.debug("步骤 1 准备点击“开始codex登录”按钮")
 
-      const result = await sendStartCodexLogin(loginUrl)
+      let result: StartCodexLoginResponse
+      try {
+        result = await sendCodexLoginMessage("codex-login:start", {
+          targetUrl: loginUrl
+        })
+      } catch (error) {
+        setStatus("步骤 1 执行异常")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.error(
+          `步骤 1 异常：${
+            error instanceof Error ? error.message : "后台脚本未响应"
+          }`
+        )
+        return
+      }
 
       if (!result.ok) {
         setStatus("步骤 1 执行失败")
@@ -261,7 +269,7 @@ function SidePanel() {
             failed: current.failed + 1
           }
         })
-        addLog(`步骤 1 ${result.message}`)
+        log.warn(`步骤 1 ${result.message}`)
         return
       }
 
@@ -272,47 +280,95 @@ function SidePanel() {
           success: current.success + 1
         }
       })
-      addLog(`步骤 1 ${result.message}`)
-    } catch {
-      setStatus("步骤 1 需要登录地址")
+      log.info(`步骤 1 ${result.message}`)
+    } catch (error) {
+      setStatus("步骤 1 执行异常")
       setStats((current) => {
         return {
           ...current,
-          total: current.total + 1,
           failed: current.failed + 1
         }
       })
-      addLog("步骤 1 Codex 登录地址不能为空")
+      log.error(`步骤 1 异常：${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setRunningStep(null)
     }
   }
 
   /**
-   * 执行步骤 2：先清理旧 cookie，再点击“打开链接”按钮。
+   * 执行步骤 2：先清理旧 cookie，再打开 OpenAI 登录页。
    *
    * @return 无，执行结果通过状态、统计和日志反馈。
    */
   const handleOpenAuthLinkStep = async () => {
     try {
       setRunningStep(STEP_OPEN_AUTH_LINK)
-      const values = await form.validateFields(["loginUrl"])
+      setAuthTabId(null)
+      const values = await form.validateFields(["loginUrl"]).catch((error) => {
+        setStatus("步骤 2 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(
+          `步骤 2 参数异常：${
+            error instanceof Error ? error.message : "Codex 登录地址不能为空"
+          }`
+        )
+        return null
+      })
+
+      if (!values) {
+        return
+      }
+
       const loginUrl = values.loginUrl?.trim()
 
       if (!loginUrl) {
-        throw new Error("Codex 登录地址不能为空")
+        setStatus("步骤 2 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 2 参数异常：Codex 登录地址不能为空")
+        return
       }
 
-      setStatus("正在清理旧登录信息并打开授权链接")
+      setStatus("正在清理旧登录信息并打开登录页")
       setStats((current) => {
         return {
           ...current,
           total: current.total + 1
         }
       })
-      addLog("步骤 2 准备清理旧登录信息并点击“打开链接”按钮")
+      log.debug("步骤 2 准备清理旧登录信息并打开 OpenAI 登录页")
 
-      const result = await sendOpenCodexAuthLink(loginUrl)
+      let result: StartCodexLoginResponse
+      try {
+        result = await sendCodexLoginMessage("codex-login:open-auth-link", {
+          targetUrl: loginUrl
+        })
+      } catch (error) {
+        setStatus("步骤 2 执行异常")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.error(
+          `步骤 2 异常：${
+            error instanceof Error ? error.message : "后台脚本未响应"
+          }`
+        )
+        return
+      }
 
       if (!result.ok) {
         setStatus("步骤 2 执行失败")
@@ -322,7 +378,7 @@ function SidePanel() {
             failed: current.failed + 1
           }
         })
-        addLog(`步骤 2 ${result.message}`)
+        log.warn(`步骤 2 ${result.message}`)
         return
       }
 
@@ -333,17 +389,139 @@ function SidePanel() {
           success: current.success + 1
         }
       })
-      addLog(`步骤 2 ${result.message}`)
-    } catch {
-      setStatus("步骤 2 需要登录地址")
+      setAuthTabId(result.tabId || null)
+      log.info(`步骤 2 ${result.message}`)
+    } catch (error) {
+      setStatus("步骤 2 执行异常")
       setStats((current) => {
         return {
           ...current,
-          total: current.total + 1,
           failed: current.failed + 1
         }
       })
-      addLog("步骤 2 Codex 登录地址不能为空")
+      log.error(`步骤 2 异常：${error instanceof Error ? error.message : "未知错误"}`)
+    } finally {
+      setRunningStep(null)
+    }
+  }
+
+  /**
+   * 执行步骤 3：填写邮箱并点击继续。
+   *
+   * @return 无，执行结果通过状态、统计和日志反馈。
+   */
+  const handleFillAuthEmailStep = async () => {
+    try {
+      setRunningStep(STEP_FILL_AUTH_EMAIL)
+      const values = await form.validateFields(["email"]).catch((error) => {
+        setStatus("步骤 3 需要先执行步骤 2 并填写邮箱")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(
+          `步骤 3 参数异常：${
+            error instanceof Error ? error.message : "2925 邮箱不能为空"
+          }`
+        )
+        return null
+      })
+
+      if (!values) {
+        return
+      }
+
+      const email = values.email?.trim()
+
+      if (!authTabId) {
+        setStatus("步骤 3 需要先执行步骤 2")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 3 参数异常：请先执行步骤 2 打开 OpenAI 登录页")
+        return
+      }
+
+      if (!email) {
+        setStatus("步骤 3 需要先执行步骤 2 并填写邮箱")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 3 参数异常：2925 邮箱不能为空")
+        return
+      }
+
+      setStatus("正在填写邮箱并继续")
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1
+        }
+      })
+      log.debug("步骤 3 准备填写邮箱并点击“继续”")
+
+      let result: StartCodexLoginResponse
+      try {
+        result = await sendCodexLoginMessage("codex-login:fill-auth-email", {
+          tabId: authTabId,
+          email
+        })
+      } catch (error) {
+        setStatus("步骤 3 执行异常")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.error(
+          `步骤 3 异常：${
+            error instanceof Error ? error.message : "后台脚本未响应"
+          }`
+        )
+        return
+      }
+
+      if (!result.ok) {
+        setStatus("步骤 3 执行失败")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(`步骤 3 ${result.message}`)
+        return
+      }
+
+      setStatus("步骤 3 已完成")
+      setStats((current) => {
+        return {
+          ...current,
+          success: current.success + 1
+        }
+      })
+      log.info(`步骤 3 ${result.message}`)
+    } catch (error) {
+      setStatus("步骤 3 执行异常")
+      setStats((current) => {
+        return {
+          ...current,
+          failed: current.failed + 1
+        }
+      })
+      log.error(`步骤 3 异常：${error instanceof Error ? error.message : "未知错误"}`)
     } finally {
       setRunningStep(null)
     }
@@ -431,12 +609,24 @@ function SidePanel() {
               <div className="step-row">
                 <div className="step-copy">
                   <span className="step-index">步骤 2</span>
-                  <span className="step-title">打开授权链接</span>
+                  <span className="step-title">打开登录页</span>
                 </div>
                 <Button
                   type="primary"
                   loading={runningStep === STEP_OPEN_AUTH_LINK}
                   onClick={handleOpenAuthLinkStep}>
+                  执行
+                </Button>
+              </div>
+              <div className="step-row">
+                <div className="step-copy">
+                  <span className="step-index">步骤 3</span>
+                  <span className="step-title">填写邮箱并继续</span>
+                </div>
+                <Button
+                  type="primary"
+                  loading={runningStep === STEP_FILL_AUTH_EMAIL}
+                  onClick={handleFillAuthEmailStep}>
                   执行
                 </Button>
               </div>
@@ -471,10 +661,19 @@ function SidePanel() {
             {logs.length > 0 ? (
               <div className="log-list">
                 {logs.map((log) => {
+                  const levelMeta = LOG_LEVEL_META[log.level]
                   return (
                     <div className="log-row" key={log.id}>
                       <span className="log-time">{log.time}</span>
-                      <span className="log-message">{log.message}</span>
+                      <span className="log-content">
+                        <Tag
+                          className="log-level-tag"
+                          color={levelMeta.color}
+                          bordered={false}>
+                          {levelMeta.label}
+                        </Tag>
+                        <span className="log-message">{log.message}</span>
+                      </span>
                     </div>
                   )
                 })}

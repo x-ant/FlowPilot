@@ -15,17 +15,28 @@ type BackgroundMessageBase<TType extends string, TPayload> = {
 export type StartCodexLoginMessage = BackgroundMessageBase<
   "codex-login:start",
   {
-    loginUrl: string
+    targetUrl: string
   }
 >
 
 /**
- * 步骤 2：点击目标页面里的“打开链接”按钮。
+ * 步骤 2：打开 OpenAI 登录页或授权链接。
  */
 export type OpenCodexAuthLinkMessage = BackgroundMessageBase<
   "codex-login:open-auth-link",
   {
-    loginUrl: string
+    targetUrl: string
+  }
+>
+
+/**
+ * 步骤 3：在 OpenAI 登录页填写邮箱并继续。
+ */
+export type FillOpenaiLoginEmailMessage = BackgroundMessageBase<
+  "codex-login:fill-auth-email",
+  {
+    tabId: number
+    email: string
   }
 >
 
@@ -37,6 +48,7 @@ export type OpenCodexAuthLinkMessage = BackgroundMessageBase<
 export type BackgroundMessage =
   | StartCodexLoginMessage
   | OpenCodexAuthLinkMessage
+  | FillOpenaiLoginEmailMessage
 
 /**
  * Codex 登录步骤的后台响应结构。

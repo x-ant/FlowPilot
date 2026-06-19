@@ -50,6 +50,19 @@ const handleBackgroundMessage = (
           })
         })
       return true
+    case "codex-login:fill-auth-email":
+      MESSAGE_HANDLERS["codex-login:fill-auth-email"](message)
+        .then(sendResponse)
+        .catch((error) => {
+          sendResponse({
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : "执行 Codex 登录邮箱填写失败"
+          })
+        })
+      return true
     default:
       return false
   }
