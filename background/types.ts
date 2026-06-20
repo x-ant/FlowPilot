@@ -20,30 +20,20 @@ export type OpenCodexAuthLinkRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 2：在 OpenAI 登录页填写邮箱并继续。
+ * 步骤 2：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
  */
-export type FillOpenaiLoginEmailRequest = BackgroundRequestBase<
-  "codex-login:fill-auth-email",
-  {
-    tabId: number
-    email: string
-  }
->
+export type FillCodexLoginEmailAndVerificationCodeRequest =
+  BackgroundRequestBase<
+    "codex-login:fill-auth-email-and-code",
+    {
+      tabId: number
+      email: string
+      password: string
+    }
+  >
 
 /**
- * 步骤 3：读取 2925 验证码并回填到邮箱验证码页。
- */
-export type FillOpenaiLoginVerificationCodeRequest = BackgroundRequestBase<
-  "codex-login:fill-auth-code",
-  {
-    tabId: number
-    email: string
-    password: string
-  }
->
-
-/**
- * 步骤 4：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
+ * 步骤 3：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
  */
 export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
   "codex-login:confirm-oauth-callback",
@@ -60,8 +50,7 @@ export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
  */
 export type BackgroundRequest =
   | OpenCodexAuthLinkRequest
-  | FillOpenaiLoginEmailRequest
-  | FillOpenaiLoginVerificationCodeRequest
+  | FillCodexLoginEmailAndVerificationCodeRequest
   | ConfirmCodexOAuthCallbackRequest
 
 /**
@@ -95,22 +84,32 @@ export type CodexLoginPageActionResponse = CodexLoginStepResponseBase
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
 
 /**
- * 步骤 2：在 OpenAI 登录页填写邮箱并继续。
- */
-export type FillOpenaiLoginEmailResponse = CodexLoginStepResponseBase
-
-/**
- * 步骤 3：读取 2925 验证码并回填到邮箱验证码页。
+ * 步骤 2：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
  *
  * mailTab 表示读取验证码时用到的 2925 邮箱页面。
  */
-export type FillOpenaiLoginVerificationCodeResponse =
+export type FillCodexLoginEmailAndVerificationCodeResponse =
   CodexLoginStepResponseBase & {
     mailTab?: BrowserTabInfo
   }
 
 /**
- * 步骤 4：确认 OAuth 授权并提交回调 URL。
+ * 内部步骤：在 OpenAI 登录页填写邮箱并继续。
+ */
+export type FillOpenaiLoginEmailResponse = CodexLoginStepResponseBase
+
+/**
+ * 内部步骤：读取 2925 验证码并回填到邮箱验证码页。
+ *
+ * mailTab 表示读取验证码时用到的 2925 邮箱页面。
+ */
+export type FillCodexLoginVerificationCodeResponse =
+  CodexLoginStepResponseBase & {
+    mailTab?: BrowserTabInfo
+  }
+
+/**
+ * 步骤 3：确认 OAuth 授权并提交回调 URL。
  *
  * managementTab 表示被回填 callback URL 的 Codex 管理页。
  */
@@ -124,8 +123,7 @@ export type ConfirmCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
  */
 export type BackgroundResponse =
   | OpenCodexAuthLinkResponse
-  | FillOpenaiLoginEmailResponse
-  | FillOpenaiLoginVerificationCodeResponse
+  | FillCodexLoginEmailAndVerificationCodeResponse
   | ConfirmCodexOAuthCallbackResponse
 
 /**

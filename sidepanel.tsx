@@ -44,8 +44,7 @@ type AuthTabSnapshot = {
 
 type LoginStepId =
   | "open-auth-link"
-  | "fill-auth-email"
-  | "fill-auth-code"
+  | "fill-auth-email-and-code"
   | "confirm-oauth-callback"
 
 type LoginStepConfig = {
@@ -134,8 +133,7 @@ type LoginStepConfig = {
 const STORAGE_KEY = "codex-login:settings"
 const AUTH_TAB_STORAGE_KEY = "codex-login:auth-tab"
 const STEP_OPEN_AUTH_LINK: LoginStepId = "open-auth-link"
-const STEP_FILL_AUTH_EMAIL: LoginStepId = "fill-auth-email"
-const STEP_FILL_AUTH_CODE: LoginStepId = "fill-auth-code"
+const STEP_FILL_AUTH_EMAIL_AND_CODE: LoginStepId = "fill-auth-email-and-code"
 const STEP_CONFIRM_OAUTH_CALLBACK: LoginStepId = "confirm-oauth-callback"
 
 const LOGIN_STEPS: LoginStepConfig[] = [
@@ -158,41 +156,20 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     })
   },
   {
-    id: STEP_FILL_AUTH_EMAIL,
+    id: STEP_FILL_AUTH_EMAIL_AND_CODE,
     index: 2,
-    title: "填写邮箱并继续",
-    requiredFields: ["email"],
-    missingStatus: "步骤 2 需要先执行步骤 1 并填写邮箱",
-    missingMessage: "2925 邮箱不能为空",
-    workingStatus: "正在填写邮箱并继续",
-    debugMessage: "步骤 2 准备填写邮箱并点击“继续”",
+    title: "填写邮箱并回填验证码",
+    requiredFields: ["email", "password"],
+    missingStatus: "步骤 2 需要先执行步骤 1 并填写账号密码",
+    missingMessage: "2925 邮箱和密码不能为空",
+    workingStatus: "正在填写邮箱并读取验证码",
+    debugMessage: "步骤 2 准备填写邮箱，读取 2925 验证码并回填",
     needsAuthTab: true,
     missingAuthTabStatus: "步骤 2 需要先执行步骤 1",
     missingAuthTabMessage: "请先执行步骤 1 打开 OpenAI 登录页",
     saveAuthTabAfterSuccess: true,
     buildRequest: ({ values, authTabId }) => ({
-      type: "codex-login:fill-auth-email",
-      payload: {
-        tabId: authTabId,
-        email: values.email
-      }
-    })
-  },
-  {
-    id: STEP_FILL_AUTH_CODE,
-    index: 3,
-    title: "读取验证码并回填",
-    requiredFields: ["email", "password"],
-    missingStatus: "步骤 3 需要先执行步骤 1/2 并填写账号密码",
-    missingMessage: "2925 邮箱和密码不能为空",
-    workingStatus: "正在读取 2925 验证码并回填",
-    debugMessage: "步骤 3 准备读取 2925 验证码并回填到邮箱验证码页",
-    needsAuthTab: true,
-    missingAuthTabStatus: "步骤 3 需要先执行步骤 1 和步骤 2",
-    missingAuthTabMessage: "请先执行步骤 1 和步骤 2 打开邮箱验证码页",
-    saveAuthTabAfterSuccess: true,
-    buildRequest: ({ values, authTabId }) => ({
-      type: "codex-login:fill-auth-code",
+      type: "codex-login:fill-auth-email-and-code",
       payload: {
         tabId: authTabId,
         email: values.email,
@@ -202,16 +179,16 @@ const LOGIN_STEPS: LoginStepConfig[] = [
   },
   {
     id: STEP_CONFIRM_OAUTH_CALLBACK,
-    index: 4,
+    index: 3,
     title: "确认授权并提交回调 URL",
     requiredFields: ["loginUrl"],
-    missingStatus: "步骤 4 需要登录地址",
+    missingStatus: "步骤 3 需要登录地址",
     missingMessage: "Codex 登录地址不能为空",
     workingStatus: "正在确认授权并提交回调 URL",
     debugMessage:
-      "步骤 4 准备点击授权页“继续”，并把 localhost 回调提交到管理页",
+      "步骤 3 准备点击授权页“继续”，并把 localhost 回调提交到管理页",
     needsAuthTab: true,
-    missingAuthTabStatus: "步骤 4 需要先执行步骤 1 到步骤 3",
+    missingAuthTabStatus: "步骤 3 需要先执行步骤 1 和步骤 2",
     missingAuthTabMessage: "请先完成验证码回填并停留在授权确认页",
     saveAuthTabAfterSuccess: true,
     buildRequest: ({ values, authTabId }) => ({

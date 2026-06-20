@@ -12,8 +12,9 @@ import {
 import type {
   CodexLoginPageActionResponse,
   ConfirmCodexOAuthCallbackResponse,
+  FillCodexLoginEmailAndVerificationCodeResponse,
   FillOpenaiLoginEmailResponse,
-  FillOpenaiLoginVerificationCodeResponse,
+  FillCodexLoginVerificationCodeResponse,
   OpenCodexAuthLinkResponse
 } from "./types"
 
@@ -154,6 +155,16 @@ const isLocalhostOAuthCallbackUrl = (rawUrl?: string) => {
   } catch {
     return false
   }
+}
+
+/**
+ * 判断当前页面是否已经进入 OpenAI 邮箱验证码页。
+ *
+ * @param rawUrl 浏览器标签页当前 URL。
+ * @return 如果是邮箱验证码页则返回 true。
+ */
+const isCodexVerificationCodeUrl = (rawUrl?: string) => {
+  return /\/email-verification(?:[/?#]|$)/i.test(String(rawUrl || "").trim())
 }
 
 /**
@@ -435,25 +446,17 @@ type RunPageActionInTabOptions = {
 }
 
 /**
- * 打开或复用指定地址的标签页，并在该标签页里执行一次页面动作。
+ * 在已经确定的标签页里注入并执行一次页面动作。
  *
- * @param targetUrl 要打开或复用的页面地址。
+ * @param tabId 要操作的标签页 id。
  * @param action 注入到页面里执行的动作配置。
- * @param tabOptions 执行动作前的标签页级选项，例如是否先刷新页面。
  * @return 返回给侧边栏展示的页面动作结果。
  */
 const runPageActionInTab = async (
-  targetUrl: string,
-  action: PageActionConfig,
-  tabOptions: RunPageActionInTabOptions = {}
+  tabId: number,
+  action: PageActionConfig
 ): Promise<CodexLoginPageActionResponse> => {
-
-  const tabId = await findOrOpenTab(targetUrl)
-
-  if (tabOptions.reloadBeforeAction) {
-    await chrome.tabs.reload(tabId)
-    await waitForTabLoaded(tabId)
-  }
+  const originalTab = await chrome.tabs.get(tabId)
 
   // executeScript的返回值一定是Promise，需要await，
   // 但是func参数的返回值如果是Promise会自动执行await，如果不是就直接返回
@@ -467,7 +470,7 @@ const runPageActionInTab = async (
   // 如果performPageActionInPage返回值是Promise会自动执行await，如果不是就直接返回
   // 总之这里的actionInjectionResult?.result一定是处理好的最终结果
   const value = actionInjectionResult?.result
-  const tab = await chrome.tabs.get(tabId)
+  const currentTab = await chrome.tabs.get(tabId)
 
   if (!value?.ok) {
     return {
@@ -475,7 +478,7 @@ const runPageActionInTab = async (
       message: value?.message || action.failureMessage,
       targetTab: {
         id: tabId,
-        url: tab.url
+        url: currentTab.url || originalTab.url
       }
     }
   }
@@ -485,52 +488,47 @@ const runPageActionInTab = async (
     message: value.message,
     targetTab: {
       id: tabId,
-      url: tab.url
+      url: currentTab.url || originalTab.url
     }
   }
 }
 
 /**
- * 在已有标签页里直接执行页面动作。
+ * 打开或复用指定地址的标签页，并在该标签页里执行一次页面动作。
+ *
+ * @param targetUrl 要打开或复用的页面地址。
+ * @param action 注入到页面里执行的动作配置。
+ * @param tabOptions 执行动作前的标签页级选项，例如是否先刷新页面。
+ * @return 返回给侧边栏展示的页面动作结果。
+ */
+const runPageActionInTargetUrl = async (
+  targetUrl: string,
+  action: PageActionConfig,
+  tabOptions: RunPageActionInTabOptions = {}
+): Promise<CodexLoginPageActionResponse> => {
+  const tabId = await findOrOpenTab(targetUrl)
+
+  if (tabOptions.reloadBeforeAction) {
+    await chrome.tabs.reload(tabId)
+    await waitForTabLoaded(tabId)
+  }
+
+  return runPageActionInTab(tabId, action)
+}
+
+/**
+ * 在已保存的授权页标签里执行页面动作。
  *
  * @param tabId 要操作的标签页 id。
  * @param action 页面动作配置。
  * @return 返回给侧边栏展示的执行结果。
  */
-const runPageActionInExistingTab = async (
+const runPageActionInAuthTab = async (
   tabId: number,
   action: PageActionConfig
 ): Promise<CodexLoginPageActionResponse> => {
   try {
-    const tab = await chrome.tabs.get(tabId)
-    const [actionInjectionResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: performPageActionInPage,
-      args: [action]
-    })
-
-    const value = actionInjectionResult?.result
-    const currentTab = await chrome.tabs.get(tabId)
-
-    if (!value?.ok) {
-      return {
-        ok: false,
-        message: value?.message || action.failureMessage,
-        targetTab: {
-          id: tabId,
-          url: currentTab.url || tab.url
-        }
-      }
-    }
-
-    return {
-      ok: true,
-      message: value.message,
-      targetTab: {
-        id: tabId,
-        url: currentTab.url || tab.url
-      }
-    }
+    return await runPageActionInTab(tabId, action)
   } catch {
     return {
       ok: false,
@@ -611,7 +609,7 @@ export const openCodexAuthLink = async (
   // endregion。
 
   // region ========== 到cpa点击开始Codex登录 ==========
-  const runPageActionResult = await runPageActionInTab(
+  const runPageActionResult = await runPageActionInTargetUrl(
     targetUrl,
     {
       button: {
@@ -688,11 +686,11 @@ export const openCodexAuthLink = async (
  * @param email 2925 邮箱地址。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const fillOpenaiLoginEmail = async (
+export const fillCodexLoginEmail = async (
   tabId: number,
   email: string
 ): Promise<FillOpenaiLoginEmailResponse> => {
-  const result = await runPageActionInExistingTab(tabId, {
+  const result = await runPageActionInAuthTab(tabId, {
     fields: [
       {
         selectors: OPENAI_LOGIN_INPUT_SELECTORS,
@@ -729,11 +727,11 @@ export const fillOpenaiLoginEmail = async (
  * @param password 2925 邮箱密码。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const fillOpenaiLoginVerificationCode = async (
+export const fillCodexLoginVerificationCode = async (
   tabId: number,
   email: string,
   password: string
-): Promise<FillOpenaiLoginVerificationCodeResponse> => {
+): Promise<FillCodexLoginVerificationCodeResponse> => {
   const mailResult = await fetchMail2925VerificationCode(email, password)
 
   if (!mailResult.code) {
@@ -752,7 +750,7 @@ export const fillOpenaiLoginVerificationCode = async (
   await waitForTabLoaded(tabId)
   const tab = await chrome.tabs.get(tabId)
   const currentUrl = String(tab.url || "").trim()
-  if (!/\/email-verification(?:[/?#]|$)/i.test(currentUrl)) {
+  if (!isCodexVerificationCodeUrl(currentUrl)) {
     return {
       ok: false,
       message: `当前标签页不是 OpenAI 邮箱验证码页（${currentUrl || "unknown"}）`,
@@ -763,7 +761,7 @@ export const fillOpenaiLoginVerificationCode = async (
     }
   }
 
-  const result = await runPageActionInExistingTab(tabId, {
+  const result = await runPageActionInAuthTab(tabId, {
     fields: [
       {
         selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
@@ -790,6 +788,59 @@ export const fillOpenaiLoginVerificationCode = async (
   return {
     ...result,
     message: `${mailResult.message}；${result.message}`
+  }
+}
+
+/**
+ * 在 OpenAI 登录页填写邮箱，等待进入邮箱验证码页，然后读取并回填验证码。
+ *
+ * @param tabId 要操作的登录页标签页 id。
+ * @param email 2925 邮箱地址。
+ * @param password 2925 邮箱密码。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+export const fillCodexLoginEmailAndVerificationCode = async (
+  tabId: number,
+  email: string,
+  password: string
+): Promise<FillCodexLoginEmailAndVerificationCodeResponse> => {
+  const fillResult = await fillCodexLoginEmail(tabId, email)
+  if (!fillResult.ok) {
+    return fillResult
+  }
+
+  const verificationUrl = await waitForTabMatchingUrl(
+    tabId,
+    isCodexVerificationCodeUrl,
+    {
+      timeoutMs: 60000,
+      intervalMs: 500
+    }
+  )
+
+  if (!verificationUrl) {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+    return {
+      ok: false,
+      message: `${fillResult.message}；60 秒内未进入邮箱验证码页（${
+        currentTab?.url || "unknown"
+      }）`,
+      targetTab: {
+        id: tabId,
+        url: currentTab?.url
+      }
+    }
+  }
+
+  const codeResult = await fillCodexLoginVerificationCode(
+    tabId,
+    email,
+    password
+  )
+
+  return {
+    ...codeResult,
+    message: `${fillResult.message}；${codeResult.message}`
   }
 }
 
@@ -827,7 +878,7 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
     }
   )
 
-  const confirmResult = await runPageActionInExistingTab(tabId, {
+  const confirmResult = await runPageActionInAuthTab(tabId, {
     button: {
       texts: OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS,
       submitStrategy: "requestSubmit"
@@ -872,7 +923,7 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
 }
 
 /**
- * 执行第四步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
+ * 执行第三步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
  *
  * @param tabId 当前 OpenAI 授权页标签页 id。
  * @param targetUrl Codex 管理页 OAuth 地址。
@@ -888,7 +939,7 @@ export const confirmCodexOAuthAndSubmitCallback = async (
     return callbackResult
   }
 
-  const submitResult = await runPageActionInTab(targetUrl, {
+  const submitResult = await runPageActionInTargetUrl(targetUrl, {
     fields: [
       {
         selectors: CODEX_CALLBACK_INPUT_SELECTORS,

@@ -1,7 +1,6 @@
 import {
   confirmCodexOAuthAndSubmitCallback,
-  fillOpenaiLoginEmail,
-  fillOpenaiLoginVerificationCode,
+  fillCodexLoginEmailAndVerificationCode,
   openCodexAuthLink
 } from "./codex-login"
 import type {
@@ -9,8 +8,7 @@ import type {
   BackgroundRequestHandler,
   BackgroundRequestType,
   ConfirmCodexOAuthCallbackRequest,
-  FillOpenaiLoginEmailRequest,
-  FillOpenaiLoginVerificationCodeRequest,
+  FillCodexLoginEmailAndVerificationCodeRequest,
   OpenCodexAuthLinkRequest
 } from "./types"
 
@@ -40,25 +38,15 @@ const handleOpenCodexAuthLink = (request: OpenCodexAuthLinkRequest) => {
 }
 
 /**
- * 处理“填写邮箱并继续”请求。
+ * 处理“填写邮箱并回填验证码”请求。
  *
- * @param request 步骤 2 请求，包含登录页标签页 id 和邮箱。
+ * @param request 步骤 2 请求，包含登录页标签页 id、邮箱和密码。
  * @return 步骤执行结果。
  */
-const handleFillOpenaiLoginEmail = (request: FillOpenaiLoginEmailRequest) => {
-  return fillOpenaiLoginEmail(request.payload.tabId, request.payload.email)
-}
-
-/**
- * 处理“读取验证码并回填”请求。
- *
- * @param request 步骤 3 请求，包含验证码页标签页 id、邮箱和密码。
- * @return 步骤执行结果。
- */
-const handleFillOpenaiLoginVerificationCode = (
-  request: FillOpenaiLoginVerificationCodeRequest
+const handleFillCodexLoginEmailAndVerificationCode = (
+  request: FillCodexLoginEmailAndVerificationCodeRequest
 ) => {
-  return fillOpenaiLoginVerificationCode(
+  return fillCodexLoginEmailAndVerificationCode(
     request.payload.tabId,
     request.payload.email,
     request.payload.password
@@ -68,7 +56,7 @@ const handleFillOpenaiLoginVerificationCode = (
 /**
  * 处理“确认 OAuth 并提交回调 URL”请求。
  *
- * @param request 步骤 4 请求，包含授权页 tabId 和管理页地址。
+ * @param request 步骤 3 请求，包含授权页 tabId 和管理页地址。
  * @return 步骤执行结果。
  */
 const handleConfirmCodexOAuthCallback = (
@@ -89,7 +77,6 @@ const handleConfirmCodexOAuthCallback = (
  */
 export const REQUEST_HANDLERS: BackgroundRequestHandlerMap = {
   "codex-login:open-auth-link": handleOpenCodexAuthLink,
-  "codex-login:fill-auth-email": handleFillOpenaiLoginEmail,
-  "codex-login:fill-auth-code": handleFillOpenaiLoginVerificationCode,
+  "codex-login:fill-auth-email-and-code": handleFillCodexLoginEmailAndVerificationCode,
   "codex-login:confirm-oauth-callback": handleConfirmCodexOAuthCallback
 }
