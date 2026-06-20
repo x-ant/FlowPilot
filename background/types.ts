@@ -53,6 +53,17 @@ export type FillOpenaiLoginVerificationCodeMessage = BackgroundMessageBase<
 >
 
 /**
+ * 步骤 5：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
+ */
+export type ConfirmCodexOAuthCallbackMessage = BackgroundMessageBase<
+  "codex-login:confirm-oauth-callback",
+  {
+    tabId: number
+    targetUrl: string
+  }
+>
+
+/**
  * 所有 background 可以处理的消息联合类型。
  *
  * 后续新增步骤时，把新的 Message 类型用 | 加到这里。
@@ -62,6 +73,7 @@ export type BackgroundMessage =
   | OpenCodexAuthLinkMessage
   | FillOpenaiLoginEmailMessage
   | FillOpenaiLoginVerificationCodeMessage
+  | ConfirmCodexOAuthCallbackMessage
 
 /**
  * 浏览器标签页的最小信息。
@@ -85,12 +97,8 @@ export type CodexLoginStepResponseBase = {
 
 /**
  * 注入页面脚本后的通用页面动作响应。
- *
- * authUrl 来自页面里解析出的授权链接，只在需要打开授权链接的步骤里使用。
  */
-export type CodexLoginPageActionResponse = CodexLoginStepResponseBase & {
-  authUrl?: string
-}
+export type CodexLoginPageActionResponse = CodexLoginStepResponseBase
 
 /**
  * 步骤 1：点击目标页面里的“开始codex登录”按钮。
@@ -100,9 +108,7 @@ export type StartCodexLoginStepResponse = CodexLoginStepResponseBase
 /**
  * 步骤 2：打开 OpenAI 登录页或授权链接。
  */
-export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase & {
-  authUrl?: string
-}
+export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
 
 /**
  * 步骤 3：在 OpenAI 登录页填写邮箱并继续。
@@ -120,6 +126,16 @@ export type FillOpenaiLoginVerificationCodeResponse =
   }
 
 /**
+ * 步骤 5：确认 OAuth 授权并提交回调 URL。
+ *
+ * managementTab 表示被回填 callback URL 的 Codex 管理页。
+ */
+export type ConfirmCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
+  callbackUrl?: string
+  managementTab?: BrowserTabInfo
+}
+
+/**
  * 所有后台消息处理器统一返回的响应类型。
  */
 export type BackgroundResponse =
@@ -127,6 +143,7 @@ export type BackgroundResponse =
   | OpenCodexAuthLinkResponse
   | FillOpenaiLoginEmailResponse
   | FillOpenaiLoginVerificationCodeResponse
+  | ConfirmCodexOAuthCallbackResponse
 
 /**
  * 注入目标网页后，点击页面按钮的执行结果。
@@ -135,7 +152,6 @@ export type ClickPageButtonResult = {
   ok: boolean
   message: string
   buttonText?: string
-  authUrl?: string
 }
 
 /**

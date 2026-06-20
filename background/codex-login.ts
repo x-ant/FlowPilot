@@ -1,17 +1,18 @@
+import { fetchMail2925VerificationCode } from "./mail-2925"
 import {
+  extractOpenaiOAuthAuthorizeUrlInPage,
   performPageActionByTextsInPage,
   type PageActionByTextsArgs,
   type PageActionByTextsOptions
 } from "./page-script"
-import { fetchMail2925VerificationCode } from "./mail-2925"
 import {
-  collectCurrentTabIds,
   findOrOpenTab,
-  waitForNewMatchingTab,
-  waitForTabLoaded
+  waitForTabLoaded,
+  waitForTabMatchingUrl
 } from "./tab-utils"
 import type {
   CodexLoginPageActionResponse,
+  ConfirmCodexOAuthCallbackResponse,
   FillOpenaiLoginEmailResponse,
   FillOpenaiLoginVerificationCodeResponse,
   OpenCodexAuthLinkResponse,
@@ -25,7 +26,6 @@ const CODEX_LOGIN_BUTTON_TEXTS = [
   "开始 Codex login"
 ]
 
-const CODEX_AUTH_LINK_BUTTON_TEXTS = ["打开链接", "打开授权链接"]
 const OPENAI_LOGIN_BUTTON_TEXTS = [
   "continue",
   "next",
@@ -86,12 +86,32 @@ const OPENAI_VERIFICATION_BUTTON_TEXTS = [
   "确认",
   "提交"
 ]
+const OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS = ["continue", "继续"]
+const CODEX_CALLBACK_INPUT_SELECTORS = [
+  "input[placeholder*='localhost' i]",
+  "input[placeholder*='auth/callback' i]",
+  "input[aria-label*='回调']",
+  "input[aria-label*='callback' i]",
+  "input[name*='callback' i]",
+  "input[id*='callback' i]"
+]
+const CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS = [
+  "提交回调 URL",
+  "提交回调URL",
+  "Submit Callback URL"
+]
 const CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE = "已填写邮箱并点击“继续”按钮"
 const CODEX_AUTH_CONTINUE_FAILURE_MESSAGE =
   "未找到邮箱输入框或“继续”按钮，请确认页面已打开到 OpenAI 登录页"
 const CODEX_AUTH_VERIFY_SUCCESS_MESSAGE = "已填写邮箱验证码并继续"
 const CODEX_AUTH_VERIFY_FAILURE_MESSAGE =
   "未找到验证码输入框或“继续”按钮，请确认页面已打开到 OpenAI 邮箱验证码页"
+const CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE = "已点击授权确认页“继续”按钮"
+const CODEX_AUTH_CONFIRM_FAILURE_MESSAGE =
+  "未找到授权确认页的“继续”按钮，请确认页面已停留在 Codex 授权确认页"
+const CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE = "已填写并提交回调 URL"
+const CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE =
+  "未找到回调 URL 输入框或“提交回调 URL”按钮，请确认管理页已停留在 OAuth 页面"
 const CODEX_SESSION_COOKIE_DOMAINS = ["openai.com", "chatgpt.com"]
 const CODEX_SESSION_STORAGE_HOSTNAMES = [
   "auth.openai.com",
@@ -108,6 +128,36 @@ const isCodexSessionStorageUrl = (rawUrl?: string) => {
   try {
     const hostname = new URL(String(rawUrl || "")).hostname.toLowerCase()
     return CODEX_SESSION_STORAGE_HOSTNAMES.includes(hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 判断是否是 Codex OAuth 完成后跳转出的本机回调地址。
+ *
+ * @param rawUrl 浏览器标签页当前 URL。
+ * @return 如果是带 code/state 的 localhost 回调地址则返回 true。
+ */
+const isLocalhostOAuthCallbackUrl = (rawUrl?: string) => {
+  try {
+    const parsed = new URL(String(rawUrl || ""))
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return false
+    }
+
+    if (!["localhost", "127.0.0.1"].includes(parsed.hostname)) {
+      return false
+    }
+
+    if (!["/auth/callback", "/codex/callback"].includes(parsed.pathname)) {
+      return false
+    }
+
+    const code = parsed.searchParams.get("code")?.trim()
+    const state = parsed.searchParams.get("state")?.trim()
+
+    return Boolean(code && state)
   } catch {
     return false
   }
@@ -360,18 +410,6 @@ const clearCodexSessionStorage = async () => {
   }
 }
 
-/**
- * 判断标签页是否是新打开的 OpenAI OAuth 授权页。
- *
- * @param tab 待检查的 Chrome 标签页。
- * @return 如果是 OpenAI OAuth 授权页则返回 true。
- */
-const isOpenaiOAuthAuthorizeTab = (tab: chrome.tabs.Tab) => {
-  return String(tab.url || "").startsWith(
-    "https://auth.openai.com/oauth/authorize"
-  )
-}
-
 const runPageActionInTab = async (
   targetUrl: string,
   actionOptions: PageActionByTextsOptions,
@@ -404,8 +442,7 @@ const runPageActionInTab = async (
     targetTab: {
       id: tabId,
       url: tab.url
-    },
-    authUrl: value.authUrl
+    }
   }
 }
 
@@ -450,8 +487,7 @@ const runPageActionInExistingTab = async (
       targetTab: {
         id: tabId,
         url: currentTab.url || tab.url
-      },
-      authUrl: value.authUrl
+      }
     }
   } catch {
     return {
@@ -477,7 +513,8 @@ export const startCodexLogin = async (
     targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
     timeoutMs: 15000,
     successMessage: "已点击“开始codex登录”按钮",
-    failureMessage: "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
+    failureMessage:
+      "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
   })
 }
 
@@ -510,83 +547,48 @@ export const openCodexAuthLink = async (
     }
   }
 
-  const beforeTabIds = await collectCurrentTabIds()
+  const managementTabId = await findOrOpenTab(targetUrl)
+  const [extractResult] = await chrome.scripting.executeScript({
+    target: { tabId: managementTabId },
+    func: extractOpenaiOAuthAuthorizeUrlInPage
+  })
+  const extractValue = extractResult?.result
+  const managementTab = await chrome.tabs.get(managementTabId)
 
-  const result = await runPageActionInTab(targetUrl, {
-    targetTexts: CODEX_AUTH_LINK_BUTTON_TEXTS,
-    timeoutMs: 15000,
-    successMessage: "已点击“打开链接”按钮",
-    failureMessage: "未找到“打开链接”按钮，请先执行步骤 1 并确认授权链接已生成"
+  if (!extractValue?.ok || !extractValue.authUrl) {
+    return {
+      ok: false,
+      message: `${cleanupMessage}${extractValue?.message || "未找到授权链接"}`,
+      targetTab: {
+        id: managementTabId,
+        url: managementTab.url
+      }
+    }
+  }
+
+  // 不点击页面里的“打开链接”按钮，避免脚本点击触发 window.open 被浏览器拦截。
+  const authTab = await chrome.tabs.create({
+    active: true,
+    url: extractValue.authUrl
   })
 
-  if (!result.ok) {
-    return {
-      ...result,
-      message: `${cleanupMessage}${result.message}`
-    }
-  }
-
-  const newAuthTab = await waitForNewMatchingTab(
-    beforeTabIds,
-    isOpenaiOAuthAuthorizeTab
-  )
-  if (newAuthTab) {
-    const authTabs = (await chrome.tabs.query({})).filter((tab) => {
-      return Boolean(tab.id) && isCodexSessionStorageUrl(tab.url)
-    })
-
-    for (const tab of authTabs) {
-      if (!tab.id) {
-        continue
-      }
-
-      try {
-        await clearCodexSessionStorageInTab(tab.id)
-        await chrome.tabs.reload(tab.id)
-      } catch {
-        // Best effort only.
-      }
-    }
-
-    return {
-      ...result,
-      message: `${cleanupMessage}已在新标签页打开授权链接`,
-      targetTab: {
-        id: newAuthTab.id,
-        url: newAuthTab.url
-      }
-    }
-  }
-
-  if (result.authUrl) {
-    const authTab = await chrome.tabs.create({
-      active: true,
-      url: result.authUrl
-    })
-
-    if (authTab.id) {
-      try {
-        await waitForTabLoaded(authTab.id)
-        await clearCodexSessionStorageInTab(authTab.id)
-        await chrome.tabs.reload(authTab.id)
-      } catch {
-        // Best effort only.
-      }
-    }
-
-    return {
-      ...result,
-      message: `${cleanupMessage}已打开授权链接`,
-      targetTab: {
-        id: authTab.id,
-        url: authTab.url || result.authUrl
-      }
+  if (authTab.id) {
+    try {
+      await waitForTabLoaded(authTab.id)
+      await clearCodexSessionStorageInTab(authTab.id)
+      await chrome.tabs.reload(authTab.id)
+    } catch {
+      // Best effort only.
     }
   }
 
   return {
-    ...result,
-    message: `${cleanupMessage}${result.message}`
+    ok: true,
+    message: `${cleanupMessage}已读取授权链接并打开 OpenAI 授权页`,
+    targetTab: {
+      id: authTab.id,
+      url: authTab.url || extractValue.authUrl
+    }
   }
 }
 
@@ -601,16 +603,30 @@ export const fillOpenaiLoginEmail = async (
   tabId: number,
   email: string
 ): Promise<FillOpenaiLoginEmailResponse> => {
-  const result = await runPageActionInExistingTab(tabId, {
-    targetTexts: OPENAI_LOGIN_BUTTON_TEXTS,
-    timeoutMs: 15000,
-    successMessage: CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE,
-    failureMessage: CODEX_AUTH_CONTINUE_FAILURE_MESSAGE,
-    submitStrategy: "requestSubmit"
-  }, {
-    inputSelectors: OPENAI_LOGIN_INPUT_SELECTORS,
-    inputValue: email
-  })
+  const result = await runPageActionInExistingTab(
+    tabId,
+    {
+      targetTexts: OPENAI_LOGIN_BUTTON_TEXTS,
+      timeoutMs: 15000,
+      successMessage: CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE,
+      failureMessage: CODEX_AUTH_CONTINUE_FAILURE_MESSAGE,
+      submitStrategy: "requestSubmit"
+    },
+    {
+      inputSelectors: OPENAI_LOGIN_INPUT_SELECTORS,
+      inputValue: email
+    }
+  )
+
+  if (!result.ok) {
+    const currentUrl = String(result.targetTab?.url || "").trim()
+    return {
+      ...result,
+      message: currentUrl
+        ? `${result.message}；当前页：${currentUrl}`
+        : result.message
+    }
+  }
 
   return result
 }
@@ -682,5 +698,132 @@ export const fillOpenaiLoginVerificationCode = async (
   return {
     ...result,
     message: `${mailResult.message}；${result.message}`
+  }
+}
+
+/**
+ * 点击 OpenAI/Codex OAuth 授权确认页的“继续”，捕获 localhost 回调地址。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @return 捕获到的 localhost 回调地址；超时则返回空。
+ */
+const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
+  await activateBrowserTab(tabId)
+  await waitForTabLoaded(tabId)
+
+  const currentTab = await chrome.tabs.get(tabId)
+  if (isLocalhostOAuthCallbackUrl(currentTab.url)) {
+    return {
+      ok: true,
+      callbackUrl: String(currentTab.url || ""),
+      targetTab: {
+        id: tabId,
+        url: currentTab.url
+      },
+      message: "当前页面已跳转到 localhost 回调地址"
+    }
+  }
+
+  const abortController = new AbortController()
+  const callbackUrlPromise = waitForTabMatchingUrl(
+    tabId,
+    isLocalhostOAuthCallbackUrl,
+    {
+      timeoutMs: 120000,
+      intervalMs: 500,
+      signal: abortController.signal
+    }
+  )
+
+  const confirmResult = await runPageActionInExistingTab(tabId, {
+    targetTexts: OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS,
+    timeoutMs: 15000,
+    successMessage: CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE,
+    failureMessage: CODEX_AUTH_CONFIRM_FAILURE_MESSAGE,
+    submitStrategy: "requestSubmit"
+  })
+
+  if (!confirmResult.ok) {
+    abortController.abort()
+    return {
+      ...confirmResult,
+      callbackUrl: ""
+    }
+  }
+
+  const callbackUrl = await callbackUrlPromise
+  const latestTab = await chrome.tabs.get(tabId).catch(() => currentTab)
+
+  if (!callbackUrl) {
+    return {
+      ok: false,
+      message: "已点击授权确认页“继续”，但 120 秒内未捕获到 localhost 回调地址",
+      targetTab: {
+        id: tabId,
+        url: latestTab.url
+      },
+      callbackUrl: ""
+    }
+  }
+
+  return {
+    ok: true,
+    message: "已捕获 localhost 回调地址",
+    targetTab: {
+      id: tabId,
+      url: callbackUrl
+    },
+    callbackUrl
+  }
+}
+
+/**
+ * 执行第五步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @param targetUrl Codex 管理页 OAuth 地址。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+export const confirmCodexOAuthAndSubmitCallback = async (
+  tabId: number,
+  targetUrl: string
+): Promise<ConfirmCodexOAuthCallbackResponse> => {
+  const callbackResult = await confirmOAuthConsentAndCaptureCallback(tabId)
+
+  if (!callbackResult.ok || !callbackResult.callbackUrl) {
+    return callbackResult
+  }
+
+  const submitResult = await runPageActionInTab(
+    targetUrl,
+    {
+      targetTexts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
+      timeoutMs: 15000,
+      successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
+      failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE,
+      submitStrategy: "requestSubmit"
+    },
+    {
+      inputSelectors: CODEX_CALLBACK_INPUT_SELECTORS,
+      inputValue: callbackResult.callbackUrl
+    }
+  )
+
+  if (!submitResult.ok) {
+    return {
+      ok: false,
+      message: `已捕获回调地址，但提交到管理页失败：${submitResult.message}`,
+      targetTab: callbackResult.targetTab,
+      managementTab: submitResult.targetTab,
+      callbackUrl: callbackResult.callbackUrl
+    }
+  }
+
+  return {
+    ok: true,
+    message: `${callbackResult.message}；${submitResult.message}`,
+    targetTab: callbackResult.targetTab,
+    managementTab: submitResult.targetTab,
+    callbackUrl: callbackResult.callbackUrl
   }
 }

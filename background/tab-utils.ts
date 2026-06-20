@@ -3,6 +3,12 @@ type WaitForNewMatchingTabOptions = {
   intervalMs?: number
 }
 
+type WaitForTabMatchingUrlOptions = {
+  timeoutMs?: number
+  intervalMs?: number
+  signal?: AbortSignal
+}
+
 /**
  * 把延迟封装成 Promise，方便在 async 流程里等待一小段时间。
  *
@@ -149,6 +155,111 @@ export const waitForNewMatchingTab = async (
   }
 
   return undefined
+}
+
+/**
+ * 等待指定标签页跳转到符合条件的 URL。
+ *
+ * OAuth 回调有时会跳到本机 localhost 页面，即使本地服务没有响应，
+ * Chrome 也会先把标签页 URL 更新出来，所以用 tabs.onUpdated 捕获即可。
+ *
+ * @param tabId 要监听的标签页 id。
+ * @param matcher 判断 URL 是否满足业务条件。
+ * @param options 等待超时和轮询间隔配置。
+ * @return 命中的 URL；超时或标签页关闭时返回 undefined。
+ */
+export const waitForTabMatchingUrl = async (
+  tabId: number,
+  matcher: (url: string) => boolean,
+  options: WaitForTabMatchingUrlOptions = {}
+) => {
+  const timeoutMs = options.timeoutMs ?? 120000
+  const intervalMs = options.intervalMs ?? 500
+  const signal = options.signal
+
+  return new Promise<string | undefined>((resolve) => {
+    let done = false
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let pollId: ReturnType<typeof setInterval> | undefined
+
+    const finish = (url?: string) => {
+      if (done) {
+        return
+      }
+
+      done = true
+      chrome.tabs.onUpdated.removeListener(onUpdated)
+      chrome.tabs.onRemoved.removeListener(onRemoved)
+      signal?.removeEventListener("abort", onAbort)
+
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+
+      if (pollId) {
+        clearInterval(pollId)
+      }
+
+      resolve(url)
+    }
+
+    const inspectUrl = (url?: string) => {
+      const value = String(url || "").trim()
+      if (value && matcher(value)) {
+        finish(value)
+        return true
+      }
+
+      return false
+    }
+
+    const inspectCurrentTab = () => {
+      void chrome.tabs
+        .get(tabId)
+        .then((tab) => {
+          inspectUrl(tab.url)
+        })
+        .catch(() => {
+          finish()
+        })
+    }
+
+    function onUpdated(
+      updatedTabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+      tab: chrome.tabs.Tab
+    ) {
+      if (updatedTabId !== tabId) {
+        return
+      }
+
+      inspectUrl(changeInfo.url) || inspectUrl(tab.url)
+    }
+
+    function onRemoved(removedTabId: number) {
+      if (removedTabId === tabId) {
+        finish()
+      }
+    }
+
+    function onAbort() {
+      finish()
+    }
+
+    if (signal?.aborted) {
+      finish()
+      return
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated)
+    chrome.tabs.onRemoved.addListener(onRemoved)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    timeoutId = setTimeout(() => {
+      finish()
+    }, timeoutMs)
+    pollId = setInterval(inspectCurrentTab, intervalMs)
+    inspectCurrentTab()
+  })
 }
 
 /**

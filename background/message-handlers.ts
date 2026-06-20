@@ -1,4 +1,5 @@
 import {
+  confirmCodexOAuthAndSubmitCallback,
   fillOpenaiLoginEmail,
   fillOpenaiLoginVerificationCode,
   openCodexAuthLink,
@@ -8,6 +9,7 @@ import type {
   BackgroundMessage,
   BackgroundMessageHandler,
   BackgroundMessageType,
+  ConfirmCodexOAuthCallbackMessage,
   FillOpenaiLoginEmailMessage,
   FillOpenaiLoginVerificationCodeMessage,
   OpenCodexAuthLinkMessage,
@@ -54,9 +56,7 @@ const handleOpenCodexAuthLink = (message: OpenCodexAuthLinkMessage) => {
  * @param message 步骤 3 消息，包含登录地址和邮箱。
  * @return 步骤执行结果。
  */
-const handleFillOpenaiLoginEmail = (
-  message: FillOpenaiLoginEmailMessage
-) => {
+const handleFillOpenaiLoginEmail = (message: FillOpenaiLoginEmailMessage) => {
   return fillOpenaiLoginEmail(message.payload.tabId, message.payload.email)
 }
 
@@ -77,6 +77,21 @@ const handleFillOpenaiLoginVerificationCode = (
 }
 
 /**
+ * 处理“确认 OAuth 并提交回调 URL”消息。
+ *
+ * @param message 步骤 5 消息，包含授权页 tabId 和管理页地址。
+ * @return 步骤执行结果。
+ */
+const handleConfirmCodexOAuthCallback = (
+  message: ConfirmCodexOAuthCallbackMessage
+) => {
+  return confirmCodexOAuthAndSubmitCallback(
+    message.payload.tabId,
+    message.payload.targetUrl
+  )
+}
+
+/**
  * 后台消息处理器映射表。
  *
  * 后续新增步骤时，在 types.ts 增加消息类型，然后在这里补一个 handler。
@@ -87,5 +102,6 @@ export const MESSAGE_HANDLERS: BackgroundMessageHandlerMap = {
   "codex-login:start": handleStartCodexLogin,
   "codex-login:open-auth-link": handleOpenCodexAuthLink,
   "codex-login:fill-auth-email": handleFillOpenaiLoginEmail,
-  "codex-login:fill-auth-code": handleFillOpenaiLoginVerificationCode
+  "codex-login:fill-auth-code": handleFillOpenaiLoginVerificationCode,
+  "codex-login:confirm-oauth-callback": handleConfirmCodexOAuthCallback
 }

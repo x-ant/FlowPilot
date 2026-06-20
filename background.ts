@@ -13,7 +13,8 @@ const MESSAGE_FAILURE_MESSAGES: Record<BackgroundMessageType, string> = {
   "codex-login:start": "执行 Codex 登录入口点击失败",
   "codex-login:open-auth-link": "执行 Codex 授权链接打开失败",
   "codex-login:fill-auth-email": "执行 Codex 登录邮箱填写失败",
-  "codex-login:fill-auth-code": "执行 Codex 登录验证码回填失败"
+  "codex-login:fill-auth-code": "执行 Codex 登录验证码回填失败",
+  "codex-login:confirm-oauth-callback": "执行 Codex OAuth 回调提交失败"
 }
 
 /**
@@ -24,7 +25,9 @@ const MESSAGE_FAILURE_MESSAGES: Record<BackgroundMessageType, string> = {
  * @param message 原始 runtime message。
  * @return 如果是已注册的后台消息则返回 true。
  */
-const isBackgroundMessage = (message: unknown): message is BackgroundMessage => {
+const isBackgroundMessage = (
+  message: unknown
+): message is BackgroundMessage => {
   if (!message || typeof message !== "object") {
     return false
   }

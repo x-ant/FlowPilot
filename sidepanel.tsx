@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Button,
   Card,
@@ -8,20 +7,22 @@ import {
   Input,
   Space,
   Tag,
-  Typography,
-  theme
+  theme,
+  Typography
 } from "antd"
 import zhCN from "antd/locale/zh_CN"
-import "antd/dist/reset.css"
+import { useEffect, useMemo, useRef, useState } from "react"
 
+import "antd/dist/reset.css"
 import "./sidepanel.css"
+
+import type { BackgroundResponse } from "./background/types"
 import {
-  LOG_LEVEL_META,
   createUiLogger,
   getTimeLabel,
+  LOG_LEVEL_META,
   type LogItem
 } from "./shared/logging"
-import type { BackgroundResponse } from "./background/types"
 
 type Settings = {
   loginUrl?: string
@@ -46,6 +47,7 @@ type CodexLoginMessageType =
   | "codex-login:open-auth-link"
   | "codex-login:fill-auth-email"
   | "codex-login:fill-auth-code"
+  | "codex-login:confirm-oauth-callback"
 
 type CodexLoginPayload =
   | {
@@ -60,6 +62,10 @@ type CodexLoginPayload =
       email: string
       password: string
     }
+  | {
+      tabId: number
+      targetUrl: string
+    }
 
 const STORAGE_KEY = "codex-login:settings"
 const AUTH_TAB_STORAGE_KEY = "codex-login:auth-tab"
@@ -67,6 +73,7 @@ const STEP_CLICK_CODEX_LOGIN = "click-codex-login"
 const STEP_OPEN_AUTH_LINK = "open-auth-link"
 const STEP_FILL_AUTH_EMAIL = "fill-auth-email"
 const STEP_FILL_AUTH_CODE = "fill-auth-code"
+const STEP_CONFIRM_OAUTH_CALLBACK = "confirm-oauth-callback"
 
 const initialStats: Stats = {
   total: 0,
@@ -249,8 +256,7 @@ function SidePanel() {
    * @return 无。
    */
   const persistAuthTab = (targetTab?: BackgroundResponse["targetTab"]) => {
-    const nextTabId =
-      typeof targetTab?.id === "number" ? targetTab.id : null
+    const nextTabId = typeof targetTab?.id === "number" ? targetTab.id : null
 
     setAuthTabId(nextTabId)
 
@@ -427,7 +433,9 @@ function SidePanel() {
           failed: current.failed + 1
         }
       })
-      log.error(`步骤 1 异常：${error instanceof Error ? error.message : "未知错误"}`)
+      log.error(
+        `步骤 1 异常：${error instanceof Error ? error.message : "未知错误"}`
+      )
     } finally {
       setRunningStep(null)
     }
@@ -537,7 +545,9 @@ function SidePanel() {
           failed: current.failed + 1
         }
       })
-      log.error(`步骤 2 异常：${error instanceof Error ? error.message : "未知错误"}`)
+      log.error(
+        `步骤 2 异常：${error instanceof Error ? error.message : "未知错误"}`
+      )
     } finally {
       setRunningStep(null)
     }
@@ -661,7 +671,9 @@ function SidePanel() {
           failed: current.failed + 1
         }
       })
-      log.error(`步骤 3 异常：${error instanceof Error ? error.message : "未知错误"}`)
+      log.error(
+        `步骤 3 异常：${error instanceof Error ? error.message : "未知错误"}`
+      )
     } finally {
       setRunningStep(null)
     }
@@ -675,22 +687,24 @@ function SidePanel() {
   const handleFillAuthCodeStep = async () => {
     try {
       setRunningStep(STEP_FILL_AUTH_CODE)
-      const values = await form.validateFields(["email", "password"]).catch((error) => {
-        setStatus("步骤 4 需要先执行步骤 2/3 并填写账号密码")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
+      const values = await form
+        .validateFields(["email", "password"])
+        .catch((error) => {
+          setStatus("步骤 4 需要先执行步骤 2/3 并填写账号密码")
+          setStats((current) => {
+            return {
+              ...current,
+              total: current.total + 1,
+              failed: current.failed + 1
+            }
+          })
+          log.warn(
+            `步骤 4 参数异常：${
+              error instanceof Error ? error.message : "2925 邮箱和密码不能为空"
+            }`
+          )
+          return null
         })
-        log.warn(
-          `步骤 4 参数异常：${
-            error instanceof Error ? error.message : "2925 邮箱和密码不能为空"
-          }`
-        )
-        return null
-      })
 
       if (!values) {
         return
@@ -787,7 +801,137 @@ function SidePanel() {
           failed: current.failed + 1
         }
       })
-      log.error(`步骤 4 异常：${error instanceof Error ? error.message : "未知错误"}`)
+      log.error(
+        `步骤 4 异常：${error instanceof Error ? error.message : "未知错误"}`
+      )
+    } finally {
+      setRunningStep(null)
+    }
+  }
+
+  /**
+   * 执行步骤 5：点击授权确认页继续，捕获回调 URL，并提交到管理页。
+   *
+   * @return 无，执行结果通过状态、统计和日志反馈。
+   */
+  const handleConfirmOAuthCallbackStep = async () => {
+    try {
+      setRunningStep(STEP_CONFIRM_OAUTH_CALLBACK)
+      const values = await form.validateFields(["loginUrl"]).catch((error) => {
+        setStatus("步骤 5 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(
+          `步骤 5 参数异常：${
+            error instanceof Error ? error.message : "Codex 登录地址不能为空"
+          }`
+        )
+        return null
+      })
+
+      if (!values) {
+        return
+      }
+
+      const loginUrl = values.loginUrl?.trim()
+      const targetAuthTabId = await resolveAuthTabId()
+      if (!targetAuthTabId) {
+        setStatus("步骤 5 需要先执行步骤 2 到步骤 4")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 5 参数异常：请先完成验证码回填并停留在授权确认页")
+        return
+      }
+
+      if (!loginUrl) {
+        setStatus("步骤 5 需要登录地址")
+        setStats((current) => {
+          return {
+            ...current,
+            total: current.total + 1,
+            failed: current.failed + 1
+          }
+        })
+        log.warn("步骤 5 参数异常：Codex 登录地址不能为空")
+        return
+      }
+
+      setStatus("正在确认授权并提交回调 URL")
+      setStats((current) => {
+        return {
+          ...current,
+          total: current.total + 1
+        }
+      })
+      log.debug("步骤 5 准备点击授权页“继续”，并把 localhost 回调提交到管理页")
+
+      let result: BackgroundResponse
+      try {
+        result = await sendCodexLoginMessage(
+          "codex-login:confirm-oauth-callback",
+          {
+            tabId: targetAuthTabId,
+            targetUrl: loginUrl
+          }
+        )
+      } catch (error) {
+        setStatus("步骤 5 执行异常")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.error(
+          `步骤 5 异常：${
+            error instanceof Error ? error.message : "后台脚本未响应"
+          }`
+        )
+        return
+      }
+
+      if (!result.ok) {
+        setStatus("步骤 5 执行失败")
+        setStats((current) => {
+          return {
+            ...current,
+            failed: current.failed + 1
+          }
+        })
+        log.warn(`步骤 5 ${result.message}`)
+        return
+      }
+
+      setStatus("步骤 5 已完成")
+      setStats((current) => {
+        return {
+          ...current,
+          success: current.success + 1
+        }
+      })
+      persistAuthTab(result.targetTab)
+      log.info(`步骤 5 ${result.message}`)
+    } catch (error) {
+      setStatus("步骤 5 执行异常")
+      setStats((current) => {
+        return {
+          ...current,
+          failed: current.failed + 1
+        }
+      })
+      log.error(
+        `步骤 5 异常：${error instanceof Error ? error.message : "未知错误"}`
+      )
     } finally {
       setRunningStep(null)
     }
@@ -854,7 +998,6 @@ function SidePanel() {
                 rules={[{ required: true, message: "请输入邮箱密码" }]}>
                 <Input.Password placeholder="请输入密码" />
               </Form.Item>
-
             </Form>
           </Card>
 
@@ -905,6 +1048,18 @@ function SidePanel() {
                   type="primary"
                   loading={runningStep === STEP_FILL_AUTH_CODE}
                   onClick={handleFillAuthCodeStep}>
+                  执行
+                </Button>
+              </div>
+              <div className="step-row">
+                <div className="step-copy">
+                  <span className="step-index">步骤 5</span>
+                  <span className="step-title">确认授权并提交回调 URL</span>
+                </div>
+                <Button
+                  type="primary"
+                  loading={runningStep === STEP_CONFIRM_OAUTH_CALLBACK}
+                  onClick={handleConfirmOAuthCallbackStep}>
                   执行
                 </Button>
               </div>

@@ -1,5 +1,11 @@
 import type { ClickPageButtonResult } from "./types"
 
+export type ExtractOpenaiOAuthAuthorizeUrlResult = {
+  ok: boolean
+  message: string
+  authUrl?: string
+}
+
 export type PageActionByTextsOptions = {
   targetTexts: string[]
   timeoutMs: number
@@ -12,6 +18,83 @@ export type PageActionByTextsArgs = {
   inputSelectors?: string[]
   inputValue?: string
 }
+
+/**
+ * 从管理页读取已经生成的 OpenAI OAuth 授权链接。
+ *
+ * 这里不点击“打开链接”按钮，是因为脚本触发的页面按钮点击可能没有真实用户手势，
+ * 页面内部 window.open 容易被浏览器弹窗拦截；由扩展拿到 URL 后用 chrome.tabs.create
+ * 主动打开标签页更稳定。
+ *
+ * @return 读取到的授权链接和执行状态。
+ */
+export const extractOpenaiOAuthAuthorizeUrlInPage =
+  (): ExtractOpenaiOAuthAuthorizeUrlResult => {
+    const authUrlPrefix = "https://auth.openai.com/oauth/authorize"
+
+    /**
+     * 校验并规范化授权 URL。
+     *
+     * @param value 待校验的 URL 字符串。
+     * @return 合法授权 URL；非法时返回 undefined。
+     */
+    const normalizeAuthUrl = (value?: string) => {
+      try {
+        const parsed = new URL(String(value || "").trim())
+        if (parsed.origin !== "https://auth.openai.com") {
+          return undefined
+        }
+
+        if (parsed.pathname !== "/oauth/authorize") {
+          return undefined
+        }
+
+        return parsed.href
+      } catch {
+        return undefined
+      }
+    }
+
+    const link = document.querySelector(
+      `a[href^="${authUrlPrefix}"]`
+    ) as HTMLAnchorElement | null
+    const hrefAuthUrl = normalizeAuthUrl(link?.href)
+    if (hrefAuthUrl) {
+      return {
+        ok: true,
+        message: "已读取授权链接",
+        authUrl: hrefAuthUrl
+      }
+    }
+
+    const walker = document.createTreeWalker(
+      document.body || document.documentElement,
+      NodeFilter.SHOW_TEXT
+    )
+    let current = walker.nextNode()
+
+    while (current) {
+      const text = String(current.textContent || "").trim()
+      const match = text.match(
+        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
+      )
+      const textAuthUrl = normalizeAuthUrl(match?.[0])
+      if (textAuthUrl) {
+        return {
+          ok: true,
+          message: "已读取授权链接",
+          authUrl: textAuthUrl
+        }
+      }
+
+      current = walker.nextNode()
+    }
+
+    return {
+      ok: false,
+      message: "未找到授权链接，请先执行步骤 1 并确认授权链接已生成"
+    }
+  }
 
 /**
  * 在目标网页中按文案查找元素，并按需先填写输入框、再点击按钮。
@@ -45,28 +128,6 @@ export const performPageActionByTextsInPage = (
      */
     function normalizeText(value: string) {
       return value.replace(/\s+/g, "").toLowerCase()
-    }
-
-    /**
-     * 在页面里尝试提取授权链接，方便 background 在需要时直接打开。
-     *
-     * @return 找到时返回授权链接，否则返回 undefined。
-     */
-    const findAuthUrl = () => {
-      const authLink = document.querySelector(
-        'a[href*="auth.openai.com/oauth/authorize"]'
-      ) as HTMLAnchorElement | null
-
-      if (authLink?.href) {
-        return authLink.href
-      }
-
-      const pageText = document.body?.textContent || ""
-      const match = pageText.match(
-        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
-      )
-
-      return match?.[0]
     }
 
     /**
@@ -135,19 +196,19 @@ export const performPageActionByTextsInPage = (
       const selectorList = args.inputSelectors || []
 
       for (const selector of selectorList) {
-        const matched = Array.from(
-          document.querySelectorAll(selector)
-        ).find((element) => {
-          const input = element as HTMLInputElement
-          const rect = input.getBoundingClientRect()
+        const matched = Array.from(document.querySelectorAll(selector)).find(
+          (element) => {
+            const input = element as HTMLInputElement
+            const rect = input.getBoundingClientRect()
 
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            !input.disabled &&
-            input.type !== "hidden"
-          )
-        }) as HTMLInputElement | undefined
+            return (
+              rect.width > 0 &&
+              rect.height > 0 &&
+              !input.disabled &&
+              input.type !== "hidden"
+            )
+          }
+        ) as HTMLInputElement | undefined
 
         if (matched) {
           return matched
@@ -192,8 +253,10 @@ export const performPageActionByTextsInPage = (
      */
     const setInputValue = (input: HTMLInputElement, value: string) => {
       const prototype = HTMLInputElement.prototype
-      const valueSetter = Object.getOwnPropertyDescriptor(prototype, "value")
-        ?.set
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        prototype,
+        "value"
+      )?.set
 
       if (valueSetter) {
         valueSetter.call(input, value)
@@ -255,7 +318,8 @@ export const performPageActionByTextsInPage = (
         | HTMLAnchorElement
         | undefined
       const buttonForm =
-        button instanceof HTMLButtonElement || button instanceof HTMLInputElement
+        button instanceof HTMLButtonElement ||
+        button instanceof HTMLInputElement
           ? button.form
           : null
       const form: HTMLFormElement | null =
@@ -270,8 +334,7 @@ export const performPageActionByTextsInPage = (
           resolve({
             ok: true,
             message: options.successMessage,
-            buttonText: "",
-            authUrl: findAuthUrl()
+            buttonText: ""
           })
           return true
         }
@@ -326,8 +389,7 @@ export const performPageActionByTextsInPage = (
       resolve({
         ok: true,
         message: options.successMessage,
-        buttonText,
-        authUrl: findAuthUrl()
+        buttonText
       })
       return true
     }
