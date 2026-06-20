@@ -6,99 +6,100 @@ import {
   startCodexLogin
 } from "./codex-login"
 import type {
-  BackgroundMessage,
-  BackgroundMessageHandler,
-  BackgroundMessageType,
-  ConfirmCodexOAuthCallbackMessage,
-  FillOpenaiLoginEmailMessage,
-  FillOpenaiLoginVerificationCodeMessage,
-  OpenCodexAuthLinkMessage,
-  StartCodexLoginMessage
+  BackgroundRequest,
+  BackgroundRequestHandler,
+  BackgroundRequestType,
+  ConfirmCodexOAuthCallbackRequest,
+  FillOpenaiLoginEmailRequest,
+  FillOpenaiLoginVerificationCodeRequest,
+  OpenCodexAuthLinkRequest,
+  StartCodexLoginRequest
 } from "./types"
 
 /**
- * 后台消息处理器映射表的类型。
+ * 后台请求处理器映射表的类型。
  *
- * [Type in BackgroundMessageType] 会遍历所有消息 type，要求每个 type 都有一个 handler。
- * Extract<BackgroundMessage, { type: Type }> 会从消息联合类型里取出当前 type 对应的消息结构。
+ * [Type in BackgroundRequestType] 会遍历所有请求 type，要求每个 type 都有一个 handler。
+ * Extract<BackgroundRequest, { type: Type }> 会从请求联合类型里取出当前 type 对应的请求结构。
+ * 从联合类型 BackgroundRequest 抽取出匹配 { type: Type } 的类型。
  *
- * 例如 Type 是 "codex-login:start" 时，handler 的 message 参数就是 StartCodexLoginMessage。
+ * 例如 Type 是 "codex-login:start" 时，handler 的 request 参数就是 StartCodexLoginRequest。
  */
-type BackgroundMessageHandlerMap = {
-  [Type in BackgroundMessageType]: BackgroundMessageHandler<
-    Extract<BackgroundMessage, { type: Type }>
+type BackgroundRequestHandlerMap = {
+  [Type in BackgroundRequestType]: BackgroundRequestHandler<
+    Extract<BackgroundRequest, { type: Type }>
   >
 }
 
 /**
- * 处理“开始 Codex 登录”消息。
+ * 处理“开始 Codex 登录”请求。
  *
- * @param message 步骤 1 消息，包含登录地址。
+ * @param request 步骤 1 请求，包含登录地址。
  * @return 步骤执行结果。
  */
-const handleStartCodexLogin = (message: StartCodexLoginMessage) => {
-  return startCodexLogin(message.payload.targetUrl)
+const handleStartCodexLogin = (request: StartCodexLoginRequest) => {
+  return startCodexLogin(request.payload.targetUrl)
 }
 
 /**
- * 处理“打开授权链接”消息。
+ * 处理“打开授权链接”请求。
  *
- * @param message 步骤 2 消息，包含登录地址。
+ * @param request 步骤 2 请求，包含登录地址。
  * @return 步骤执行结果。
  */
-const handleOpenCodexAuthLink = (message: OpenCodexAuthLinkMessage) => {
-  return openCodexAuthLink(message.payload.targetUrl)
+const handleOpenCodexAuthLink = (request: OpenCodexAuthLinkRequest) => {
+  return openCodexAuthLink(request.payload.targetUrl)
 }
 
 /**
- * 处理“填写邮箱并继续”消息。
+ * 处理“填写邮箱并继续”请求。
  *
- * @param message 步骤 3 消息，包含登录地址和邮箱。
+ * @param request 步骤 3 请求，包含登录页标签页 id 和邮箱。
  * @return 步骤执行结果。
  */
-const handleFillOpenaiLoginEmail = (message: FillOpenaiLoginEmailMessage) => {
-  return fillOpenaiLoginEmail(message.payload.tabId, message.payload.email)
+const handleFillOpenaiLoginEmail = (request: FillOpenaiLoginEmailRequest) => {
+  return fillOpenaiLoginEmail(request.payload.tabId, request.payload.email)
 }
 
 /**
- * 处理“读取验证码并回填”消息。
+ * 处理“读取验证码并回填”请求。
  *
- * @param message 步骤 4 消息，包含验证码页标签页 id、邮箱和密码。
+ * @param request 步骤 4 请求，包含验证码页标签页 id、邮箱和密码。
  * @return 步骤执行结果。
  */
 const handleFillOpenaiLoginVerificationCode = (
-  message: FillOpenaiLoginVerificationCodeMessage
+  request: FillOpenaiLoginVerificationCodeRequest
 ) => {
   return fillOpenaiLoginVerificationCode(
-    message.payload.tabId,
-    message.payload.email,
-    message.payload.password
+    request.payload.tabId,
+    request.payload.email,
+    request.payload.password
   )
 }
 
 /**
- * 处理“确认 OAuth 并提交回调 URL”消息。
+ * 处理“确认 OAuth 并提交回调 URL”请求。
  *
- * @param message 步骤 5 消息，包含授权页 tabId 和管理页地址。
+ * @param request 步骤 5 请求，包含授权页 tabId 和管理页地址。
  * @return 步骤执行结果。
  */
 const handleConfirmCodexOAuthCallback = (
-  message: ConfirmCodexOAuthCallbackMessage
+  request: ConfirmCodexOAuthCallbackRequest
 ) => {
   return confirmCodexOAuthAndSubmitCallback(
-    message.payload.tabId,
-    message.payload.targetUrl
+    request.payload.tabId,
+    request.payload.targetUrl
   )
 }
 
 /**
- * 后台消息处理器映射表。
+ * 后台请求处理器映射表。
  *
- * 后续新增步骤时，在 types.ts 增加消息类型，然后在这里补一个 handler。
+ * 后续新增步骤时，在 types.ts 增加请求类型，然后在这里补一个 handler。
  *
- * @return 后台消息与处理函数的映射表。
+ * @return 后台请求与处理函数的映射表。
  */
-export const MESSAGE_HANDLERS: BackgroundMessageHandlerMap = {
+export const REQUEST_HANDLERS: BackgroundRequestHandlerMap = {
   "codex-login:start": handleStartCodexLogin,
   "codex-login:open-auth-link": handleOpenCodexAuthLink,
   "codex-login:fill-auth-email": handleFillOpenaiLoginEmail,

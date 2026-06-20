@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import "antd/dist/reset.css"
 import "./sidepanel.css"
 
-import type { BackgroundMessage, BackgroundResponse } from "./background/types"
+import type { BackgroundRequest, BackgroundResponse } from "./background/types"
 import {
   createUiLogger,
   getTimeLabel,
@@ -74,7 +74,7 @@ type LoginStepConfig = {
   buildMessage: (args: {
     values: NormalizedSettings
     authTabId: number
-  }) => BackgroundMessage
+  }) => BackgroundRequest
 }
 
 const STORAGE_KEY = "codex-login:settings"
@@ -247,19 +247,19 @@ const normalizeSettings = (values: Settings): NormalizedSettings => {
 }
 
 /**
- * 向后台发送 Codex 登录控制消息。
+ * 向后台发送 Codex 登录控制请求。
  *
- * @param message 要发送给 background 的强类型消息。
+ * @param request 要发送给 background 的强类型请求。
  * @return 后台返回的执行结果；如果消息通道异常，会直接 reject。
  */
-const sendCodexLoginMessage = (message: BackgroundMessage) => {
+const sendBackgroundRequest = (request: BackgroundRequest) => {
   return new Promise<BackgroundResponse>((resolve, reject) => {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
       reject(new Error("当前环境无法调用 Chrome 扩展后台脚本"))
       return
     }
 
-    chrome.runtime.sendMessage(message, (response?: BackgroundResponse) => {
+    chrome.runtime.sendMessage(request, (response?: BackgroundResponse) => {
       const error = chrome.runtime.lastError
       if (error) {
         reject(new Error(error.message || "后台脚本未响应"))
@@ -465,7 +465,7 @@ function SidePanel() {
    * 统一执行一个登录步骤。
    *
    * 每个步骤只在 LOGIN_STEPS 中描述差异；这里负责通用的校验、统计、日志、
-   * 后台消息发送和登录页 tab 持久化。
+   * 后台请求发送和登录页 tab 持久化。
    *
    * @param step 当前要执行的步骤配置。
    * @return 无。
@@ -531,7 +531,7 @@ function SidePanel() {
 
       let result: BackgroundResponse
       try {
-        result = await sendCodexLoginMessage(
+        result = await sendBackgroundRequest(
           step.buildMessage({
             values,
             authTabId: targetAuthTabId
