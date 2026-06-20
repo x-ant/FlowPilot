@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import "antd/dist/reset.css"
 import "./sidepanel.css"
 
-import type { BackgroundResponse } from "./background/types"
+import type { BackgroundMessage, BackgroundResponse } from "./background/types"
 import {
   createUiLogger,
   getTimeLabel,
@@ -28,6 +28,12 @@ type Settings = {
   loginUrl?: string
   email?: string
   password?: string
+}
+
+type NormalizedSettings = {
+  loginUrl: string
+  email: string
+  password: string
 }
 
 type AuthTabSnapshot = {
@@ -42,44 +48,150 @@ type Stats = {
   failed: number
 }
 
-type CodexLoginMessageType =
-  | "codex-login:start"
-  | "codex-login:open-auth-link"
-  | "codex-login:fill-auth-email"
-  | "codex-login:fill-auth-code"
-  | "codex-login:confirm-oauth-callback"
+type StatsDelta = Partial<Stats>
 
-type CodexLoginPayload =
-  | {
-      targetUrl: string
-    }
-  | {
-      tabId: number
-      email: string
-    }
-  | {
-      tabId: number
-      email: string
-      password: string
-    }
-  | {
-      tabId: number
-      targetUrl: string
-    }
+type LoginStepId =
+  | "click-codex-login"
+  | "open-auth-link"
+  | "fill-auth-email"
+  | "fill-auth-code"
+  | "confirm-oauth-callback"
+
+type LoginStepConfig = {
+  id: LoginStepId
+  index: number
+  title: string
+  requiredFields: Array<keyof Settings>
+  missingStatus: string
+  missingMessage: string
+  workingStatus: string
+  debugMessage: string
+  needsAuthTab?: boolean
+  missingAuthTabStatus?: string
+  missingAuthTabMessage?: string
+  resetAuthTabBeforeRun?: boolean
+  persistResultTab?: boolean
+  buildMessage: (args: {
+    values: NormalizedSettings
+    authTabId: number
+  }) => BackgroundMessage
+}
 
 const STORAGE_KEY = "codex-login:settings"
 const AUTH_TAB_STORAGE_KEY = "codex-login:auth-tab"
-const STEP_CLICK_CODEX_LOGIN = "click-codex-login"
-const STEP_OPEN_AUTH_LINK = "open-auth-link"
-const STEP_FILL_AUTH_EMAIL = "fill-auth-email"
-const STEP_FILL_AUTH_CODE = "fill-auth-code"
-const STEP_CONFIRM_OAUTH_CALLBACK = "confirm-oauth-callback"
+const STEP_CLICK_CODEX_LOGIN: LoginStepId = "click-codex-login"
+const STEP_OPEN_AUTH_LINK: LoginStepId = "open-auth-link"
+const STEP_FILL_AUTH_EMAIL: LoginStepId = "fill-auth-email"
+const STEP_FILL_AUTH_CODE: LoginStepId = "fill-auth-code"
+const STEP_CONFIRM_OAUTH_CALLBACK: LoginStepId = "confirm-oauth-callback"
 
 const initialStats: Stats = {
   total: 0,
   success: 0,
   failed: 0
 }
+
+const LOGIN_STEPS: LoginStepConfig[] = [
+  {
+    id: STEP_CLICK_CODEX_LOGIN,
+    index: 1,
+    title: "点击开始codex登录",
+    requiredFields: ["loginUrl"],
+    missingStatus: "步骤 1 需要登录地址",
+    missingMessage: "Codex 登录地址不能为空",
+    workingStatus: "正在打开 Codex 管理页",
+    debugMessage: "步骤 1 准备点击“开始codex登录”按钮",
+    buildMessage: ({ values }) => ({
+      type: "codex-login:start",
+      payload: {
+        targetUrl: values.loginUrl
+      }
+    })
+  },
+  {
+    id: STEP_OPEN_AUTH_LINK,
+    index: 2,
+    title: "打开登录页",
+    requiredFields: ["loginUrl"],
+    missingStatus: "步骤 2 需要登录地址",
+    missingMessage: "Codex 登录地址不能为空",
+    workingStatus: "正在清理旧登录信息并打开登录页",
+    debugMessage: "步骤 2 准备清理旧登录信息并打开 OpenAI 登录页",
+    resetAuthTabBeforeRun: true,
+    persistResultTab: true,
+    buildMessage: ({ values }) => ({
+      type: "codex-login:open-auth-link",
+      payload: {
+        targetUrl: values.loginUrl
+      }
+    })
+  },
+  {
+    id: STEP_FILL_AUTH_EMAIL,
+    index: 3,
+    title: "填写邮箱并继续",
+    requiredFields: ["email"],
+    missingStatus: "步骤 3 需要先执行步骤 2 并填写邮箱",
+    missingMessage: "2925 邮箱不能为空",
+    workingStatus: "正在填写邮箱并继续",
+    debugMessage: "步骤 3 准备填写邮箱并点击“继续”",
+    needsAuthTab: true,
+    missingAuthTabStatus: "步骤 3 需要先执行步骤 2",
+    missingAuthTabMessage: "请先执行步骤 2 打开 OpenAI 登录页",
+    persistResultTab: true,
+    buildMessage: ({ values, authTabId }) => ({
+      type: "codex-login:fill-auth-email",
+      payload: {
+        tabId: authTabId,
+        email: values.email
+      }
+    })
+  },
+  {
+    id: STEP_FILL_AUTH_CODE,
+    index: 4,
+    title: "读取验证码并回填",
+    requiredFields: ["email", "password"],
+    missingStatus: "步骤 4 需要先执行步骤 2/3 并填写账号密码",
+    missingMessage: "2925 邮箱和密码不能为空",
+    workingStatus: "正在读取 2925 验证码并回填",
+    debugMessage: "步骤 4 准备读取 2925 验证码并回填到邮箱验证码页",
+    needsAuthTab: true,
+    missingAuthTabStatus: "步骤 4 需要先执行步骤 2 和步骤 3",
+    missingAuthTabMessage: "请先执行步骤 2 和步骤 3 打开邮箱验证码页",
+    persistResultTab: true,
+    buildMessage: ({ values, authTabId }) => ({
+      type: "codex-login:fill-auth-code",
+      payload: {
+        tabId: authTabId,
+        email: values.email,
+        password: values.password
+      }
+    })
+  },
+  {
+    id: STEP_CONFIRM_OAUTH_CALLBACK,
+    index: 5,
+    title: "确认授权并提交回调 URL",
+    requiredFields: ["loginUrl"],
+    missingStatus: "步骤 5 需要登录地址",
+    missingMessage: "Codex 登录地址不能为空",
+    workingStatus: "正在确认授权并提交回调 URL",
+    debugMessage:
+      "步骤 5 准备点击授权页“继续”，并把 localhost 回调提交到管理页",
+    needsAuthTab: true,
+    missingAuthTabStatus: "步骤 5 需要先执行步骤 2 到步骤 4",
+    missingAuthTabMessage: "请先完成验证码回填并停留在授权确认页",
+    persistResultTab: true,
+    buildMessage: ({ values, authTabId }) => ({
+      type: "codex-login:confirm-oauth-callback",
+      payload: {
+        tabId: authTabId,
+        targetUrl: values.loginUrl
+      }
+    })
+  }
+]
 
 /**
  * 获取 Chrome 扩展的本地存储对象。
@@ -94,26 +206,6 @@ const getStorage = () => {
   }
 
   return chrome.storage.local
-}
-
-/**
- * 对邮箱做简单脱敏，方便在日志里展示但不直接暴露完整账号。
- *
- * @param email 原始邮箱地址。
- * @return 脱敏后的邮箱字符串；如果没有传入邮箱则返回“未填写账号”。
- */
-const maskEmail = (email?: string) => {
-  if (!email) {
-    return "未填写账号"
-  }
-
-  const [name, domain] = email.split("@")
-  if (!domain) {
-    return email
-  }
-
-  const visibleName = name.slice(0, 3)
-  return `${visibleName}${name.length > 3 ? "***" : "*"}@${domain}`
 }
 
 /**
@@ -141,44 +233,46 @@ const getChromeTab = (tabId: number) => {
 }
 
 /**
- * 向后台发送通用的 Codex 登录控制消息。
+ * 统一清理表单值，避免各步骤重复 trim 和类型转换。
  *
- * 这个方法把侧边栏和 background 的消息协议统一封装起来，避免重复写 sendMessage。
+ * @param values 表单原始值。
+ * @return 可直接传给后台消息的规范化表单值。
+ */
+const normalizeSettings = (values: Settings): NormalizedSettings => {
+  return {
+    loginUrl: String(values.loginUrl || "").trim(),
+    email: String(values.email || "").trim(),
+    password: String(values.password || "")
+  }
+}
+
+/**
+ * 向后台发送 Codex 登录控制消息。
  *
- * @param type 要发送的消息类型。
- * @param targetUrl 当前要操作的页面地址。
+ * @param message 要发送给 background 的强类型消息。
  * @return 后台返回的执行结果；如果消息通道异常，会直接 reject。
  */
-const sendCodexLoginMessage = (
-  type: CodexLoginMessageType,
-  payload: CodexLoginPayload
-) => {
+const sendCodexLoginMessage = (message: BackgroundMessage) => {
   return new Promise<BackgroundResponse>((resolve, reject) => {
     if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
       reject(new Error("当前环境无法调用 Chrome 扩展后台脚本"))
       return
     }
 
-    chrome.runtime.sendMessage(
-      {
-        type,
-        payload
-      },
-      (response?: BackgroundResponse) => {
-        const error = chrome.runtime.lastError
-        if (error) {
-          reject(new Error(error.message || "后台脚本未响应"))
-          return
-        }
-
-        if (!response) {
-          reject(new Error("后台脚本未返回执行结果"))
-          return
-        }
-
-        resolve(response)
+    chrome.runtime.sendMessage(message, (response?: BackgroundResponse) => {
+      const error = chrome.runtime.lastError
+      if (error) {
+        reject(new Error(error.message || "后台脚本未响应"))
+        return
       }
-    )
+
+      if (!response) {
+        reject(new Error("后台脚本未返回执行结果"))
+        return
+      }
+
+      resolve(response)
+    })
   })
 }
 
@@ -193,23 +287,25 @@ function SidePanel() {
   const [stats, setStats] = useState(initialStats)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [authTabId, setAuthTabId] = useState<number | null>(null)
-  const [runningStep, setRunningStep] = useState<string | null>(null)
+  const [runningStep, setRunningStep] = useState<LoginStepId | null>(null)
   const logListRef = useRef<HTMLDivElement | null>(null)
 
   const storage = useMemo(getStorage, [])
-  const log = createUiLogger((level, message) => {
-    setLogs((current) => {
-      return [
-        ...current,
-        {
-          id: `${Date.now()}-${current.length}`,
-          time: getTimeLabel(),
-          level,
-          message
-        }
-      ]
+  const log = useMemo(() => {
+    return createUiLogger((level, message) => {
+      setLogs((current) => {
+        return [
+          ...current,
+          {
+            id: `${Date.now()}-${current.length}`,
+            time: getTimeLabel(),
+            level,
+            message
+          }
+        ]
+      })
     })
-  })
+  }, [])
 
   useEffect(() => {
     const element = logListRef.current
@@ -247,6 +343,22 @@ function SidePanel() {
    */
   const handleValuesChange = (_: Partial<Settings>, values: Settings) => {
     storage?.set({ [STORAGE_KEY]: values })
+  }
+
+  /**
+   * 按增量更新执行统计。
+   *
+   * @param delta 本次要增加的统计值。
+   * @return 无。
+   */
+  const addStats = (delta: StatsDelta) => {
+    setStats((current) => {
+      return {
+        total: current.total + (delta.total || 0),
+        success: current.success + (delta.success || 0),
+        failed: current.failed + (delta.failed || 0)
+      }
+    })
   }
 
   /**
@@ -332,568 +444,104 @@ function SidePanel() {
   }
 
   /**
-   * 执行步骤 1：点击“开始 codex 登录”按钮。
+   * 记录参数类失败。参数失败也算一次执行尝试，所以 total 和 failed 一起增加。
    *
-   * @return 无，执行结果通过状态、统计和日志反馈。
+   * @param step 当前步骤配置。
+   * @param status 要展示到顶部状态栏的文案。
+   * @param message 要写入日志的失败原因。
+   * @return 无。
    */
-  const handleClickCodexLoginStep = async () => {
-    try {
-      setRunningStep(STEP_CLICK_CODEX_LOGIN)
-      const values = await form.validateFields(["loginUrl"]).catch((error) => {
-        setStatus("步骤 1 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(
-          `步骤 1 参数异常：${
-            error instanceof Error ? error.message : "Codex 登录地址不能为空"
-          }`
-        )
-        return null
-      })
-
-      if (!values) {
-        return
-      }
-
-      const loginUrl = values.loginUrl?.trim()
-
-      if (!loginUrl) {
-        setStatus("步骤 1 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 1 参数异常：Codex 登录地址不能为空")
-        return
-      }
-
-      setStatus("正在打开 Codex 管理页")
-      setStats((current) => {
-        return {
-          ...current,
-          total: current.total + 1
-        }
-      })
-      log.debug("步骤 1 准备点击“开始codex登录”按钮")
-
-      let result: BackgroundResponse
-      try {
-        result = await sendCodexLoginMessage("codex-login:start", {
-          targetUrl: loginUrl
-        })
-      } catch (error) {
-        setStatus("步骤 1 执行异常")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.error(
-          `步骤 1 异常：${
-            error instanceof Error ? error.message : "后台脚本未响应"
-          }`
-        )
-        return
-      }
-
-      if (!result.ok) {
-        setStatus("步骤 1 执行失败")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(`步骤 1 ${result.message}`)
-        return
-      }
-
-      setStatus("步骤 1 已完成")
-      setStats((current) => {
-        return {
-          ...current,
-          success: current.success + 1
-        }
-      })
-      log.info(`步骤 1 ${result.message}`)
-    } catch (error) {
-      setStatus("步骤 1 执行异常")
-      setStats((current) => {
-        return {
-          ...current,
-          failed: current.failed + 1
-        }
-      })
-      log.error(
-        `步骤 1 异常：${error instanceof Error ? error.message : "未知错误"}`
-      )
-    } finally {
-      setRunningStep(null)
-    }
+  const recordStepParameterFailure = (
+    step: LoginStepConfig,
+    status: string,
+    message: string
+  ) => {
+    setStatus(status)
+    addStats({ total: 1, failed: 1 })
+    log.warn(`步骤 ${step.index} 参数异常：${message}`)
   }
 
   /**
-   * 执行步骤 2：先清理旧 cookie，再打开 OpenAI 登录页。
+   * 统一执行一个登录步骤。
    *
-   * @return 无，执行结果通过状态、统计和日志反馈。
-   */
-  const handleOpenAuthLinkStep = async () => {
-    try {
-      setRunningStep(STEP_OPEN_AUTH_LINK)
-      persistAuthTab()
-      const values = await form.validateFields(["loginUrl"]).catch((error) => {
-        setStatus("步骤 2 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(
-          `步骤 2 参数异常：${
-            error instanceof Error ? error.message : "Codex 登录地址不能为空"
-          }`
-        )
-        return null
-      })
-
-      if (!values) {
-        return
-      }
-
-      const loginUrl = values.loginUrl?.trim()
-
-      if (!loginUrl) {
-        setStatus("步骤 2 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 2 参数异常：Codex 登录地址不能为空")
-        return
-      }
-
-      setStatus("正在清理旧登录信息并打开登录页")
-      setStats((current) => {
-        return {
-          ...current,
-          total: current.total + 1
-        }
-      })
-      log.debug("步骤 2 准备清理旧登录信息并打开 OpenAI 登录页")
-
-      let result: BackgroundResponse
-      try {
-        result = await sendCodexLoginMessage("codex-login:open-auth-link", {
-          targetUrl: loginUrl
-        })
-      } catch (error) {
-        setStatus("步骤 2 执行异常")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.error(
-          `步骤 2 异常：${
-            error instanceof Error ? error.message : "后台脚本未响应"
-          }`
-        )
-        return
-      }
-
-      if (!result.ok) {
-        setStatus("步骤 2 执行失败")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(`步骤 2 ${result.message}`)
-        return
-      }
-
-      setStatus("步骤 2 已完成")
-      setStats((current) => {
-        return {
-          ...current,
-          success: current.success + 1
-        }
-      })
-      persistAuthTab(result.targetTab)
-      log.info(`步骤 2 ${result.message}`)
-    } catch (error) {
-      setStatus("步骤 2 执行异常")
-      setStats((current) => {
-        return {
-          ...current,
-          failed: current.failed + 1
-        }
-      })
-      log.error(
-        `步骤 2 异常：${error instanceof Error ? error.message : "未知错误"}`
-      )
-    } finally {
-      setRunningStep(null)
-    }
-  }
-
-  /**
-   * 执行步骤 3：填写邮箱并点击继续。
+   * 每个步骤只在 LOGIN_STEPS 中描述差异；这里负责通用的校验、统计、日志、
+   * 后台消息发送和登录页 tab 持久化。
    *
-   * @return 无，执行结果通过状态、统计和日志反馈。
+   * @param step 当前要执行的步骤配置。
+   * @return 无。
    */
-  const handleFillAuthEmailStep = async () => {
+  const executeLoginStep = async (step: LoginStepConfig) => {
     try {
-      setRunningStep(STEP_FILL_AUTH_EMAIL)
-      const values = await form.validateFields(["email"]).catch((error) => {
-        setStatus("步骤 3 需要先执行步骤 2 并填写邮箱")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(
-          `步骤 3 参数异常：${
-            error instanceof Error ? error.message : "2925 邮箱不能为空"
-          }`
-        )
-        return null
-      })
+      setRunningStep(step.id)
 
-      if (!values) {
-        return
+      if (step.resetAuthTabBeforeRun) {
+        persistAuthTab()
       }
 
-      const email = values.email?.trim()
-
-      const targetAuthTabId = await resolveAuthTabId()
-      if (!targetAuthTabId) {
-        setStatus("步骤 3 需要先执行步骤 2")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 3 参数异常：请先执行步骤 2 打开 OpenAI 登录页")
-        return
-      }
-
-      if (!email) {
-        setStatus("步骤 3 需要先执行步骤 2 并填写邮箱")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 3 参数异常：2925 邮箱不能为空")
-        return
-      }
-
-      setStatus("正在填写邮箱并继续")
-      setStats((current) => {
-        return {
-          ...current,
-          total: current.total + 1
-        }
-      })
-      log.debug("步骤 3 准备填写邮箱并点击“继续”")
-
-      let result: BackgroundResponse
-      try {
-        result = await sendCodexLoginMessage("codex-login:fill-auth-email", {
-          tabId: targetAuthTabId,
-          email
-        })
-      } catch (error) {
-        setStatus("步骤 3 执行异常")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.error(
-          `步骤 3 异常：${
-            error instanceof Error ? error.message : "后台脚本未响应"
-          }`
-        )
-        return
-      }
-
-      if (!result.ok) {
-        setStatus("步骤 3 执行失败")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(`步骤 3 ${result.message}`)
-        return
-      }
-
-      setStatus("步骤 3 已完成")
-      setStats((current) => {
-        return {
-          ...current,
-          success: current.success + 1
-        }
-      })
-      persistAuthTab(result.targetTab)
-      log.info(`步骤 3 ${result.message}`)
-    } catch (error) {
-      setStatus("步骤 3 执行异常")
-      setStats((current) => {
-        return {
-          ...current,
-          failed: current.failed + 1
-        }
-      })
-      log.error(
-        `步骤 3 异常：${error instanceof Error ? error.message : "未知错误"}`
-      )
-    } finally {
-      setRunningStep(null)
-    }
-  }
-
-  /**
-   * 执行步骤 4：读取 2925 验证码并回填到当前验证码页。
-   *
-   * @return 无，执行结果通过状态、统计和日志反馈。
-   */
-  const handleFillAuthCodeStep = async () => {
-    try {
-      setRunningStep(STEP_FILL_AUTH_CODE)
-      const values = await form
-        .validateFields(["email", "password"])
+      const validatedValues = await form
+        .validateFields(step.requiredFields)
         .catch((error) => {
-          setStatus("步骤 4 需要先执行步骤 2/3 并填写账号密码")
-          setStats((current) => {
-            return {
-              ...current,
-              total: current.total + 1,
-              failed: current.failed + 1
-            }
-          })
-          log.warn(
-            `步骤 4 参数异常：${
-              error instanceof Error ? error.message : "2925 邮箱和密码不能为空"
-            }`
+          recordStepParameterFailure(
+            step,
+            step.missingStatus,
+            error instanceof Error ? error.message : step.missingMessage
           )
           return null
         })
 
-      if (!values) {
+      if (!validatedValues) {
         return
       }
 
-      const targetAuthTabId = await resolveAuthTabId()
-      if (!targetAuthTabId) {
-        setStatus("步骤 4 需要先执行步骤 2 和步骤 3")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 4 参数异常：请先执行步骤 2 和步骤 3 打开邮箱验证码页")
-        return
-      }
-
-      const email = values.email?.trim()
-      const password = String(values.password || "")
-
-      if (!email || !password) {
-        setStatus("步骤 4 需要先执行步骤 2/3 并填写账号密码")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 4 参数异常：2925 邮箱和密码不能为空")
-        return
-      }
-
-      setStatus("正在读取 2925 验证码并回填")
-      setStats((current) => {
-        return {
-          ...current,
-          total: current.total + 1
-        }
+      const values = normalizeSettings({
+        ...form.getFieldsValue(),
+        ...validatedValues
       })
-      log.debug("步骤 4 准备读取 2925 验证码并回填到邮箱验证码页")
+      const missingRequiredField = step.requiredFields.some((field) => {
+        return !values[field]
+      })
 
-      let result: BackgroundResponse
-      try {
-        result = await sendCodexLoginMessage("codex-login:fill-auth-code", {
-          tabId: targetAuthTabId,
-          email,
-          password
-        })
-      } catch (error) {
-        setStatus("步骤 4 执行异常")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.error(
-          `步骤 4 异常：${
-            error instanceof Error ? error.message : "后台脚本未响应"
-          }`
+      if (missingRequiredField) {
+        recordStepParameterFailure(
+          step,
+          step.missingStatus,
+          step.missingMessage
         )
         return
       }
 
-      if (!result.ok) {
-        setStatus("步骤 4 执行失败")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(`步骤 4 ${result.message}`)
-        return
-      }
-
-      setStatus("步骤 4 已完成")
-      setStats((current) => {
-        return {
-          ...current,
-          success: current.success + 1
+      let targetAuthTabId = 0
+      if (step.needsAuthTab) {
+        const resolvedAuthTabId = await resolveAuthTabId()
+        if (!resolvedAuthTabId) {
+          recordStepParameterFailure(
+            step,
+            step.missingAuthTabStatus || step.missingStatus,
+            step.missingAuthTabMessage || "请先打开 OpenAI 登录页"
+          )
+          return
         }
-      })
-      persistAuthTab(result.targetTab)
-      log.info(`步骤 4 ${result.message}`)
-    } catch (error) {
-      setStatus("步骤 4 执行异常")
-      setStats((current) => {
-        return {
-          ...current,
-          failed: current.failed + 1
-        }
-      })
-      log.error(
-        `步骤 4 异常：${error instanceof Error ? error.message : "未知错误"}`
-      )
-    } finally {
-      setRunningStep(null)
-    }
-  }
 
-  /**
-   * 执行步骤 5：点击授权确认页继续，捕获回调 URL，并提交到管理页。
-   *
-   * @return 无，执行结果通过状态、统计和日志反馈。
-   */
-  const handleConfirmOAuthCallbackStep = async () => {
-    try {
-      setRunningStep(STEP_CONFIRM_OAUTH_CALLBACK)
-      const values = await form.validateFields(["loginUrl"]).catch((error) => {
-        setStatus("步骤 5 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(
-          `步骤 5 参数异常：${
-            error instanceof Error ? error.message : "Codex 登录地址不能为空"
-          }`
-        )
-        return null
-      })
-
-      if (!values) {
-        return
+        targetAuthTabId = resolvedAuthTabId
       }
 
-      const loginUrl = values.loginUrl?.trim()
-      const targetAuthTabId = await resolveAuthTabId()
-      if (!targetAuthTabId) {
-        setStatus("步骤 5 需要先执行步骤 2 到步骤 4")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 5 参数异常：请先完成验证码回填并停留在授权确认页")
-        return
-      }
-
-      if (!loginUrl) {
-        setStatus("步骤 5 需要登录地址")
-        setStats((current) => {
-          return {
-            ...current,
-            total: current.total + 1,
-            failed: current.failed + 1
-          }
-        })
-        log.warn("步骤 5 参数异常：Codex 登录地址不能为空")
-        return
-      }
-
-      setStatus("正在确认授权并提交回调 URL")
-      setStats((current) => {
-        return {
-          ...current,
-          total: current.total + 1
-        }
-      })
-      log.debug("步骤 5 准备点击授权页“继续”，并把 localhost 回调提交到管理页")
+      setStatus(step.workingStatus)
+      addStats({ total: 1 })
+      log.debug(step.debugMessage)
 
       let result: BackgroundResponse
       try {
         result = await sendCodexLoginMessage(
-          "codex-login:confirm-oauth-callback",
-          {
-            tabId: targetAuthTabId,
-            targetUrl: loginUrl
-          }
+          step.buildMessage({
+            values,
+            authTabId: targetAuthTabId
+          })
         )
       } catch (error) {
-        setStatus("步骤 5 执行异常")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
+        setStatus(`步骤 ${step.index} 执行异常`)
+        addStats({ failed: 1 })
         log.error(
-          `步骤 5 异常：${
+          `步骤 ${step.index} 异常：${
             error instanceof Error ? error.message : "后台脚本未响应"
           }`
         )
@@ -901,36 +549,25 @@ function SidePanel() {
       }
 
       if (!result.ok) {
-        setStatus("步骤 5 执行失败")
-        setStats((current) => {
-          return {
-            ...current,
-            failed: current.failed + 1
-          }
-        })
-        log.warn(`步骤 5 ${result.message}`)
+        setStatus(`步骤 ${step.index} 执行失败`)
+        addStats({ failed: 1 })
+        log.warn(`步骤 ${step.index} ${result.message}`)
         return
       }
 
-      setStatus("步骤 5 已完成")
-      setStats((current) => {
-        return {
-          ...current,
-          success: current.success + 1
-        }
-      })
-      persistAuthTab(result.targetTab)
-      log.info(`步骤 5 ${result.message}`)
+      setStatus(`步骤 ${step.index} 已完成`)
+      addStats({ success: 1 })
+      if (step.persistResultTab) {
+        persistAuthTab(result.targetTab)
+      }
+      log.info(`步骤 ${step.index} ${result.message}`)
     } catch (error) {
-      setStatus("步骤 5 执行异常")
-      setStats((current) => {
-        return {
-          ...current,
-          failed: current.failed + 1
-        }
-      })
+      setStatus(`步骤 ${step.index} 执行异常`)
+      addStats({ failed: 1 })
       log.error(
-        `步骤 5 异常：${error instanceof Error ? error.message : "未知错误"}`
+        `步骤 ${step.index} 异常：${
+          error instanceof Error ? error.message : "未知错误"
+        }`
       )
     } finally {
       setRunningStep(null)
@@ -1003,66 +640,24 @@ function SidePanel() {
 
           <Card className="panel-card" title="执行步骤">
             <div className="step-list">
-              <div className="step-row">
-                <div className="step-copy">
-                  <span className="step-index">步骤 1</span>
-                  <span className="step-title">点击开始codex登录</span>
-                </div>
-                <Button
-                  type="primary"
-                  loading={runningStep === STEP_CLICK_CODEX_LOGIN}
-                  onClick={handleClickCodexLoginStep}>
-                  执行
-                </Button>
-              </div>
-              <div className="step-row">
-                <div className="step-copy">
-                  <span className="step-index">步骤 2</span>
-                  <span className="step-title">打开登录页</span>
-                </div>
-                <Button
-                  type="primary"
-                  loading={runningStep === STEP_OPEN_AUTH_LINK}
-                  onClick={handleOpenAuthLinkStep}>
-                  执行
-                </Button>
-              </div>
-              <div className="step-row">
-                <div className="step-copy">
-                  <span className="step-index">步骤 3</span>
-                  <span className="step-title">填写邮箱并继续</span>
-                </div>
-                <Button
-                  type="primary"
-                  loading={runningStep === STEP_FILL_AUTH_EMAIL}
-                  onClick={handleFillAuthEmailStep}>
-                  执行
-                </Button>
-              </div>
-              <div className="step-row">
-                <div className="step-copy">
-                  <span className="step-index">步骤 4</span>
-                  <span className="step-title">读取验证码并回填</span>
-                </div>
-                <Button
-                  type="primary"
-                  loading={runningStep === STEP_FILL_AUTH_CODE}
-                  onClick={handleFillAuthCodeStep}>
-                  执行
-                </Button>
-              </div>
-              <div className="step-row">
-                <div className="step-copy">
-                  <span className="step-index">步骤 5</span>
-                  <span className="step-title">确认授权并提交回调 URL</span>
-                </div>
-                <Button
-                  type="primary"
-                  loading={runningStep === STEP_CONFIRM_OAUTH_CALLBACK}
-                  onClick={handleConfirmOAuthCallbackStep}>
-                  执行
-                </Button>
-              </div>
+              {LOGIN_STEPS.map((step) => {
+                return (
+                  <div className="step-row" key={step.id}>
+                    <div className="step-copy">
+                      <span className="step-index">步骤 {step.index}</span>
+                      <span className="step-title">{step.title}</span>
+                    </div>
+                    <Button
+                      type="primary"
+                      loading={runningStep === step.id}
+                      onClick={() => {
+                        void executeLoginStep(step)
+                      }}>
+                      执行
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
           </Card>
 
