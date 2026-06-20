@@ -184,6 +184,21 @@ const activateBrowserTab = async (tabId: number) => {
 }
 
 /**
+ * 关闭指定标签页，常用于 OAuth 回调地址已经提交后的资源释放。
+ *
+ * @param tabId 要关闭的 Chrome 标签页 id。
+ * @return 关闭成功返回 true；标签页已不存在或关闭失败时返回 false。
+ */
+const closeBrowserTab = async (tabId: number) => {
+  try {
+    await chrome.tabs.remove(tabId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 规范化 cookie 域名，统一去掉前导点并转成小写，便于比较。
  *
  * @param domain 原始 cookie 域名。
@@ -835,10 +850,15 @@ export const confirmCodexOAuthAndSubmitCallback = async (
     }
   }
 
+  const closedCallbackTab = await closeBrowserTab(tabId)
+
   return {
     ok: true,
-    message: `${callbackResult.message}；${submitResult.message}`,
-    targetTab: callbackResult.targetTab,
+    message: `${callbackResult.message}；${submitResult.message}；${
+      closedCallbackTab
+        ? "已关闭回调地址标签页"
+        : "回调地址标签页已不存在或关闭失败"
+    }`,
     managementTab: submitResult.targetTab,
     callbackUrl: callbackResult.callbackUrl
   }
