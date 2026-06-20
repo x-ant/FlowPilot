@@ -413,9 +413,18 @@ const clearCodexSessionStorage = async () => {
 const runPageActionInTab = async (
   targetUrl: string,
   actionOptions: PageActionByTextsOptions,
-  actionArgs?: PageActionByTextsArgs
+  actionArgs?: PageActionByTextsArgs,
+  options: {
+    reloadBeforeAction?: boolean
+  } = {}
 ): Promise<CodexLoginPageActionResponse> => {
   const tabId = await findOrOpenTab(targetUrl)
+
+  if (options.reloadBeforeAction) {
+    await chrome.tabs.reload(tabId)
+    await waitForTabLoaded(tabId)
+  }
+
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     func: performPageActionByTextsInPage,
@@ -508,14 +517,21 @@ const runPageActionInExistingTab = async (
 export const startCodexLogin = async (
   targetUrl: string
 ): Promise<StartCodexLoginStepResponse> => {
-  // 第一步只负责触发管理页里的“开始登录”按钮。
-  return runPageActionInTab(targetUrl, {
-    targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
-    timeoutMs: 15000,
-    successMessage: "已点击“开始codex登录”按钮",
-    failureMessage:
-      "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
-  })
+  // 第一步先刷新管理页，让页面从初始状态开始，避免复用到上次已点击后的中间状态。
+  return runPageActionInTab(
+    targetUrl,
+    {
+      targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
+      timeoutMs: 15000,
+      successMessage: "已刷新管理页并点击“开始codex登录”按钮",
+      failureMessage:
+        "刷新管理页后仍未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
+    },
+    undefined,
+    {
+      reloadBeforeAction: true
+    }
+  )
 }
 
 /**
