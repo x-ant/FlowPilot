@@ -3,8 +3,20 @@ import {
   type PageActionByTextsArgs,
   type PageActionByTextsOptions
 } from "./page-script"
-import { findOrOpenTab, waitForTabLoaded } from "./tabs"
-import type { StartCodexLoginResponse } from "./types"
+import { fetchMail2925VerificationCode } from "./mail-2925"
+import {
+  collectCurrentTabIds,
+  findOrOpenTab,
+  waitForNewMatchingTab,
+  waitForTabLoaded
+} from "./tab-utils"
+import type {
+  CodexLoginPageActionResponse,
+  FillOpenaiLoginEmailResponse,
+  FillOpenaiLoginVerificationCodeResponse,
+  OpenCodexAuthLinkResponse,
+  StartCodexLoginStepResponse
+} from "./types"
 
 const CODEX_LOGIN_BUTTON_TEXTS = [
   "开始codex登录",
@@ -44,9 +56,42 @@ const OPENAI_LOGIN_INPUT_SELECTORS = [
   "input[aria-label*='邮箱']",
   "input[aria-label*='メール']"
 ]
+const OPENAI_VERIFICATION_INPUT_SELECTORS = [
+  "input[name='code']",
+  "input[name='otp']",
+  "input[autocomplete='one-time-code']",
+  "input[type='text'][maxlength='6']",
+  "input[type='tel'][maxlength='6']",
+  "input[aria-label*='code' i]",
+  "input[aria-label*='验证码']",
+  "input[aria-label*='認証']",
+  "input[aria-label*='確認']",
+  "input[placeholder*='code' i]",
+  "input[placeholder*='验证码']",
+  "input[placeholder*='認証']",
+  "input[placeholder*='確認']",
+  "input[inputmode='numeric']"
+]
+const OPENAI_VERIFICATION_BUTTON_TEXTS = [
+  "continue",
+  "next",
+  "submit",
+  "sign in",
+  "log in",
+  "verify",
+  "confirm",
+  "登录",
+  "继续",
+  "下一步",
+  "确认",
+  "提交"
+]
 const CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE = "已填写邮箱并点击“继续”按钮"
 const CODEX_AUTH_CONTINUE_FAILURE_MESSAGE =
   "未找到邮箱输入框或“继续”按钮，请确认页面已打开到 OpenAI 登录页"
+const CODEX_AUTH_VERIFY_SUCCESS_MESSAGE = "已填写邮箱验证码并继续"
+const CODEX_AUTH_VERIFY_FAILURE_MESSAGE =
+  "未找到验证码输入框或“继续”按钮，请确认页面已打开到 OpenAI 邮箱验证码页"
 const CODEX_SESSION_COOKIE_DOMAINS = ["openai.com", "chatgpt.com"]
 const CODEX_SESSION_STORAGE_HOSTNAMES = [
   "auth.openai.com",
@@ -58,18 +103,6 @@ const CODEX_SESSION_STORAGE_HOSTNAMES = [
   "chatgpt.com",
   "www.chatgpt.com"
 ]
-
-/**
- * 把延迟封装成 Promise，方便在 async 流程里等待一小段时间。
- *
- * @param timeoutMs 需要等待的时间，单位毫秒。
- * @return 一个在指定时间后 resolve 的 Promise。
- */
-const waitForDelay = (timeoutMs: number) => {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, timeoutMs)
-  })
-}
 
 const isCodexSessionStorageUrl = (rawUrl?: string) => {
   try {
@@ -308,54 +341,22 @@ const clearCodexSessionStorage = async () => {
 }
 
 /**
- * 在指定时间内轮询，等待新的授权标签页出现。
+ * 判断标签页是否是新打开的 OpenAI OAuth 授权页。
  *
- * @param beforeTabIds 调用前已经存在的标签页 id 集合。
- * @param timeoutMs 最长等待时间，单位毫秒。
- * @param intervalMs 轮询间隔，单位毫秒。
- * @return 如果检测到新授权标签页则返回 true，否则返回 false。
+ * @param tab 待检查的 Chrome 标签页。
+ * @return 如果是 OpenAI OAuth 授权页则返回 true。
  */
-const waitForNewAuthTab = async (
-  beforeTabIds: Set<number>,
-  timeoutMs = 3000,
-  intervalMs = 250
-) => {
-  const startedAt = Date.now()
-
-  while (Date.now() - startedAt < timeoutMs) {
-    if (await hasNewAuthTab(beforeTabIds)) {
-      return true
-    }
-
-    await waitForDelay(intervalMs)
-  }
-
-  return false
-}
-
-/**
- * 检查当前是否已经打开了新的 OpenAI 授权标签页。
- *
- * @param beforeTabIds 调用前已经存在的标签页 id 集合。
- * @return 如果发现新的授权标签页则返回 true，否则返回 false。
- */
-const hasNewAuthTab = async (beforeTabIds: Set<number>) => {
-  const tabs = await chrome.tabs.query({})
-
-  return tabs.some((tab) => {
-    if (!tab.id || beforeTabIds.has(tab.id) || !tab.url) {
-      return false
-    }
-
-    return tab.url.startsWith("https://auth.openai.com/oauth/authorize")
-  })
+const isOpenaiOAuthAuthorizeTab = (tab: chrome.tabs.Tab) => {
+  return String(tab.url || "").startsWith(
+    "https://auth.openai.com/oauth/authorize"
+  )
 }
 
 const runPageActionInTab = async (
   targetUrl: string,
   actionOptions: PageActionByTextsOptions,
   actionArgs?: PageActionByTextsArgs
-): Promise<StartCodexLoginResponse> => {
+): Promise<CodexLoginPageActionResponse> => {
   const tabId = await findOrOpenTab(targetUrl)
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -370,16 +371,20 @@ const runPageActionInTab = async (
     return {
       ok: false,
       message: value?.message || actionOptions.failureMessage,
-      tabId,
-      url: tab.url
+      targetTab: {
+        id: tabId,
+        url: tab.url
+      }
     }
   }
 
   return {
     ok: true,
     message: value.message,
-    tabId,
-    url: tab.url,
+    targetTab: {
+      id: tabId,
+      url: tab.url
+    },
     authUrl: value.authUrl
   }
 }
@@ -396,7 +401,7 @@ const runPageActionInExistingTab = async (
   tabId: number,
   actionOptions: PageActionByTextsOptions,
   actionArgs?: PageActionByTextsArgs
-): Promise<StartCodexLoginResponse> => {
+): Promise<CodexLoginPageActionResponse> => {
   try {
     const tab = await chrome.tabs.get(tabId)
     const [result] = await chrome.scripting.executeScript({
@@ -412,16 +417,20 @@ const runPageActionInExistingTab = async (
       return {
         ok: false,
         message: value?.message || actionOptions.failureMessage,
-        tabId,
-        url: currentTab.url || tab.url
+        targetTab: {
+          id: tabId,
+          url: currentTab.url || tab.url
+        }
       }
     }
 
     return {
       ok: true,
       message: value.message,
-      tabId,
-      url: currentTab.url || tab.url,
+      targetTab: {
+        id: tabId,
+        url: currentTab.url || tab.url
+      },
       authUrl: value.authUrl
     }
   } catch {
@@ -442,7 +451,7 @@ const runPageActionInExistingTab = async (
  */
 export const startCodexLogin = async (
   targetUrl: string
-): Promise<StartCodexLoginResponse> => {
+): Promise<StartCodexLoginStepResponse> => {
   // 第一步只负责触发管理页里的“开始登录”按钮。
   return runPageActionInTab(targetUrl, {
     targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
@@ -462,7 +471,7 @@ export const startCodexLogin = async (
  */
 export const openCodexAuthLink = async (
   targetUrl: string
-): Promise<StartCodexLoginResponse> => {
+): Promise<OpenCodexAuthLinkResponse> => {
   // 打开授权链接前先清理旧 cookie，减少复用到失效登录态的概率。
   const cleanupResult = await clearCodexSessionCookies()
   const storageResult = await clearCodexSessionStorage()
@@ -474,22 +483,14 @@ export const openCodexAuthLink = async (
     return {
       ok: true,
       message: `${cleanupMessage}已打开 OpenAI 登录页，等待填写邮箱`,
-      tabId,
-      url: tab.url
+      targetTab: {
+        id: tabId,
+        url: tab.url
+      }
     }
   }
 
-  const beforeTabs = await chrome.tabs.query({})
-  const beforeTabIds = new Set(
-    beforeTabs
-      .map((tab) => {
-        return tab.id
-      })
-      .filter((tabId): tabId is number => {
-        // 实际一定是number，这么些是为了后面的类型判断能推断出来当前是nubmber
-        return typeof tabId === "number"
-      })
-  )
+  const beforeTabIds = await collectCurrentTabIds()
 
   const result = await runPageActionInTab(targetUrl, {
     targetTexts: CODEX_AUTH_LINK_BUTTON_TEXTS,
@@ -505,7 +506,11 @@ export const openCodexAuthLink = async (
     }
   }
 
-  if (await waitForNewAuthTab(beforeTabIds)) {
+  const newAuthTab = await waitForNewMatchingTab(
+    beforeTabIds,
+    isOpenaiOAuthAuthorizeTab
+  )
+  if (newAuthTab) {
     const authTabs = (await chrome.tabs.query({})).filter((tab) => {
       return Boolean(tab.id) && isCodexSessionStorageUrl(tab.url)
     })
@@ -525,7 +530,11 @@ export const openCodexAuthLink = async (
 
     return {
       ...result,
-      message: `${cleanupMessage}已在新标签页打开授权链接`
+      message: `${cleanupMessage}已在新标签页打开授权链接`,
+      targetTab: {
+        id: newAuthTab.id,
+        url: newAuthTab.url
+      }
     }
   }
 
@@ -548,8 +557,10 @@ export const openCodexAuthLink = async (
     return {
       ...result,
       message: `${cleanupMessage}已打开授权链接`,
-      tabId: authTab.id,
-      url: authTab.url || result.authUrl
+      targetTab: {
+        id: authTab.id,
+        url: authTab.url || result.authUrl
+      }
     }
   }
 
@@ -569,7 +580,7 @@ export const openCodexAuthLink = async (
 export const fillOpenaiLoginEmail = async (
   tabId: number,
   email: string
-): Promise<StartCodexLoginResponse> => {
+): Promise<FillOpenaiLoginEmailResponse> => {
   const result = await runPageActionInExistingTab(tabId, {
     targetTexts: OPENAI_LOGIN_BUTTON_TEXTS,
     timeoutMs: 15000,
@@ -582,4 +593,73 @@ export const fillOpenaiLoginEmail = async (
   })
 
   return result
+}
+
+/**
+ * 在 OpenAI 邮箱验证码页读取 2925 验证码，并回填到当前 tab。
+ *
+ * @param tabId 要操作的验证码页标签页 id。
+ * @param email 2925 邮箱地址。
+ * @param password 2925 邮箱密码。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+export const fillOpenaiLoginVerificationCode = async (
+  tabId: number,
+  email: string,
+  password: string
+): Promise<FillOpenaiLoginVerificationCodeResponse> => {
+  const mailResult = await fetchMail2925VerificationCode(email, password)
+
+  if (!mailResult.code) {
+    return {
+      ok: false,
+      message: mailResult.message,
+      targetTab: {
+        id: mailResult.mailTab?.id || tabId,
+        url: mailResult.mailTab?.url
+      },
+      mailTab: mailResult.mailTab
+    }
+  }
+
+  await waitForTabLoaded(tabId)
+  const tab = await chrome.tabs.get(tabId)
+  const currentUrl = String(tab.url || "").trim()
+  if (!/\/email-verification(?:[/?#]|$)/i.test(currentUrl)) {
+    return {
+      ok: false,
+      message: `当前标签页不是 OpenAI 邮箱验证码页（${currentUrl || "unknown"}）`,
+      targetTab: {
+        id: tabId,
+        url: currentUrl || tab.url
+      }
+    }
+  }
+
+  const result = await runPageActionInExistingTab(
+    tabId,
+    {
+      targetTexts: OPENAI_VERIFICATION_BUTTON_TEXTS,
+      timeoutMs: 15000,
+      successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
+      failureMessage: CODEX_AUTH_VERIFY_FAILURE_MESSAGE,
+      submitStrategy: "requestSubmit"
+    },
+    {
+      inputSelectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+      inputValue: mailResult.code
+    }
+  )
+
+  if (!result.ok) {
+    return {
+      ...result,
+      message: `${mailResult.message}；${result.message}`
+    }
+  }
+
+  return {
+    ...result,
+    message: `${mailResult.message}；${result.message}`
+  }
 }

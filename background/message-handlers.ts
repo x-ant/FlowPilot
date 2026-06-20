@@ -1,5 +1,6 @@
 import {
   fillOpenaiLoginEmail,
+  fillOpenaiLoginVerificationCode,
   openCodexAuthLink,
   startCodexLogin
 } from "./codex-login"
@@ -8,6 +9,7 @@ import type {
   BackgroundMessageHandler,
   BackgroundMessageType,
   FillOpenaiLoginEmailMessage,
+  FillOpenaiLoginVerificationCodeMessage,
   OpenCodexAuthLinkMessage,
   StartCodexLoginMessage
 } from "./types"
@@ -59,6 +61,22 @@ const handleFillOpenaiLoginEmail = (
 }
 
 /**
+ * 处理“读取验证码并回填”消息。
+ *
+ * @param message 步骤 4 消息，包含验证码页标签页 id、邮箱和密码。
+ * @return 步骤执行结果。
+ */
+const handleFillOpenaiLoginVerificationCode = (
+  message: FillOpenaiLoginVerificationCodeMessage
+) => {
+  return fillOpenaiLoginVerificationCode(
+    message.payload.tabId,
+    message.payload.email,
+    message.payload.password
+  )
+}
+
+/**
  * 后台消息处理器映射表。
  *
  * 后续新增步骤时，在 types.ts 增加消息类型，然后在这里补一个 handler。
@@ -68,5 +86,6 @@ const handleFillOpenaiLoginEmail = (
 export const MESSAGE_HANDLERS: BackgroundMessageHandlerMap = {
   "codex-login:start": handleStartCodexLogin,
   "codex-login:open-auth-link": handleOpenCodexAuthLink,
-  "codex-login:fill-auth-email": handleFillOpenaiLoginEmail
+  "codex-login:fill-auth-email": handleFillOpenaiLoginEmail,
+  "codex-login:fill-auth-code": handleFillOpenaiLoginVerificationCode
 }

@@ -35,6 +35,7 @@ export const performPageActionByTextsInPage = (
     })
     const candidateSelector =
       "button,a,[role='button'],input[type='button'],input[type='submit']"
+    let usedSplitInputFill = false
 
     /**
      * 统一文本格式，去掉空白并转小写，提升匹配命中率。
@@ -157,6 +158,32 @@ export const performPageActionByTextsInPage = (
     }
 
     /**
+     * 查找分格验证码输入框。
+     *
+     * FlowPilot 里只把至少 6 个 maxlength=1 的可见输入框当作分格验证码，
+     * 这样可以避免普通表单里多个输入框被误判。
+     *
+     * @return 按页面顺序排列的可见输入框列表。
+     */
+    const findSplitInputs = () => {
+      const inputs = Array.from(
+        document.querySelectorAll("input[maxlength='1']")
+      ).filter((element) => {
+        const input = element as HTMLInputElement
+        const rect = input.getBoundingClientRect()
+
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          !input.disabled &&
+          input.type !== "hidden"
+        )
+      }) as HTMLInputElement[]
+
+      return inputs.length >= 6 ? inputs : []
+    }
+
+    /**
      * 安全地把值写入输入框，并触发 React / 原生表单监听器。
      *
      * @param input 目标输入框。
@@ -187,13 +214,39 @@ export const performPageActionByTextsInPage = (
       let input: HTMLInputElement | undefined
 
       if (typeof args.inputValue === "string") {
-        input = findInput()
-        if (!input) {
-          return false
-        }
+        const splitInputs = findSplitInputs()
+        if (splitInputs.length > 1 && args.inputValue.length > 1) {
+          const characters = Array.from(args.inputValue)
+          const fillLength = Math.min(splitInputs.length, characters.length)
 
-        setInputValue(input, args.inputValue)
-        input.focus()
+          for (let index = 0; index < fillLength; index += 1) {
+            const splitInput = splitInputs[index]
+            setInputValue(splitInput, characters[index])
+
+            try {
+              splitInput.dispatchEvent(
+                new KeyboardEvent("keyup", {
+                  key: characters[index],
+                  bubbles: true
+                })
+              )
+            } catch {
+              // Best effort only.
+            }
+          }
+
+          input = splitInputs[0]
+          input.focus()
+          usedSplitInputFill = true
+        } else {
+          input = findInput()
+          if (!input) {
+            return false
+          }
+
+          setInputValue(input, args.inputValue)
+          input.focus()
+        }
       }
 
       const button = findButton() as
@@ -213,6 +266,16 @@ export const performPageActionByTextsInPage = (
         null
 
       if (!button && !form) {
+        if (usedSplitInputFill) {
+          resolve({
+            ok: true,
+            message: options.successMessage,
+            buttonText: "",
+            authUrl: findAuthUrl()
+          })
+          return true
+        }
+
         return false
       }
 
