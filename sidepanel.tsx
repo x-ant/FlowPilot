@@ -42,14 +42,6 @@ type AuthTabSnapshot = {
   updatedAt?: number
 }
 
-type Stats = {
-  total: number
-  success: number
-  failed: number
-}
-
-type StatsDelta = Partial<Stats>
-
 type LoginStepId =
   | "click-codex-login"
   | "open-auth-link"
@@ -71,7 +63,7 @@ type LoginStepConfig = {
   missingAuthTabMessage?: string
   resetAuthTabBeforeRun?: boolean
   persistResultTab?: boolean
-  buildMessage: (args: {
+  buildRequest: (args: {
     values: NormalizedSettings
     authTabId: number
   }) => BackgroundRequest
@@ -85,12 +77,6 @@ const STEP_FILL_AUTH_EMAIL: LoginStepId = "fill-auth-email"
 const STEP_FILL_AUTH_CODE: LoginStepId = "fill-auth-code"
 const STEP_CONFIRM_OAUTH_CALLBACK: LoginStepId = "confirm-oauth-callback"
 
-const initialStats: Stats = {
-  total: 0,
-  success: 0,
-  failed: 0
-}
-
 const LOGIN_STEPS: LoginStepConfig[] = [
   {
     id: STEP_CLICK_CODEX_LOGIN,
@@ -101,7 +87,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     missingMessage: "Codex 登录地址不能为空",
     workingStatus: "正在打开 Codex 管理页",
     debugMessage: "步骤 1 准备点击“开始codex登录”按钮",
-    buildMessage: ({ values }) => ({
+    buildRequest: ({ values }) => ({
       type: "codex-login:start",
       payload: {
         targetUrl: values.loginUrl
@@ -119,7 +105,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     debugMessage: "步骤 2 准备清理旧登录信息并打开 OpenAI 登录页",
     resetAuthTabBeforeRun: true,
     persistResultTab: true,
-    buildMessage: ({ values }) => ({
+    buildRequest: ({ values }) => ({
       type: "codex-login:open-auth-link",
       payload: {
         targetUrl: values.loginUrl
@@ -139,7 +125,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     missingAuthTabStatus: "步骤 3 需要先执行步骤 2",
     missingAuthTabMessage: "请先执行步骤 2 打开 OpenAI 登录页",
     persistResultTab: true,
-    buildMessage: ({ values, authTabId }) => ({
+    buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:fill-auth-email",
       payload: {
         tabId: authTabId,
@@ -160,7 +146,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     missingAuthTabStatus: "步骤 4 需要先执行步骤 2 和步骤 3",
     missingAuthTabMessage: "请先执行步骤 2 和步骤 3 打开邮箱验证码页",
     persistResultTab: true,
-    buildMessage: ({ values, authTabId }) => ({
+    buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:fill-auth-code",
       payload: {
         tabId: authTabId,
@@ -183,7 +169,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     missingAuthTabStatus: "步骤 5 需要先执行步骤 2 到步骤 4",
     missingAuthTabMessage: "请先完成验证码回填并停留在授权确认页",
     persistResultTab: true,
-    buildMessage: ({ values, authTabId }) => ({
+    buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:confirm-oauth-callback",
       payload: {
         tabId: authTabId,
@@ -284,7 +270,6 @@ const sendBackgroundRequest = (request: BackgroundRequest) => {
 function SidePanel() {
   const [form] = Form.useForm<Settings>()
   const [status, setStatus] = useState("准备就绪")
-  const [stats, setStats] = useState(initialStats)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [authTabId, setAuthTabId] = useState<number | null>(null)
   const [runningStep, setRunningStep] = useState<LoginStepId | null>(null)
@@ -343,22 +328,6 @@ function SidePanel() {
    */
   const handleValuesChange = (_: Partial<Settings>, values: Settings) => {
     storage?.set({ [STORAGE_KEY]: values })
-  }
-
-  /**
-   * 按增量更新执行统计。
-   *
-   * @param delta 本次要增加的统计值。
-   * @return 无。
-   */
-  const addStats = (delta: StatsDelta) => {
-    setStats((current) => {
-      return {
-        total: current.total + (delta.total || 0),
-        success: current.success + (delta.success || 0),
-        failed: current.failed + (delta.failed || 0)
-      }
-    })
   }
 
   /**
@@ -457,7 +426,6 @@ function SidePanel() {
     message: string
   ) => {
     setStatus(status)
-    addStats({ total: 1, failed: 1 })
     log.warn(`步骤 ${step.index} 参数异常：${message}`)
   }
 
@@ -526,20 +494,18 @@ function SidePanel() {
       }
 
       setStatus(step.workingStatus)
-      addStats({ total: 1 })
       log.debug(step.debugMessage)
 
       let result: BackgroundResponse
       try {
         result = await sendBackgroundRequest(
-          step.buildMessage({
+          step.buildRequest({
             values,
             authTabId: targetAuthTabId
           })
         )
       } catch (error) {
         setStatus(`步骤 ${step.index} 执行异常`)
-        addStats({ failed: 1 })
         log.error(
           `步骤 ${step.index} 异常：${
             error instanceof Error ? error.message : "后台脚本未响应"
@@ -550,20 +516,17 @@ function SidePanel() {
 
       if (!result.ok) {
         setStatus(`步骤 ${step.index} 执行失败`)
-        addStats({ failed: 1 })
         log.warn(`步骤 ${step.index} ${result.message}`)
         return
       }
 
       setStatus(`步骤 ${step.index} 已完成`)
-      addStats({ success: 1 })
       if (step.persistResultTab) {
         persistAuthTab(result.targetTab)
       }
       log.info(`步骤 ${step.index} ${result.message}`)
     } catch (error) {
       setStatus(`步骤 ${step.index} 执行异常`)
-      addStats({ failed: 1 })
       log.error(
         `步骤 ${step.index} 异常：${
           error instanceof Error ? error.message : "未知错误"
@@ -658,23 +621,6 @@ function SidePanel() {
                   </div>
                 )
               })}
-            </div>
-          </Card>
-
-          <Card className="panel-card" title="执行统计">
-            <div className="stats-grid">
-              <div className="stat-box">
-                <span className="stat-label">执行次数</span>
-                <span className="stat-value">{stats.total}</span>
-              </div>
-              <div className="stat-box">
-                <span className="stat-label">成功</span>
-                <span className="stat-value">{stats.success}</span>
-              </div>
-              <div className="stat-box">
-                <span className="stat-label">失败</span>
-                <span className="stat-value">{stats.failed}</span>
-              </div>
             </div>
           </Card>
 
