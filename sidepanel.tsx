@@ -1,28 +1,12 @@
-import {
-  Button,
-  Card,
-  ConfigProvider,
-  Empty,
-  Form,
-  Input,
-  Space,
-  Tag,
-  theme,
-  Typography
-} from "antd"
-import zhCN from "antd/locale/zh_CN"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Button, Card, ConfigProvider, Empty, Form, Input, Space, Tag, theme, Typography } from "antd";
+import zhCN from "antd/locale/zh_CN";
+import { useEffect, useMemo, useRef, useState } from "react";
+import "antd/dist/reset.css";
+import "./sidepanel.css";
 
-import "antd/dist/reset.css"
-import "./sidepanel.css"
+import type { BackgroundRequest, BackgroundResponse } from "./background/types";
+import { createUiLogger, getTimeLabel, LOG_LEVEL_META, type LogItem } from "./shared/logging";
 
-import type { BackgroundRequest, BackgroundResponse } from "./background/types"
-import {
-  createUiLogger,
-  getTimeLabel,
-  LOG_LEVEL_META,
-  type LogItem
-} from "./shared/logging"
 
 type Settings = {
   loginUrl?: string
@@ -301,6 +285,8 @@ function SidePanel() {
     element.scrollTop = element.scrollHeight
   }, [logs])
 
+  // 虽然传入了form和storage，实际第一次之后就不会变了
+  // 但是 React Hooks 规则/ESLint 通常要求：effect 里面用到的外部变量，要放进依赖数组。
   useEffect(() => {
     // 页面初始化时尝试读取本地保存的登录配置。
     storage?.get([STORAGE_KEY, AUTH_TAB_STORAGE_KEY], (result) => {

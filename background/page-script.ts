@@ -1,4 +1,4 @@
-import type { ClickPageButtonResult } from "./types"
+import type { ClickPageButtonResult } from "./types";
 
 export type ExtractOpenaiOAuthAuthorizeUrlResult = {
   ok: boolean
@@ -55,6 +55,7 @@ export const extractOpenaiOAuthAuthorizeUrlInPage =
       }
     }
 
+    // 先看有没有符合的外链标签
     const link = document.querySelector(
       `a[href^="${authUrlPrefix}"]`
     ) as HTMLAnchorElement | null
@@ -67,8 +68,11 @@ export const extractOpenaiOAuthAuthorizeUrlInPage =
       }
     }
 
+    // 没有符合的外链标签就遍历全部的文本标签
     const walker = document.createTreeWalker(
+      // 从 body 开始扫；没有 body 就从 html 开始扫
       document.body || document.documentElement,
+      // 只遍历文本节点，不会返回<div>、<p>、<a>、button
       NodeFilter.SHOW_TEXT
     )
     let current = walker.nextNode()
@@ -112,8 +116,8 @@ export const performPageActionByTextsInPage = (
   args: PageActionByTextsArgs = {}
 ): Promise<ClickPageButtonResult> => {
   return new Promise((resolve) => {
-    const startedAt = Date.now()
-    const targetTexts = options.targetTexts.map((value) => {
+    const startedAt: number = Date.now()
+    const targetTextArray: string[] = options.targetTexts.map((value) => {
       return normalizeText(value)
     })
     const candidateSelector =
@@ -180,7 +184,7 @@ export const performPageActionByTextsInPage = (
           }
 
           const text = getElementText(element)
-          return targetTexts.some((targetText) => {
+          return targetTextArray.some((targetText) => {
             return text.includes(targetText)
           })
         }
@@ -221,7 +225,9 @@ export const performPageActionByTextsInPage = (
     /**
      * 查找分格验证码输入框。
      *
-     * FlowPilot 里只把至少 6 个 maxlength=1 的可见输入框当作分格验证码，
+     * 至少 6 个 maxlength=1 的可见输入框，才能当作分格验证码，
+     * maxlength=1 代表 最多只能输入 1 个字符
+     *
      * 这样可以避免普通表单里多个输入框被误判。
      *
      * @return 按页面顺序排列的可见输入框列表。

@@ -3,19 +3,10 @@ import { setupSidePanelBehavior } from "./background/side-panel"
 import type {
   BackgroundRequest,
   BackgroundRequestHandler,
-  BackgroundRequestType,
   BackgroundResponse
 } from "./background/types"
 
 setupSidePanelBehavior()
-
-const REQUEST_FAILURE_MESSAGES: Record<BackgroundRequestType, string> = {
-  "codex-login:start": "执行 Codex 登录入口点击失败",
-  "codex-login:open-auth-link": "执行 Codex 授权链接打开失败",
-  "codex-login:fill-auth-email": "执行 Codex 登录邮箱填写失败",
-  "codex-login:fill-auth-code": "执行 Codex 登录验证码回填失败",
-  "codex-login:confirm-oauth-callback": "执行 Codex OAuth 回调提交失败"
-}
 
 /**
  * 判断收到的 runtime message 是否是本模块支持的后台请求。
@@ -57,32 +48,12 @@ const dispatchBackgroundRequest = (request: BackgroundRequest) => {
 }
 
 /**
- * 根据异常和消息类型生成统一的失败响应。
- *
- * @param request 当前处理的后台请求。
- * @param error 捕获到的异常。
- * @return 可直接传给 sendResponse 的失败响应。
- */
-const buildFailureResponse = (
-  request: BackgroundRequest,
-  error: unknown
-): BackgroundResponse => {
-  return {
-    ok: false,
-    message:
-      error instanceof Error
-        ? error.message
-        : REQUEST_FAILURE_MESSAGES[request.type]
-  }
-}
-
-/**
  * 处理侧边栏发来的后台请求，并按 request.type 分发到对应 handler。
  *
  * 注意：返回 true 表示 sendResponse 会异步调用，Chrome 不要提前关闭消息通道。
  *
  * @param message Chrome runtime 收到的原始 message。
- * @param _sender 消息发送方信息，这里不使用。
+ * @param _sender 消息发送方信息，下划线表示“这个参数我知道有，但当前不使用”。
  * @param sendResponse 回传给侧边栏的响应函数。
  * @return 如果会异步调用 sendResponse，则返回 true。
  */
@@ -95,12 +66,19 @@ const handleBackgroundRequest = (
     return false
   }
 
+  // void 表示这个异步 Promise 链已经被启动和处理了，但当前函数不等待它，也不返回它；
   void dispatchBackgroundRequest(message)
     .then(sendResponse)
     .catch((error) => {
-      sendResponse(buildFailureResponse(message, error))
+      sendResponse({
+        ok: false,
+        message: error instanceof Error ? error.message : "后台请求处理失败"
+      })
     })
 
+  // 如果异步回复，就返回 true，如果同步回复或不处理，就可以返回 false 或不返回
+  // 否则就会在函数返回后关闭消息通道，
+  // 提示 The message port closed before a response was received.
   return true
 }
 

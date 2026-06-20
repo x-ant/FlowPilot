@@ -504,13 +504,13 @@ export const fetchMail2925VerificationCode = async (
   password: string
 ): Promise<Mail2925VerificationCodeResult> => {
   const tabId = await findOrOpenMail2925Tab()
-  const [sessionResult] = await chrome.scripting.executeScript({
+  const [sessionInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: ensureMail2925SessionInPage,
     args: [{ email, password }]
   })
 
-  const session = sessionResult?.result as
+  const session = sessionInjectionResult?.result as
     | {
         ok?: boolean
         message?: string
@@ -529,13 +529,13 @@ export const fetchMail2925VerificationCode = async (
     }
   }
 
-  const [codeResult] = await chrome.scripting.executeScript({
+  const [codeInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: pollMail2925VerificationCodeInPage,
     args: [{ timeoutMs: 90000 }]
   })
 
-  const result = codeResult?.result as
+  const result = codeInjectionResult?.result as
     | {
         ok?: boolean
         code?: string

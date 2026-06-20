@@ -351,7 +351,7 @@ const clearCodexSessionCookies = async () => {
 }
 
 const clearCodexSessionStorageInTab = async (tabId: number) => {
-  const [result] = await chrome.scripting.executeScript({
+  const [storageInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
       const localCount = window.localStorage?.length || 0
@@ -376,7 +376,7 @@ const clearCodexSessionStorageInTab = async (tabId: number) => {
     }
   })
 
-  const value = result?.result as
+  const value = storageInjectionResult?.result as
     | {
         localCount?: number
         sessionCount?: number
@@ -440,13 +440,13 @@ const runPageActionInTab = async (
     await waitForTabLoaded(tabId)
   }
 
-  const [result] = await chrome.scripting.executeScript({
+  const [actionInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: performPageActionByTextsInPage,
     args: [actionOptions, actionArgs || {}]
   })
 
-  const value = result?.result
+  const value = actionInjectionResult?.result
   const tab = await chrome.tabs.get(tabId)
 
   if (!value?.ok) {
@@ -485,13 +485,13 @@ const runPageActionInExistingTab = async (
 ): Promise<CodexLoginPageActionResponse> => {
   try {
     const tab = await chrome.tabs.get(tabId)
-    const [result] = await chrome.scripting.executeScript({
+    const [actionInjectionResult] = await chrome.scripting.executeScript({
       target: { tabId },
       func: performPageActionByTextsInPage,
       args: [actionOptions, actionArgs || {}]
     })
 
-    const value = result?.result
+    const value = actionInjectionResult?.result
     const currentTab = await chrome.tabs.get(tabId)
 
     if (!value?.ok) {
@@ -579,11 +579,11 @@ export const openCodexAuthLink = async (
   }
 
   const managementTabId = await findOrOpenTab(targetUrl)
-  const [extractResult] = await chrome.scripting.executeScript({
+  const [extractInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId: managementTabId },
     func: extractOpenaiOAuthAuthorizeUrlInPage
   })
-  const extractValue = extractResult?.result
+  const extractValue = extractInjectionResult?.result
   const managementTab = await chrome.tabs.get(managementTabId)
 
   if (!extractValue?.ok || !extractValue.authUrl) {
