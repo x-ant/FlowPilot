@@ -1,22 +1,29 @@
-import type { ClickPageButtonResult } from "./types"
+import type { PageActionResult } from "./types"
 
-export type ExtractOpenaiOAuthAuthorizeUrlResult = {
+export type ExtractCodexOAuthUrlResult = {
   ok: boolean
   message: string
   authUrl?: string
 }
 
-export type PageActionByTextsOptions = {
-  targetTexts: string[]
-  timeoutMs: number
-  successMessage: string
-  failureMessage: string
+export type PageActionField = {
+  selectors: string[]
+  value: string
+  allowSplitInput?: boolean
+  optional?: boolean
+}
+
+export type PageActionButton = {
+  texts: string[]
   submitStrategy?: "auto" | "click" | "requestSubmit"
 }
 
-export type PageActionByTextsArgs = {
-  inputSelectors?: string[]
-  inputValue?: string
+export type PageActionConfig = {
+  fields?: PageActionField[]
+  button?: PageActionButton
+  timeoutMs: number
+  successMessage: string
+  failureMessage: string
 }
 
 /**
@@ -28,8 +35,8 @@ export type PageActionByTextsArgs = {
  *
  * @return 读取到的授权链接和执行状态。
  */
-export const extractOpenaiOAuthAuthorizeUrlInPage =
-  (): ExtractOpenaiOAuthAuthorizeUrlResult => {
+export const extractCodexOAuthUrlInPage =
+  (): ExtractCodexOAuthUrlResult => {
     const authUrlPrefix = "https://auth.openai.com/oauth/authorize"
 
     /**
@@ -101,28 +108,22 @@ export const extractOpenaiOAuthAuthorizeUrlInPage =
   }
 
 /**
- * 在目标网页中按文案查找元素，并按需先填写输入框、再点击按钮。
+ * 在目标网页中执行一次页面动作。
  *
  * 这个函数会被注入到目标网页里执行，因此只能使用页面环境里可用的 DOM API。
- * 它同时支持两类动作：
+ * 它同时支持三类动作：
  * - 只点击按钮
- * - 先填写输入框，再点击按钮
+ * - 先填写一个或多个输入框，再点击按钮
+ * - 只填写输入框
  *
- * @param options 页面动作配置。
+ * @param action 页面动作配置。
  * @return 执行结果和提示信息。
  */
-export const performPageActionByTextsInPage = (
-  options: PageActionByTextsOptions,
-  args: PageActionByTextsArgs = {}
-): Promise<ClickPageButtonResult> => {
+export const performPageActionInPage = (
+  action: PageActionConfig
+): Promise<PageActionResult> => {
   return new Promise((resolve) => {
     const startedAt: number = Date.now()
-    const targetTextArray: string[] = options.targetTexts.map((value) => {
-      return normalizeText(value)
-    })
-    const candidateSelector =
-      "button,a,[role='button'],input[type='button'],input[type='submit']"
-    let usedSplitInputFill = false
 
     /**
      * 统一文本格式，去掉空白并转小写，提升匹配命中率。
@@ -177,15 +178,25 @@ export const performPageActionByTextsInPage = (
      * @return 匹配到的按钮元素；如果没有找到则返回 undefined。
      */
     const findButton = () => {
-      return Array.from(document.querySelectorAll(candidateSelector)).find(
+      if (!action.button) {
+        return undefined
+      }
+
+      const targetButtonTextArray = action.button.texts.map((buttonText) => {
+        return normalizeText(buttonText)
+      })
+
+      const buttonSelector =
+        "button,a,[role='button'],input[type='button'],input[type='submit']"
+      return Array.from(document.querySelectorAll(buttonSelector)).find(
         (element) => {
           if (isUnavailable(element)) {
             return false
           }
 
-          const text = getElementText(element)
-          return targetTextArray.some((targetText) => {
-            return text.includes(targetText)
+          const currentElementText = getElementText(element)
+          return targetButtonTextArray.some((targetButtonText) => {
+            return currentElementText.includes(targetButtonText)
           })
         }
       ) as HTMLElement | undefined
@@ -194,12 +205,11 @@ export const performPageActionByTextsInPage = (
     /**
      * 在页面里尝试定位输入框。
      *
+     * @param field 表单字段配置。
      * @return 找到时返回输入框，否则返回 undefined。
      */
-    const findInput = () => {
-      const selectorList = args.inputSelectors || []
-
-      for (const selector of selectorList) {
+    const findInput = (field: PageActionField) => {
+      for (const selector of field.selectors) {
         const matched = Array.from(document.querySelectorAll(selector)).find(
           (element) => {
             const input = element as HTMLInputElement
@@ -275,17 +285,16 @@ export const performPageActionByTextsInPage = (
     }
 
     /**
-     * 先执行输入框填写，再查找并点击按钮。
+     * 填写一个字段，兼容普通输入框和分格验证码输入框。
      *
-     * @return 如果已经完成填写和点击，则返回 true；否则返回 false。
+     * @param field 字段填写配置。
+     * @return 填写结果和可用于关联表单的输入框。
      */
-    const tryExecute = () => {
-      let input: HTMLInputElement | undefined
-
-      if (typeof args.inputValue === "string") {
+    const fillField = (field: PageActionField) => {
+      if (field.allowSplitInput) {
         const splitInputs = findSplitInputs()
-        if (splitInputs.length > 1 && args.inputValue.length > 1) {
-          const characters = Array.from(args.inputValue)
+        if (splitInputs.length > 1 && field.value.length > 1) {
+          const characters = Array.from(field.value)
           const fillLength = Math.min(splitInputs.length, characters.length)
 
           for (let index = 0; index < fillLength; index += 1) {
@@ -304,18 +313,71 @@ export const performPageActionByTextsInPage = (
             }
           }
 
-          input = splitInputs[0]
-          input.focus()
-          usedSplitInputFill = true
-        } else {
-          input = findInput()
-          if (!input) {
-            return false
+          splitInputs[0].focus()
+          return {
+            ok: true,
+            input: splitInputs[0],
+            hasFilledSplitInput: true
+          }
+        }
+      }
+
+      const input = findInput(field)
+      if (!input) {
+        return {
+          ok: false,
+          input: undefined,
+          hasFilledSplitInput: false
+        }
+      }
+
+      setInputValue(input, field.value)
+      input.focus()
+
+      return {
+        ok: true,
+        input,
+        hasFilledSplitInput: false
+      }
+    }
+
+    /**
+     * 先执行输入框填写，再按需查找并点击按钮。
+     *
+     * @return 如果已经完成填写和点击，则返回 true；否则返回 false。
+     */
+    const tryExecute = () => {
+      const fields = action.fields || []
+      const filledInputs: HTMLInputElement[] = []
+      let existFilledSplitInput = false
+
+      for (const field of fields) {
+        const fillResult = fillField(field)
+        if (!fillResult.ok) {
+          if (field.optional) {
+            continue
           }
 
-          setInputValue(input, args.inputValue)
-          input.focus()
+          return false
         }
+
+        if (fillResult.input) {
+          filledInputs.push(fillResult.input)
+        }
+
+        existFilledSplitInput = existFilledSplitInput || fillResult.hasFilledSplitInput
+      }
+
+      const formAnchorInput = filledInputs[0]
+
+      // 没有按钮得动作就结束了
+      if (!action.button) {
+        resolve({
+          ok: true,
+          message: action.successMessage,
+          buttonText: ""
+        })
+        return true
       }
 
       const button = findButton() as
@@ -330,17 +392,17 @@ export const performPageActionByTextsInPage = (
           : null
       const form: HTMLFormElement | null =
         buttonForm ||
-        input?.form ||
+        formAnchorInput?.form ||
         (button?.closest?.("form") as HTMLFormElement | null) ||
-        (input?.closest?.("form") as HTMLFormElement | null) ||
+        (formAnchorInput?.closest?.("form") as HTMLFormElement | null) ||
         null
 
       // 分格验证码填完以后，页面可能会自动提交或自动跳转，不一定还有“继续/提交”按钮。
       if (!button && !form) {
-        if (usedSplitInputFill) {
+        if (existFilledSplitInput) {
           resolve({
             ok: true,
-            message: options.successMessage,
+            message: action.successMessage,
             buttonText: ""
           })
           return true
@@ -350,7 +412,7 @@ export const performPageActionByTextsInPage = (
       }
 
       const performSubmit = () => {
-        const submitStrategy = options.submitStrategy || "click"
+        const submitStrategy = action.button?.submitStrategy || "click"
         if (
           submitStrategy === "requestSubmit" ||
           (submitStrategy === "auto" && form && "requestSubmit" in form)
@@ -382,6 +444,7 @@ export const performPageActionByTextsInPage = (
         return false
       }
 
+      // 就是实际操作得按钮得文字描述
       const buttonText = button
         ? [
             button.textContent,
@@ -395,10 +458,9 @@ export const performPageActionByTextsInPage = (
 
       resolve({
         ok: true,
-        message: options.successMessage,
+        message: action.successMessage,
         buttonText
       })
-      // 这个true是tryExecute的返回值 resolve才是performPageActionByTextsInPage的返回值
       return true
     }
 
@@ -417,11 +479,11 @@ export const performPageActionByTextsInPage = (
         return
       }
 
-      if (Date.now() - startedAt >= options.timeoutMs) {
+      if (Date.now() - startedAt >= action.timeoutMs) {
         clearInterval(intervalId)
         resolve({
           ok: false,
-          message: options.failureMessage
+          message: action.failureMessage
         })
       }
     }, 300)

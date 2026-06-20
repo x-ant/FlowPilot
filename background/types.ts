@@ -129,9 +129,9 @@ export type BackgroundResponse =
   | ConfirmCodexOAuthCallbackResponse
 
 /**
- * 注入目标网页后，点击页面按钮的执行结果。
+ * 注入目标网页后，执行页面动作的结果。
  */
-export type ClickPageButtonResult = {
+export type PageActionResult = {
   ok: boolean
   message: string
   buttonText?: string
