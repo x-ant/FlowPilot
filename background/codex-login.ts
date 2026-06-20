@@ -114,6 +114,26 @@ const isCodexSessionStorageUrl = (rawUrl?: string) => {
 }
 
 /**
+ * 激活指定标签页，方便读取 2925 验证码后把浏览器切回 OpenAI 登录页。
+ *
+ * @param tabId 要激活的 Chrome 标签页 id。
+ * @return 激活后的标签页信息。
+ */
+const activateBrowserTab = async (tabId: number) => {
+  const tab = await chrome.tabs.update(tabId, { active: true })
+
+  if (typeof tab.windowId === "number" && chrome.windows?.update) {
+    try {
+      await chrome.windows.update(tab.windowId, { focused: true })
+    } catch {
+      // 切换窗口只是改善体验，失败不影响后续验证码回填。
+    }
+  }
+
+  return tab
+}
+
+/**
  * 规范化 cookie 域名，统一去掉前导点并转成小写，便于比较。
  *
  * @param domain 原始 cookie 域名。
@@ -622,6 +642,7 @@ export const fillOpenaiLoginVerificationCode = async (
     }
   }
 
+  await activateBrowserTab(tabId)
   await waitForTabLoaded(tabId)
   const tab = await chrome.tabs.get(tabId)
   const currentUrl = String(tab.url || "").trim()
