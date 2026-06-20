@@ -1,12 +1,28 @@
-import { Button, Card, ConfigProvider, Empty, Form, Input, Space, Tag, theme, Typography } from "antd";
-import zhCN from "antd/locale/zh_CN";
-import { useEffect, useMemo, useRef, useState } from "react";
-import "antd/dist/reset.css";
-import "./sidepanel.css";
+import {
+  Button,
+  Card,
+  ConfigProvider,
+  Empty,
+  Form,
+  Input,
+  Space,
+  Tag,
+  theme,
+  Typography
+} from "antd"
+import zhCN from "antd/locale/zh_CN"
+import { useEffect, useMemo, useRef, useState } from "react"
 
-import type { BackgroundRequest, BackgroundResponse } from "./background/types";
-import { createUiLogger, getTimeLabel, LOG_LEVEL_META, type LogItem } from "./shared/logging";
+import "antd/dist/reset.css"
+import "./sidepanel.css"
 
+import type { BackgroundRequest, BackgroundResponse } from "./background/types"
+import {
+  createUiLogger,
+  getTimeLabel,
+  LOG_LEVEL_META,
+  type LogItem
+} from "./shared/logging"
 
 type Settings = {
   loginUrl?: string
@@ -34,21 +50,84 @@ type LoginStepId =
   | "confirm-oauth-callback"
 
 type LoginStepConfig = {
+  /**
+   * 步骤唯一标识，用来判断哪个按钮正在执行 loading。
+   */
   id: LoginStepId
+
+  /**
+   * 展示给用户看的步骤序号，例如 1、2、3。
+   */
   index: number
+
+  /**
+   * 步骤标题，显示在“执行步骤”卡片里。
+   */
   title: string
+
+  /**
+   * 执行这个步骤前必须通过表单校验的字段。
+   */
   requiredFields: Array<keyof Settings>
+
+  /**
+   * 必填参数缺失时，顶部状态栏显示的文案。
+   */
   missingStatus: string
+
+  /**
+   * 必填参数缺失时，写入执行日志的兜底文案。
+   */
   missingMessage: string
+
+  /**
+   * 后台请求发出前，顶部状态栏显示的“正在执行”文案。
+   */
   workingStatus: string
+
+  /**
+   * 后台请求发出前，写入执行日志的调试文案。
+   */
   debugMessage: string
+
+  /**
+   * 当前步骤是否依赖之前保存的 OpenAI 授权页 tabId。
+   */
   needsAuthTab?: boolean
+
+  /**
+   * 需要授权页 tabId 但找不到时，顶部状态栏显示的文案。
+   */
   missingAuthTabStatus?: string
+
+  /**
+   * 需要授权页 tabId 但找不到时，写入执行日志的文案。
+   */
   missingAuthTabMessage?: string
+
+  /**
+   * 执行当前步骤前是否先清掉旧的授权页 tabId。
+   */
   resetAuthTabBeforeRun?: boolean
-  persistResultTab?: boolean
+
+  /**
+   * 当前步骤成功后，是否保存后台返回的 targetTab 作为后续要操作的授权页。
+   * 实际都是一个页面，为了防止可能的变动才做保存。
+   */
+  saveAuthTabAfterSuccess?: boolean
+
+  /**
+   * 根据表单值和授权页 tabId，构造要发送给 background 的请求。
+   */
   buildRequest: (args: {
+    /**
+     * 已经 trim 和规范化后的表单值。
+     */
     values: NormalizedSettings
+
+    /**
+     * 当前可继续操作的 OpenAI 授权页 tabId；不需要时为 0。
+     */
     authTabId: number
   }) => BackgroundRequest
 }
@@ -88,7 +167,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     workingStatus: "正在清理旧登录信息并打开登录页",
     debugMessage: "步骤 2 准备清理旧登录信息并打开 OpenAI 登录页",
     resetAuthTabBeforeRun: true,
-    persistResultTab: true,
+    saveAuthTabAfterSuccess: true,
     buildRequest: ({ values }) => ({
       type: "codex-login:open-auth-link",
       payload: {
@@ -108,7 +187,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     needsAuthTab: true,
     missingAuthTabStatus: "步骤 3 需要先执行步骤 2",
     missingAuthTabMessage: "请先执行步骤 2 打开 OpenAI 登录页",
-    persistResultTab: true,
+    saveAuthTabAfterSuccess: true,
     buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:fill-auth-email",
       payload: {
@@ -129,7 +208,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     needsAuthTab: true,
     missingAuthTabStatus: "步骤 4 需要先执行步骤 2 和步骤 3",
     missingAuthTabMessage: "请先执行步骤 2 和步骤 3 打开邮箱验证码页",
-    persistResultTab: true,
+    saveAuthTabAfterSuccess: true,
     buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:fill-auth-code",
       payload: {
@@ -152,7 +231,7 @@ const LOGIN_STEPS: LoginStepConfig[] = [
     needsAuthTab: true,
     missingAuthTabStatus: "步骤 5 需要先执行步骤 2 到步骤 4",
     missingAuthTabMessage: "请先完成验证码回填并停留在授权确认页",
-    persistResultTab: true,
+    saveAuthTabAfterSuccess: true,
     buildRequest: ({ values, authTabId }) => ({
       type: "codex-login:confirm-oauth-callback",
       payload: {
@@ -507,7 +586,7 @@ function SidePanel() {
       }
 
       setStatus(`步骤 ${step.index} 已完成`)
-      if (step.persistResultTab) {
+      if (step.saveAuthTabAfterSuccess) {
         persistAuthTab(result.targetTab)
       }
       log.info(`步骤 ${step.index} ${result.message}`)

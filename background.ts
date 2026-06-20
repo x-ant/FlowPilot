@@ -8,6 +8,8 @@ import type {
 
 setupSidePanelBehavior()
 
+type AnyBackgroundRequestHandler = BackgroundRequestHandler<BackgroundRequest>
+
 /**
  * 判断收到的 runtime message 是否是本模块支持的后台请求。
  *
@@ -40,9 +42,7 @@ const isBackgroundRequest = (
  * @return 后台处理结果。
  */
 const dispatchBackgroundRequest = (request: BackgroundRequest) => {
-  const handler = REQUEST_HANDLERS[
-    request.type
-  ] as BackgroundRequestHandler<BackgroundRequest>
+  const handler = REQUEST_HANDLERS[request.type] as AnyBackgroundRequestHandler
 
   return handler(request)
 }
