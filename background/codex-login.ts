@@ -15,8 +15,7 @@ import type {
   ConfirmCodexOAuthCallbackResponse,
   FillOpenaiLoginEmailResponse,
   FillOpenaiLoginVerificationCodeResponse,
-  OpenCodexAuthLinkResponse,
-  StartCodexLoginStepResponse
+  OpenCodexAuthLinkResponse
 } from "./types"
 
 const CODEX_LOGIN_BUTTON_TEXTS = [
@@ -181,6 +180,18 @@ const activateBrowserTab = async (tabId: number) => {
   }
 
   return tab
+}
+
+/**
+ * 等待一小段时间，用于页面生成授权链接等异步场景。
+ *
+ * @param milliseconds 等待毫秒数。
+ * @return 等待完成后 resolve。
+ */
+const sleep = (milliseconds: number) => {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, milliseconds)
+  })
 }
 
 /**
@@ -440,12 +451,17 @@ const runPageActionInTab = async (
     await waitForTabLoaded(tabId)
   }
 
+  // executeScript的返回值一定是Promise，需要await，
+  // 但是func参数的返回值如果是Promise会自动执行await，如果不是就直接返回
   const [actionInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: performPageActionByTextsInPage,
     args: [actionOptions, actionArgs || {}]
   })
 
+  // 这个value 就是performPageActionByTextsInPage的返回值
+  // 如果performPageActionByTextsInPage返回值是Promise会自动执行await，如果不是就直接返回
+  // 总之这里的actionInjectionResult?.result一定是处理好的最终结果
   const value = actionInjectionResult?.result
   const tab = await chrome.tabs.get(tabId)
 
@@ -516,24 +532,82 @@ const runPageActionInExistingTab = async (
   } catch {
     return {
       ok: false,
-      message: "未找到可操作的登录页标签，请先执行步骤 2"
+      message: "未找到可操作的登录页标签，请先执行步骤 1"
     }
   }
 }
 
 /**
- * 执行完整的 Codex 登录入口点击流程。
+ * 等待管理页生成 OpenAI OAuth 授权链接。
  *
- * 流程：打开/复用管理页 -> 等页面加载 -> 注入页面脚本点击按钮。
+ * @param tabId Codex 管理页标签页 id。
+ * @return 读取到的授权链接和管理页信息。
+ */
+const waitForOpenaiOAuthAuthorizeUrlInTab = async (tabId: number) => {
+  const timeoutMs = 15000
+  const intervalMs = 500
+  const startedAt = Date.now()
+  let lastMessage = "未找到授权链接"
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    try {
+      const [extractInjectionResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: extractOpenaiOAuthAuthorizeUrlInPage
+      })
+      const extractValue = extractInjectionResult?.result
+      const managementTab = await chrome.tabs.get(tabId)
+
+      if (extractValue?.ok && extractValue.authUrl) {
+        return {
+          ok: true,
+          message: extractValue.message,
+          authUrl: extractValue.authUrl,
+          targetTab: {
+            id: tabId,
+            url: managementTab.url
+          }
+        }
+      }
+
+      lastMessage = extractValue?.message || lastMessage
+    } catch (error) {
+      lastMessage =
+        error instanceof Error ? error.message : "读取授权链接时页面暂不可用"
+    }
+
+    await sleep(intervalMs)
+  }
+
+  const managementTab = await chrome.tabs.get(tabId).catch(() => undefined)
+  return {
+    ok: false,
+    message: lastMessage,
+    authUrl: "",
+    targetTab: {
+      id: tabId,
+      url: managementTab?.url
+    }
+  }
+}
+
+/**
+ * 点击管理页入口，读取授权链接，打开 OpenAI 登录页，并清理旧会话。
  *
- * @param targetUrl 侧边栏里填写的 Codex 登录地址
+ * 这个步骤只负责把页面打开到 OpenAI 登录页，不再自动填写邮箱。
+ *
+ * @param targetUrl 侧边栏里填写的 Codex 登录地址。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const startCodexLogin = async (
+export const openCodexAuthLink = async (
   targetUrl: string
-): Promise<StartCodexLoginStepResponse> => {
-  // 第一步先刷新管理页，让页面从初始状态开始，避免复用到上次已点击后的中间状态。
-  return runPageActionInTab(
+): Promise<OpenCodexAuthLinkResponse> => {
+  // 打开授权链接前先清理旧 cookie，减少复用到失效登录态的概率。
+  const cleanupResult = await clearCodexSessionCookies()
+  const storageResult = await clearCodexSessionStorage()
+  const cleanupMessage = `${cleanupResult.message}；${storageResult.message}，`
+
+  const startResult = await runPageActionInTab(
     targetUrl,
     {
       targetTexts: CODEX_LOGIN_BUTTON_TEXTS,
@@ -547,60 +621,39 @@ export const startCodexLogin = async (
       reloadBeforeAction: true
     }
   )
-}
 
-/**
- * 打开 OpenAI 登录页并清理旧会话。
- *
- * 这个步骤只负责把页面打开到目标地址，不再自动填写邮箱。
- *
- * @param targetUrl 侧边栏里填写的 OpenAI 登录地址。
- * @return 返回给侧边栏展示的执行结果。
- */
-export const openCodexAuthLink = async (
-  targetUrl: string
-): Promise<OpenCodexAuthLinkResponse> => {
-  // 打开授权链接前先清理旧 cookie，减少复用到失效登录态的概率。
-  const cleanupResult = await clearCodexSessionCookies()
-  const storageResult = await clearCodexSessionStorage()
-  const cleanupMessage = `${cleanupResult.message}；${storageResult.message}，`
-  if (targetUrl.startsWith("https://auth.openai.com/log-in")) {
-    const tabId = await findOrOpenTab(targetUrl)
-    const tab = await chrome.tabs.get(tabId)
-
+  if (!startResult.ok) {
     return {
-      ok: true,
-      message: `${cleanupMessage}已打开 OpenAI 登录页，等待填写邮箱`,
-      targetTab: {
-        id: tabId,
-        url: tab.url
-      }
+      ok: false,
+      message: `${cleanupMessage}${startResult.message}`,
+      targetTab: startResult.targetTab
     }
   }
 
-  const managementTabId = await findOrOpenTab(targetUrl)
-  const [extractInjectionResult] = await chrome.scripting.executeScript({
-    target: { tabId: managementTabId },
-    func: extractOpenaiOAuthAuthorizeUrlInPage
-  })
-  const extractValue = extractInjectionResult?.result
-  const managementTab = await chrome.tabs.get(managementTabId)
-
-  if (!extractValue?.ok || !extractValue.authUrl) {
+  const managementTabId = startResult.targetTab?.id
+  if (typeof managementTabId !== "number") {
     return {
       ok: false,
-      message: `${cleanupMessage}${extractValue?.message || "未找到授权链接"}`,
-      targetTab: {
-        id: managementTabId,
-        url: managementTab.url
-      }
+      message: `${cleanupMessage}已点击“开始codex登录”，但未拿到管理页标签页`,
+      targetTab: startResult.targetTab
+    }
+  }
+
+  const extractResult =
+    await waitForOpenaiOAuthAuthorizeUrlInTab(managementTabId)
+
+  if (!extractResult.ok || !extractResult.authUrl) {
+    return {
+      ok: false,
+      message: `${cleanupMessage}${extractResult.message}`,
+      targetTab: extractResult.targetTab
     }
   }
 
   // 不点击页面里的“打开链接”按钮，避免脚本点击触发 window.open 被浏览器拦截。
   const authTab = await chrome.tabs.create({
     active: true,
-    url: extractValue.authUrl
+    url: extractResult.authUrl
   })
 
   if (authTab.id) {
@@ -615,10 +668,10 @@ export const openCodexAuthLink = async (
 
   return {
     ok: true,
-    message: `${cleanupMessage}已读取授权链接并打开 OpenAI 授权页`,
+    message: `${cleanupMessage}${startResult.message}；已读取授权链接并打开 OpenAI 授权页`,
     targetTab: {
       id: authTab.id,
-      url: authTab.url || extractValue.authUrl
+      url: authTab.url || extractResult.authUrl
     }
   }
 }

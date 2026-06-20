@@ -1,7 +1,7 @@
 /**
  * 后台请求的基础结构。
  *
- * TType 是请求类型字符串，例如 "codex-login:start"。
+ * TType 是请求类型字符串，例如 "codex-login:open-auth-link"。
  * TPayload 是这类请求携带的数据结构。
  */
 type BackgroundRequestBase<TType extends string, TPayload> = {
@@ -10,17 +10,7 @@ type BackgroundRequestBase<TType extends string, TPayload> = {
 }
 
 /**
- * 步骤 1：点击目标页面里的“开始codex登录”按钮。
- */
-export type StartCodexLoginRequest = BackgroundRequestBase<
-  "codex-login:start",
-  {
-    targetUrl: string
-  }
->
-
-/**
- * 步骤 2：打开 OpenAI 登录页或授权链接。
+ * 步骤 1：点击目标页面里的“开始codex登录”按钮，并打开 OpenAI 登录页。
  */
 export type OpenCodexAuthLinkRequest = BackgroundRequestBase<
   "codex-login:open-auth-link",
@@ -30,7 +20,7 @@ export type OpenCodexAuthLinkRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 3：在 OpenAI 登录页填写邮箱并继续。
+ * 步骤 2：在 OpenAI 登录页填写邮箱并继续。
  */
 export type FillOpenaiLoginEmailRequest = BackgroundRequestBase<
   "codex-login:fill-auth-email",
@@ -41,7 +31,7 @@ export type FillOpenaiLoginEmailRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 4：读取 2925 验证码并回填到邮箱验证码页。
+ * 步骤 3：读取 2925 验证码并回填到邮箱验证码页。
  */
 export type FillOpenaiLoginVerificationCodeRequest = BackgroundRequestBase<
   "codex-login:fill-auth-code",
@@ -53,7 +43,7 @@ export type FillOpenaiLoginVerificationCodeRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 5：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
+ * 步骤 4：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
  */
 export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
   "codex-login:confirm-oauth-callback",
@@ -69,7 +59,6 @@ export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
  * 后续新增步骤时，把新的 Request 类型用 | 加到这里。
  */
 export type BackgroundRequest =
-  | StartCodexLoginRequest
   | OpenCodexAuthLinkRequest
   | FillOpenaiLoginEmailRequest
   | FillOpenaiLoginVerificationCodeRequest
@@ -101,22 +90,17 @@ export type CodexLoginStepResponseBase = {
 export type CodexLoginPageActionResponse = CodexLoginStepResponseBase
 
 /**
- * 步骤 1：点击目标页面里的“开始codex登录”按钮。
- */
-export type StartCodexLoginStepResponse = CodexLoginStepResponseBase
-
-/**
- * 步骤 2：打开 OpenAI 登录页或授权链接。
+ * 步骤 1：点击目标页面里的“开始codex登录”按钮，并打开 OpenAI 登录页。
  */
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
 
 /**
- * 步骤 3：在 OpenAI 登录页填写邮箱并继续。
+ * 步骤 2：在 OpenAI 登录页填写邮箱并继续。
  */
 export type FillOpenaiLoginEmailResponse = CodexLoginStepResponseBase
 
 /**
- * 步骤 4：读取 2925 验证码并回填到邮箱验证码页。
+ * 步骤 3：读取 2925 验证码并回填到邮箱验证码页。
  *
  * mailTab 表示读取验证码时用到的 2925 邮箱页面。
  */
@@ -126,7 +110,7 @@ export type FillOpenaiLoginVerificationCodeResponse =
   }
 
 /**
- * 步骤 5：确认 OAuth 授权并提交回调 URL。
+ * 步骤 4：确认 OAuth 授权并提交回调 URL。
  *
  * managementTab 表示被回填 callback URL 的 Codex 管理页。
  */
@@ -139,7 +123,6 @@ export type ConfirmCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
  * 所有后台请求处理器统一返回的响应类型。
  */
 export type BackgroundResponse =
-  | StartCodexLoginStepResponse
   | OpenCodexAuthLinkResponse
   | FillOpenaiLoginEmailResponse
   | FillOpenaiLoginVerificationCodeResponse

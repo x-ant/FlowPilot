@@ -1,4 +1,4 @@
-import type { ClickPageButtonResult } from "./types";
+import type { ClickPageButtonResult } from "./types"
 
 export type ExtractOpenaiOAuthAuthorizeUrlResult = {
   ok: boolean
@@ -96,7 +96,7 @@ export const extractOpenaiOAuthAuthorizeUrlInPage =
 
     return {
       ok: false,
-      message: "未找到授权链接，请先执行步骤 1 并确认授权链接已生成"
+      message: "未找到授权链接，请确认页面已经生成 OpenAI 授权链接"
     }
   }
 
@@ -335,6 +335,7 @@ export const performPageActionByTextsInPage = (
         (input?.closest?.("form") as HTMLFormElement | null) ||
         null
 
+      // 分格验证码填完以后，页面可能会自动提交或自动跳转，不一定还有“继续/提交”按钮。
       if (!button && !form) {
         if (usedSplitInputFill) {
           resolve({
@@ -397,6 +398,7 @@ export const performPageActionByTextsInPage = (
         message: options.successMessage,
         buttonText
       })
+      // 这个true是tryExecute的返回值 resolve才是performPageActionByTextsInPage的返回值
       return true
     }
 
