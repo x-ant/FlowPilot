@@ -1,10 +1,8 @@
-import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
-import {
-  ensureMail2925SessionInPage,
-  type EnsureMail2925SessionPayload
-} from "./mail-2925-page-session"
-import type { BrowserTabInfo } from "./types"
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
+import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code";
+import { ensureMail2925SessionInPage, type EnsureMail2925SessionPayload } from "./mail-2925-page-session";
+import type { BrowserTabInfo } from "./types";
+import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils";
+
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]
@@ -56,15 +54,12 @@ const navigateMail2925TabToMailbox = async (tabId: number) => {
 
   if (isMail2925MailboxUrl(tab.url)) {
     await chrome.tabs.update(tabId, { active: true })
-    await waitForTabLoaded(tabId)
-    return
+  } else {
+    await chrome.tabs.update(tabId, {
+      active: true,
+      url: MAIL2925_MAILBOX_URL
+    })
   }
-
-  await chrome.tabs.update(tabId, {
-    active: true,
-    url: MAIL2925_MAILBOX_URL
-  })
-  await waitForTabLoaded(tabId)
 }
 
 /**
@@ -80,15 +75,8 @@ export const fetchMail2925VerificationCode = async (
   email: string,
   password: string
 ): Promise<Mail2925VerificationCodeResult> => {
-  const tabId = await findOrOpenMatchedTab({
-    targetUrl: MAIL2925_MAILBOX_URL,
-    errorMessage: "无法打开 2925 邮箱页面",
-    matcher: (tab) => {
-      return Boolean(getMail2925Url(tab.url))
-    }
-  })
 
-  // 创建返回值的方法
+  // region ========== 方法域 ==========
   const createResult = async (
     code: string,
     message: string
@@ -103,8 +91,19 @@ export const fetchMail2925VerificationCode = async (
       }
     }
   }
+  // endregion
+
+  // 找tab
+  const tabId = await findOrOpenMatchedTab({
+    targetUrl: MAIL2925_MAILBOX_URL,
+    errorMessage: "无法打开 2925 邮箱页面",
+    matcher: (tab) => {
+      return Boolean(getMail2925Url(tab.url))
+    }
+  })
 
   // region ========== 没登录就先登录 ==========
+  await waitForTabLoaded(tabId)
   const [sessionInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: ensureMail2925SessionInPage,
@@ -123,6 +122,7 @@ export const fetchMail2925VerificationCode = async (
 
   // region ========== 登录就调到收件箱页面 ==========
   await navigateMail2925TabToMailbox(tabId)
+  await waitForTabLoaded(tabId)
   const [codeInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: pollMail2925VerificationCodeInPage,

@@ -66,42 +66,83 @@ body {
   padding: 14px;
 }
 
-.step-list {
+.account-list {
+  max-height: 360px;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.step-row {
+.account-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid #e6eaf0;
   border-radius: 8px;
   background: #ffffff;
 }
 
-.step-copy {
+.account-row--active {
+  border-color: #9ec5fe;
+  background: #f8fbff;
+}
+
+.account-row--done .account-email,
+.account-row--done .account-meta {
+  text-decoration: line-through;
+}
+
+.account-row--failed {
+  border-color: #f3b0b0;
+  background: #fffafa;
+}
+
+.account-row--running {
+  border-color: #9ec5fe;
+}
+
+.account-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
 }
 
-.step-index {
-  color: #667085;
-  font-size: 12px;
-  line-height: 1.4;
+.account-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.step-title {
+.account-email {
   color: #111827;
   font-size: 13px;
   line-height: 1.4;
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.account-meta {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.account-actions .ant-btn {
+  min-width: 56px;
 }
 
 .log-list {

@@ -1,18 +1,9 @@
-import { fetchMail2925VerificationCode } from "./mail-2925"
-import { extractCodexOAuthUrlInPage } from "./page-script"
-import type {
-  CompleteCodexLoginEmailAuthFlowResponse,
-  ConfirmCodexOAuthCallbackResponse,
-  FetchAndSubmitCodexVerificationCodeResponse,
-  OpenCodexAuthLinkResponse,
-  SubmitCodexLoginEmailResponse
-} from "./types"
-import {
-  runAuthPageAction,
-  runPageActionInTargetUrl,
-  type PageActionRunResult
-} from "./utils/page-action-runner"
-import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
+import { fetchMail2925VerificationCode } from "./mail-2925";
+import { extractCodexOAuthUrlInPage } from "./page-script";
+import type { CompleteCodexLoginEmailAuthFlowResponse, ConfirmCodexOAuthCallbackResponse, FetchAndSubmitCodexVerificationCodeResponse, OpenCodexAuthLinkResponse, SubmitCodexLoginEmailResponse } from "./types";
+import { runAuthPageAction, runPageActionInTargetUrl, type PageActionRunResult } from "./utils/page-action-runner";
+import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils";
+
 
 const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
 
@@ -142,14 +133,10 @@ const isCodexSessionStorageUrl = (rawUrl?: string) => {
  * @param rawUrl 浏览器标签页当前 URL。
  * @return 如果是带 code/state 的 localhost 回调地址则返回 true。
  */
-const isLocalhostOAuthCallbackUrl = (rawUrl?: string) => {
+const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
   try {
     const parsed = new URL(String(rawUrl || ""))
     if (!["http:", "https:"].includes(parsed.protocol)) {
-      return false
-    }
-
-    if (!["localhost", "127.0.0.1"].includes(parsed.hostname)) {
       return false
     }
 
@@ -393,7 +380,15 @@ const clearCodexSessionCookies = async () => {
   }
 }
 
-const clearCodexSessionStorageInTab = async (tabId: number) => {
+/**
+ * 等页面加载完成后调用脚本
+ *
+ * @param tabId 目标tabId
+ */
+const clearSessionStorageInTab = async (tabId: number) => {
+  // 很奇怪，虽然跟页面元素无关，但是 chrome.scripting.executeScript 必须要页面加载完成才能正常执行
+  await waitForTabLoaded(tabId)
+  // 清理数据
   const [storageInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
@@ -448,7 +443,7 @@ const clearCodexSessionStorage = async () => {
     }
 
     try {
-      const result = await clearCodexSessionStorageInTab(tab.id)
+      const result = await clearSessionStorageInTab(tab.id)
       localCount += result.localCount
       sessionCount += result.sessionCount
       clearedTabCount += 1
@@ -590,8 +585,8 @@ export const openCodexAuthLink = async (
   })
   if (authTab.id) {
     try {
-      await waitForTabLoaded(authTab.id)
-      await clearCodexSessionStorageInTab(authTab.id)
+      await clearSessionStorageInTab(authTab.id)
+      // 即便数据已经清理但是页面仍已经加载好了
       await chrome.tabs.reload(authTab.id)
     } catch {
       // Best effort only.
@@ -656,6 +651,7 @@ export const submitCodexLoginEmail = async (
 }
 
 /**
+ * 等页面加载完成后
  * 在 OpenAI 密码页填写密码并提交。
  *
  * @param tabId 要操作的登录页标签页 id。
@@ -708,7 +704,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
   email: string,
   password: string
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
-  // region ========== 获取验证码 ==========
+  // region ========== 去2925邮箱获取验证码 ==========
   const mailResult = await fetchMail2925VerificationCode(email, password)
   if (!mailResult.code) {
     return {
@@ -723,8 +719,8 @@ export const fetchAndSubmitCodexVerificationCode = async (
   }
   // endregion
 
+  // 回到登录页面输入验证码
   await activateBrowserTab(tabId)
-  await waitForTabLoaded(tabId)
   const tab = await chrome.tabs.get(tabId)
   const currentUrl = String(tab.url || "").trim()
   if (!isCodexVerificationCodeUrl(currentUrl)) {
@@ -771,6 +767,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
 }
 
 /**
+ * 等页面加载完成
  * 完成 OpenAI 邮箱登录认证流程。
  *
  * 流程可能是“邮箱 -> 验证码”，也可能是“邮箱 -> 密码 -> 验证码”。
@@ -785,6 +782,9 @@ export const completeCodexLoginEmailAuthFlow = async (
   email: string,
   password: string
 ): Promise<CompleteCodexLoginEmailAuthFlowResponse> => {
+  // 先等页面已经好了再操作
+  await waitForTabLoaded(tabId)
+
   // region ========== 邮箱登录，并正确进入下一个地址 ==========
   const emailResult = await submitCodexLoginEmail(tabId, email)
   if (!emailResult.ok) {
@@ -867,7 +867,7 @@ export const completeCodexLoginEmailAuthFlow = async (
 }
 
 /**
- * 点击 OpenAI/Codex OAuth 授权确认页的“继续”，捕获 localhost 回调地址。
+ * 点击 Codex OAuth 授权确认页的“继续”，捕获回调地址。
  *
  * @param tabId 当前 OpenAI 授权页标签页 id。
  * @return 捕获到的 localhost 回调地址；超时则返回空。
@@ -876,8 +876,9 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
   await activateBrowserTab(tabId)
   await waitForTabLoaded(tabId)
 
+  // region ========== 先判断一下 ==========
   const currentTab = await chrome.tabs.get(tabId)
-  if (isLocalhostOAuthCallbackUrl(currentTab.url)) {
+  if (isCodexOAuthCallbackUrl(currentTab.url)) {
     return {
       ok: true,
       callbackUrl: String(currentTab.url || ""),
@@ -888,17 +889,20 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
       message: "当前页面已跳转到 localhost 回调地址"
     }
   }
+  // endregion
 
+  // region ========== 等待跳转到目标页面，这是个Promise，实际runAuthPageAction之后才可能结束 ==========
   const abortController = new AbortController()
   const callbackUrlPromise = waitForTabMatchingUrl(
     tabId,
-    isLocalhostOAuthCallbackUrl,
+    isCodexOAuthCallbackUrl,
     {
       timeoutMs: 120000,
       intervalMs: 500,
       signal: abortController.signal
     }
   )
+  // endregion
 
   const confirmResult = await runAuthPageAction(tabId, {
     button: {
@@ -909,7 +913,6 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
     successMessage: CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE,
     failureMessage: CODEX_AUTH_CONFIRM_FAILURE_MESSAGE
   })
-
   if (!confirmResult.ok) {
     abortController.abort()
     return {
@@ -921,8 +924,8 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
   }
 
   const callbackUrl = await callbackUrlPromise
+  // 如果原tabId已经被关了，则处理异常，返回没关时候的地址
   const latestTab = await chrome.tabs.get(tabId).catch(() => currentTab)
-
   if (!callbackUrl) {
     return {
       ok: false,
@@ -933,36 +936,37 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
       },
       callbackUrl: ""
     }
-  }
-
-  return {
-    ok: true,
-    message: "已捕获 localhost 回调地址",
-    targetTab: {
-      id: tabId,
-      url: callbackUrl
-    },
-    callbackUrl
+  } else {
+    return {
+      ok: true,
+      message: "已捕获 localhost 回调地址",
+      targetTab: {
+        id: tabId,
+        url: callbackUrl
+      },
+      callbackUrl
+    }
   }
 }
 
 /**
  * 执行第三步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
  *
- * @param tabId 当前 OpenAI 授权页标签页 id。
- * @param targetUrl Codex 管理页 OAuth 地址。
+ * @param tabId 当前 codex 授权页标签页 id。
+ * @param targetUrl cpa页面的地址，用于回填回调地址数据
  * @return 返回给侧边栏展示的执行结果。
  */
 export const confirmCodexOAuthAndSubmitCallback = async (
   tabId: number,
   targetUrl: string
 ): Promise<ConfirmCodexOAuthCallbackResponse> => {
+  // 拿到回调地址
   const callbackResult = await confirmOAuthConsentAndCaptureCallback(tabId)
-
   if (!callbackResult.ok || !callbackResult.callbackUrl) {
     return callbackResult
   }
 
+  // 提交给cpa页面的回调地址框
   const submitResult = await runPageActionInTargetUrl(targetUrl, {
     fields: [
       {
@@ -978,7 +982,6 @@ export const confirmCodexOAuthAndSubmitCallback = async (
     successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
     failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
   })
-
   if (!submitResult.ok) {
     return {
       ok: false,
@@ -989,8 +992,8 @@ export const confirmCodexOAuthAndSubmitCallback = async (
     }
   }
 
+  // 关闭用于提供回调地址的codex tab
   const closedCallbackTab = await closeBrowserTab(tabId)
-
   return {
     ok: true,
     message: `${callbackResult.message}；${submitResult.message}；${

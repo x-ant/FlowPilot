@@ -34,13 +34,20 @@ const waitForDelay = (timeoutMs: number) => {
  * 页面加载事件异常而永久卡住。
  *
  * @param tabId 要等待的 Chrome 标签页 id
- * @param timeoutMs 最大等待时间，单位毫秒
+ * @param urlMatcher 地址匹配工具，如果跳转到中转页，中转页的加载完成complete也会退出，
+ *                   用这个判断只有跳转到最终目标页的时候的complete才是加载完成
+ * @param timeoutMs 最大等待时间，单位毫秒，默认15s
  * @return 等待完成后 resolve 的 Promise。
  */
-export const waitForTabLoaded = (tabId: number, timeoutMs = 15000) => {
+export const waitForTabLoaded = (tabId: number, urlMatcher?: (url: string) => boolean, timeoutMs = 15000
+) => {
   return new Promise<void>((resolve) => {
     let done = false
     let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    const isMatch = (tab: chrome.tabs.Tab) => {
+      return urlMatcher && tab.url ? urlMatcher(tab.url) : true
+    }
 
     // 页面加载完成和超时都会走这里；done 用来保证只收尾一次。
     const cleanup = () => {
@@ -62,10 +69,15 @@ export const waitForTabLoaded = (tabId: number, timeoutMs = 15000) => {
 
     const listener = (
       updatedTabId: number,
-      changeInfo: chrome.tabs.TabChangeInfo
+      changeInfo: chrome.tabs.TabChangeInfo,
+      tab: chrome.tabs.Tab
     ) => {
       // Chrome 里可能有多个标签页同时变化，只响应当前流程打开的 tab。
-      if (updatedTabId === tabId && changeInfo.status === "complete") {
+      if (
+        updatedTabId === tabId &&
+        changeInfo.status === "complete" &&
+        isMatch(tab)
+      ) {
         cleanup()
       }
     }
@@ -85,7 +97,7 @@ export const waitForTabLoaded = (tabId: number, timeoutMs = 15000) => {
     void chrome.tabs
       .get(tabId)
       .then((tab) => {
-        if (tab.status === "complete") {
+        if (tab.status === "complete" && isMatch(tab)) {
           cleanup()
         }
       })
@@ -164,7 +176,7 @@ export const waitForNewMatchingTab = async (
 }
 
 /**
- * 等待指定标签页跳转到符合条件的 URL。
+ * 等待指定标签页跳转到符合条件的 URL。可以应对多次跳转， 不管界面是否加载完成
  *
  * OAuth 回调有时会跳到本机 localhost 页面，即使本地服务没有响应，
  * Chrome 也会先把标签页 URL 更新出来，所以用 tabs.onUpdated 捕获即可。
@@ -220,8 +232,7 @@ export const waitForTabMatchingUrl = async (
     }
 
     const inspectCurrentTab = () => {
-      void chrome.tabs
-        .get(tabId)
+      void chrome.tabs.get(tabId)
         .then((tab) => {
           inspectUrl(tab.url)
         })
@@ -283,7 +294,7 @@ export const normalizeUrlForTabMatch = (value: string) => {
 }
 
 /**
- * 查找符合条件的标签页；找不到时打开目标地址。
+ * 查找符合条件的标签页；找不到时打开目标地址。只是打开地址，不管页面是否加载完成
  *
  * @param options 查找条件、目标地址和失败提示。
  * @return 可以注入脚本或继续操作的标签页 id。
@@ -294,30 +305,30 @@ export const findOrOpenMatchedTab = async (
   const tabs = await chrome.tabs.query({})
   const matchedTab = tabs.find(options.matcher)
 
+  // region ========== 已经存在 ==========
   if (matchedTab?.id) {
     await chrome.tabs.update(matchedTab.id, {
       active: true,
       url: options.targetUrl
     })
-    await waitForTabLoaded(matchedTab.id)
     return matchedTab.id
   }
+  // endregion
 
+  // region ========== 不存在就创建 ==========
   const tab = await chrome.tabs.create({
     active: true,
     url: options.targetUrl
   })
-
   if (!tab.id) {
     throw new Error(options.errorMessage)
   }
-
-  await waitForTabLoaded(tab.id)
   return tab.id
+  // endregion
 }
 
 /**
- * 打开或复用 Codex 管理页。
+ * 打开或复用 Codex 管理页。不管页面是否加载完成
  *
  * 优先复用已经打开的管理页；找不到时才新开标签页。返回的 tabId 会被
  * chrome.scripting.executeScript 用来指定脚本注入目标。
