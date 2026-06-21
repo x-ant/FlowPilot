@@ -22,15 +22,14 @@ export type OpenCodexAuthLinkRequest = BackgroundRequestBase<
 /**
  * 步骤 2：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
  */
-export type FillCodexLoginEmailAndVerificationCodeRequest =
-  BackgroundRequestBase<
-    "codex-login:fill-auth-email-and-code",
-    {
-      tabId: number
-      email: string
-      password: string
-    }
-  >
+export type CompleteCodexLoginEmailAuthFlowRequest = BackgroundRequestBase<
+  "codex-login:fill-auth-email-and-code",
+  {
+    tabId: number
+    email: string
+    password: string
+  }
+>
 
 /**
  * 步骤 3：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
@@ -50,7 +49,7 @@ export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
  */
 export type BackgroundRequest =
   | OpenCodexAuthLinkRequest
-  | FillCodexLoginEmailAndVerificationCodeRequest
+  | CompleteCodexLoginEmailAuthFlowRequest
   | ConfirmCodexOAuthCallbackRequest
 
 /**
@@ -88,7 +87,7 @@ export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
  *
  * mailTab 表示读取验证码时用到的 2925 邮箱页面。
  */
-export type FillCodexLoginEmailAndVerificationCodeResponse =
+export type CompleteCodexLoginEmailAuthFlowResponse =
   CodexLoginStepResponseBase & {
     mailTab?: BrowserTabInfo
   }
@@ -96,14 +95,14 @@ export type FillCodexLoginEmailAndVerificationCodeResponse =
 /**
  * 内部步骤：在 OpenAI 登录页填写邮箱并继续。
  */
-export type FillOpenaiLoginEmailResponse = CodexLoginStepResponseBase
+export type SubmitCodexLoginEmailResponse = CodexLoginStepResponseBase
 
 /**
  * 内部步骤：读取 2925 验证码并回填到邮箱验证码页。
  *
  * mailTab 表示读取验证码时用到的 2925 邮箱页面。
  */
-export type FillCodexLoginVerificationCodeResponse =
+export type FetchAndSubmitCodexVerificationCodeResponse =
   CodexLoginStepResponseBase & {
     mailTab?: BrowserTabInfo
   }
@@ -123,7 +122,7 @@ export type ConfirmCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
  */
 export type BackgroundResponse =
   | OpenCodexAuthLinkResponse
-  | FillCodexLoginEmailAndVerificationCodeResponse
+  | CompleteCodexLoginEmailAuthFlowResponse
   | ConfirmCodexOAuthCallbackResponse
 
 /**

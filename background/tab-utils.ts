@@ -220,8 +220,7 @@ export const waitForTabMatchingUrl = async (
     }
 
     const inspectCurrentTab = () => {
-      void chrome.tabs
-        .get(tabId)
+      void chrome.tabs.get(tabId)
         .then((tab) => {
           inspectUrl(tab.url)
         })

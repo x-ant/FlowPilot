@@ -1,14 +1,14 @@
 import {
+  completeCodexLoginEmailAuthFlow,
   confirmCodexOAuthAndSubmitCallback,
-  fillCodexLoginEmailAndVerificationCode,
   openCodexAuthLink
 } from "./codex-login"
 import type {
   BackgroundRequest,
   BackgroundRequestHandler,
   BackgroundRequestType,
+  CompleteCodexLoginEmailAuthFlowRequest,
   ConfirmCodexOAuthCallbackRequest,
-  FillCodexLoginEmailAndVerificationCodeRequest,
   OpenCodexAuthLinkRequest
 } from "./types"
 
@@ -43,10 +43,10 @@ const handleOpenCodexAuthLink = (request: OpenCodexAuthLinkRequest) => {
  * @param request 步骤 2 请求，包含登录页标签页 id、邮箱和密码。
  * @return 步骤执行结果。
  */
-const handleFillCodexLoginEmailAndVerificationCode = (
-  request: FillCodexLoginEmailAndVerificationCodeRequest
+const handleCompleteCodexLoginEmailAuthFlow = (
+  request: CompleteCodexLoginEmailAuthFlowRequest
 ) => {
-  return fillCodexLoginEmailAndVerificationCode(
+  return completeCodexLoginEmailAuthFlow(
     request.payload.tabId,
     request.payload.email,
     request.payload.password
@@ -77,6 +77,6 @@ const handleConfirmCodexOAuthCallback = (
  */
 export const REQUEST_HANDLERS: BackgroundRequestHandlerMap = {
   "codex-login:open-auth-link": handleOpenCodexAuthLink,
-  "codex-login:fill-auth-email-and-code": handleFillCodexLoginEmailAndVerificationCode,
+  "codex-login:fill-auth-email-and-code": handleCompleteCodexLoginEmailAuthFlow,
   "codex-login:confirm-oauth-callback": handleConfirmCodexOAuthCallback
 }

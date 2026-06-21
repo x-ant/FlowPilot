@@ -11,11 +11,11 @@ import {
 } from "./tab-utils"
 import type {
   CodexLoginPageActionResponse,
+  CompleteCodexLoginEmailAuthFlowResponse,
   ConfirmCodexOAuthCallbackResponse,
-  FillCodexLoginEmailAndVerificationCodeResponse,
-  FillOpenaiLoginEmailResponse,
-  FillCodexLoginVerificationCodeResponse,
-  OpenCodexAuthLinkResponse
+  FetchAndSubmitCodexVerificationCodeResponse,
+  OpenCodexAuthLinkResponse,
+  SubmitCodexLoginEmailResponse
 } from "./types"
 
 const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
@@ -49,6 +49,16 @@ const OPENAI_LOGIN_INPUT_SELECTORS = [
   "input[aria-label*='电子邮件']",
   "input[aria-label*='邮箱']",
   "input[aria-label*='メール']"
+]
+const OPENAI_PASSWORD_INPUT_SELECTORS = [
+  "input[type='password']",
+  "input[autocomplete='current-password']",
+  "input[name='password']",
+  "input[id*='password' i]",
+  "input[placeholder*='password' i]",
+  "input[placeholder*='密码']",
+  "input[aria-label*='password' i]",
+  "input[aria-label*='密码']"
 ]
 const OPENAI_VERIFICATION_INPUT_SELECTORS = [
   "input[name='code']",
@@ -97,6 +107,9 @@ const CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS = [
 const CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE = "已填写邮箱并点击“继续”按钮"
 const CODEX_AUTH_CONTINUE_FAILURE_MESSAGE =
   "未找到邮箱输入框或“继续”按钮，请确认页面已打开到 OpenAI 登录页"
+const CODEX_AUTH_PASSWORD_SUCCESS_MESSAGE = "已填写密码并点击“继续”按钮"
+const CODEX_AUTH_PASSWORD_FAILURE_MESSAGE =
+  "未找到密码输入框或“继续”按钮，请确认页面已打开到 OpenAI 密码页"
 const CODEX_AUTH_VERIFY_SUCCESS_MESSAGE = "已填写邮箱验证码并继续"
 const CODEX_AUTH_VERIFY_FAILURE_MESSAGE =
   "未找到验证码输入框或“继续”按钮，请确认页面已打开到 OpenAI 邮箱验证码页"
@@ -168,7 +181,25 @@ const isCodexVerificationCodeUrl = (rawUrl?: string) => {
 }
 
 /**
- * 激活指定标签页，方便读取 2925 验证码后把浏览器切回 OpenAI 登录页。
+ * 判断当前页面是否已经进入 OpenAI 密码页。
+ *
+ * @param rawUrl 浏览器标签页当前 URL。
+ * @return 如果是密码页则返回 true。
+ */
+const isCodexPasswordUrl = (rawUrl?: string) => {
+  try {
+    const parsed = new URL(String(rawUrl || ""))
+    return (
+      parsed.hostname.toLowerCase() === "auth.openai.com" &&
+      /\/password(?:[/?#]|$)/i.test(parsed.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 激活指定标签页，并切把当前浏览器也放前面。
  *
  * @param tabId 要激活的 Chrome 标签页 id。
  * @return 激活后的标签页信息。
@@ -686,10 +717,10 @@ export const openCodexAuthLink = async (
  * @param email 2925 邮箱地址。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const fillCodexLoginEmail = async (
+export const submitCodexLoginEmail = async (
   tabId: number,
   email: string
-): Promise<FillOpenaiLoginEmailResponse> => {
+): Promise<SubmitCodexLoginEmailResponse> => {
   const result = await runPageActionInAuthTab(tabId, {
     fields: [
       {
@@ -720,6 +751,46 @@ export const fillCodexLoginEmail = async (
 }
 
 /**
+ * 在 OpenAI 密码页填写密码并提交。
+ *
+ * @param tabId 要操作的登录页标签页 id。
+ * @param password Codex/OpenAI 登录密码。
+ * @return 返回给侧边栏展示的执行结果。
+ */
+const submitCodexLoginPassword = async (
+  tabId: number,
+  password: string
+): Promise<CodexLoginPageActionResponse> => {
+  const result = await runPageActionInAuthTab(tabId, {
+    fields: [
+      {
+        selectors: OPENAI_PASSWORD_INPUT_SELECTORS,
+        value: password
+      }
+    ],
+    button: {
+      texts: OPENAI_LOGIN_BUTTON_TEXTS,
+      submitStrategy: "requestSubmit"
+    },
+    timeoutMs: 15000,
+    successMessage: CODEX_AUTH_PASSWORD_SUCCESS_MESSAGE,
+    failureMessage: CODEX_AUTH_PASSWORD_FAILURE_MESSAGE
+  })
+
+  if (!result.ok) {
+    const currentUrl = String(result.targetTab?.url || "").trim()
+    return {
+      ...result,
+      message: currentUrl
+        ? `${result.message}；当前页：${currentUrl}`
+        : result.message
+    }
+  }
+
+  return result
+}
+
+/**
  * 在 OpenAI 邮箱验证码页读取 2925 验证码，并回填到当前 tab。
  *
  * @param tabId 要操作的验证码页标签页 id。
@@ -727,13 +798,14 @@ export const fillCodexLoginEmail = async (
  * @param password 2925 邮箱密码。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const fillCodexLoginVerificationCode = async (
+export const fetchAndSubmitCodexVerificationCode = async (
   tabId: number,
   email: string,
   password: string
-): Promise<FillCodexLoginVerificationCodeResponse> => {
-  const mailResult = await fetchMail2925VerificationCode(email, password)
+): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
 
+  // region ========== 获取验证码 ==========
+  const mailResult = await fetchMail2925VerificationCode(email, password)
   if (!mailResult.code) {
     return {
       ok: false,
@@ -745,6 +817,7 @@ export const fillCodexLoginVerificationCode = async (
       mailTab: mailResult.mailTab
     }
   }
+  // endregion
 
   await activateBrowserTab(tabId)
   await waitForTabLoaded(tabId)
@@ -792,37 +865,41 @@ export const fillCodexLoginVerificationCode = async (
 }
 
 /**
- * 在 OpenAI 登录页填写邮箱，等待进入邮箱验证码页，然后读取并回填验证码。
+ * 完成 OpenAI 邮箱登录认证流程。
+ *
+ * 流程可能是“邮箱 -> 验证码”，也可能是“邮箱 -> 密码 -> 验证码”。
  *
  * @param tabId 要操作的登录页标签页 id。
  * @param email 2925 邮箱地址。
  * @param password 2925 邮箱密码。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const fillCodexLoginEmailAndVerificationCode = async (
+export const completeCodexLoginEmailAuthFlow = async (
   tabId: number,
   email: string,
   password: string
-): Promise<FillCodexLoginEmailAndVerificationCodeResponse> => {
-  const fillResult = await fillCodexLoginEmail(tabId, email)
-  if (!fillResult.ok) {
-    return fillResult
-  }
+): Promise<CompleteCodexLoginEmailAuthFlowResponse> => {
 
-  const verificationUrl = await waitForTabMatchingUrl(
+  // region ========== 邮箱登录，并正确进入下一个地址 ==========
+  const emailResult = await submitCodexLoginEmail(tabId, email)
+  if (!emailResult.ok) {
+    return emailResult
+  }
+  const authStepUrl = await waitForTabMatchingUrl(
     tabId,
-    isCodexVerificationCodeUrl,
+    (url) => {
+      return isCodexVerificationCodeUrl(url) || isCodexPasswordUrl(url)
+    },
     {
       timeoutMs: 60000,
       intervalMs: 500
     }
   )
-
-  if (!verificationUrl) {
+  if (!authStepUrl) {
     const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
     return {
       ok: false,
-      message: `${fillResult.message}；60 秒内未进入邮箱验证码页（${
+      message: `${emailResult.message}；60 秒内未进入密码页或邮箱验证码页（${
         currentTab?.url || "unknown"
       }）`,
       targetTab: {
@@ -831,16 +908,56 @@ export const fillCodexLoginEmailAndVerificationCode = async (
       }
     }
   }
+  // endregion
 
-  const codeResult = await fillCodexLoginVerificationCode(
+  // region ========== 有可能还需要输入登录密码 ==========
+  let passwordResult: CodexLoginPageActionResponse | undefined
+  if (isCodexPasswordUrl(authStepUrl)) {
+    passwordResult = await submitCodexLoginPassword(tabId, password)
+    if (!passwordResult.ok) {
+      return {
+        ...passwordResult,
+        message: `${emailResult.message}；${passwordResult.message}`
+      }
+    }
+    const verificationUrl = await waitForTabMatchingUrl(
+      tabId,
+      isCodexVerificationCodeUrl,
+      {
+        timeoutMs: 60000,
+        intervalMs: 500
+      }
+    )
+    if (!verificationUrl) {
+      const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+      return {
+        ok: false,
+        message: `${emailResult.message}；${passwordResult.message}；60 秒内未进入邮箱验证码页（${
+          currentTab?.url || "unknown"
+        }）`,
+        targetTab: {
+          id: tabId,
+          url: currentTab?.url
+        }
+      }
+    }
+  }
+  // endregion
+
+  // region ========== 已经进入验证码页面，则获取验证码并输入提交 ==========
+  const codeResult = await fetchAndSubmitCodexVerificationCode(
     tabId,
     email,
     password
   )
+  // endregion
+
 
   return {
     ...codeResult,
-    message: `${fillResult.message}；${codeResult.message}`
+    message: [emailResult.message, passwordResult?.message, codeResult.message]
+      .filter(Boolean)
+      .join("；")
   }
 }
 
