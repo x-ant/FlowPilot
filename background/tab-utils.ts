@@ -9,6 +9,12 @@ type WaitForTabMatchingUrlOptions = {
   signal?: AbortSignal
 }
 
+type FindOrOpenMatchedTabOptions = {
+  targetUrl: string
+  matcher: (tab: chrome.tabs.Tab) => boolean
+  errorMessage: string
+}
+
 /**
  * 把延迟封装成 Promise，方便在 async 流程里等待一小段时间。
  *
@@ -277,6 +283,40 @@ export const normalizeUrlForTabMatch = (value: string) => {
 }
 
 /**
+ * 查找符合条件的标签页；找不到时打开目标地址。
+ *
+ * @param options 查找条件、目标地址和失败提示。
+ * @return 可以注入脚本或继续操作的标签页 id。
+ */
+export const findOrOpenMatchedTab = async (
+  options: FindOrOpenMatchedTabOptions
+) => {
+  const tabs = await chrome.tabs.query({})
+  const matchedTab = tabs.find(options.matcher)
+
+  if (matchedTab?.id) {
+    await chrome.tabs.update(matchedTab.id, {
+      active: true,
+      url: options.targetUrl
+    })
+    await waitForTabLoaded(matchedTab.id)
+    return matchedTab.id
+  }
+
+  const tab = await chrome.tabs.create({
+    active: true,
+    url: options.targetUrl
+  })
+
+  if (!tab.id) {
+    throw new Error(options.errorMessage)
+  }
+
+  await waitForTabLoaded(tab.id)
+  return tab.id
+}
+
+/**
  * 打开或复用 Codex 管理页。
  *
  * 优先复用已经打开的管理页；找不到时才新开标签页。返回的 tabId 会被
@@ -287,30 +327,19 @@ export const normalizeUrlForTabMatch = (value: string) => {
  */
 export const findOrOpenTab = async (loginUrl: string) => {
   const targetBaseUrl = normalizeUrlForTabMatch(loginUrl)
-  const tabs = await chrome.tabs.query({})
-  const matchedTab = tabs.find((tab) => {
-    if (!tab.url) {
-      return false
-    }
+  return findOrOpenMatchedTab({
+    targetUrl: loginUrl,
+    errorMessage: "无法打开 Codex 管理页面",
+    matcher: (tab) => {
+      if (!tab.url) {
+        return false
+      }
 
-    try {
-      return normalizeUrlForTabMatch(tab.url) === targetBaseUrl
-    } catch {
-      return false
+      try {
+        return normalizeUrlForTabMatch(tab.url) === targetBaseUrl
+      } catch {
+        return false
+      }
     }
   })
-
-  if (matchedTab?.id) {
-    await chrome.tabs.update(matchedTab.id, { active: true, url: loginUrl })
-    await waitForTabLoaded(matchedTab.id)
-    return matchedTab.id
-  }
-
-  const tab = await chrome.tabs.create({ active: true, url: loginUrl })
-  if (!tab.id) {
-    throw new Error("无法打开 Codex 管理页面")
-  }
-
-  await waitForTabLoaded(tab.id)
-  return tab.id
 }
