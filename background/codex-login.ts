@@ -1,22 +1,18 @@
 import { fetchMail2925VerificationCode } from "./mail-2925"
-import {
-  extractCodexOAuthUrlInPage,
-  performPageActionInPage,
-  type PageActionConfig
-} from "./page-script"
-import {
-  findOrOpenTab,
-  waitForTabLoaded,
-  waitForTabMatchingUrl
-} from "./tab-utils"
+import { extractCodexOAuthUrlInPage } from "./page-script"
 import type {
-  CodexLoginPageActionResponse,
   CompleteCodexLoginEmailAuthFlowResponse,
   ConfirmCodexOAuthCallbackResponse,
   FetchAndSubmitCodexVerificationCodeResponse,
   OpenCodexAuthLinkResponse,
   SubmitCodexLoginEmailResponse
 } from "./types"
+import {
+  runAuthPageAction,
+  runPageActionInTargetUrl,
+  type PageActionRunResult
+} from "./utils/page-action-runner"
+import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 
 const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
 
@@ -472,102 +468,6 @@ const clearCodexSessionStorage = async () => {
   }
 }
 
-type RunPageActionInTabOptions = {
-  reloadBeforeAction?: boolean
-}
-
-/**
- * 在已经确定的标签页里注入并执行一次页面动作。
- *
- * @param tabId 要操作的标签页 id。
- * @param action 注入到页面里执行的动作配置。
- * @return 返回给侧边栏展示的页面动作结果。
- */
-const runPageActionInTab = async (
-  tabId: number,
-  action: PageActionConfig
-): Promise<CodexLoginPageActionResponse> => {
-  const originalTab = await chrome.tabs.get(tabId)
-
-  // executeScript的返回值一定是Promise，需要await，
-  // 但是func参数的返回值如果是Promise会自动执行await，如果不是就直接返回
-  const [actionInjectionResult] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: performPageActionInPage,
-    args: [action]
-  })
-
-  // 这个value 就是performPageActionInPage的返回值
-  // 如果performPageActionInPage返回值是Promise会自动执行await，如果不是就直接返回
-  // 总之这里的actionInjectionResult?.result一定是处理好的最终结果
-  const value = actionInjectionResult?.result
-  const currentTab = await chrome.tabs.get(tabId)
-
-  if (!value?.ok) {
-    return {
-      ok: false,
-      message: value?.message || action.failureMessage,
-      targetTab: {
-        id: tabId,
-        url: currentTab.url || originalTab.url
-      }
-    }
-  }
-
-  return {
-    ok: true,
-    message: value.message,
-    targetTab: {
-      id: tabId,
-      url: currentTab.url || originalTab.url
-    }
-  }
-}
-
-/**
- * 打开或复用指定地址的标签页，并在该标签页里执行一次页面动作。
- *
- * @param targetUrl 要打开或复用的页面地址。
- * @param action 注入到页面里执行的动作配置。
- * @param tabOptions 执行动作前的标签页级选项，例如是否先刷新页面。
- * @return 返回给侧边栏展示的页面动作结果。
- */
-const runPageActionInTargetUrl = async (
-  targetUrl: string,
-  action: PageActionConfig,
-  tabOptions: RunPageActionInTabOptions = {}
-): Promise<CodexLoginPageActionResponse> => {
-  const tabId = await findOrOpenTab(targetUrl)
-
-  if (tabOptions.reloadBeforeAction) {
-    await chrome.tabs.reload(tabId)
-    await waitForTabLoaded(tabId)
-  }
-
-  return runPageActionInTab(tabId, action)
-}
-
-/**
- * 在已保存的授权页标签里执行页面动作。
- *
- * @param tabId 要操作的标签页 id。
- * @param action 页面动作配置。
- * @return 返回给侧边栏展示的执行结果。
- */
-const runPageActionInAuthTab = async (
-  tabId: number,
-  action: PageActionConfig
-): Promise<CodexLoginPageActionResponse> => {
-  try {
-    return await runPageActionInTab(tabId, action)
-  } catch {
-    return {
-      ok: false,
-      message: "未找到可操作的登录页标签，请先执行步骤 1"
-    }
-  }
-}
-
 /**
  * 等待管理页生成 OpenAI OAuth 授权链接。
  *
@@ -660,16 +560,16 @@ export const openCodexAuthLink = async (
     return {
       ok: false,
       message: `${cleanupMessage}${runPageActionResult.message}`,
-      targetTab: runPageActionResult.targetTab
+      targetTab: runPageActionResult.tab
     }
   }
   // 拿到cpa页面得tabId
-  const managementTabId = runPageActionResult.targetTab?.id
+  const managementTabId = runPageActionResult.tab?.id
   if (typeof managementTabId !== "number") {
     return {
       ok: false,
       message: `${cleanupMessage}已点击“开始codex登录”，但未拿到管理页标签页`,
-      targetTab: runPageActionResult.targetTab
+      targetTab: runPageActionResult.tab
     }
   }
   // endregion
@@ -721,7 +621,7 @@ export const submitCodexLoginEmail = async (
   tabId: number,
   email: string
 ): Promise<SubmitCodexLoginEmailResponse> => {
-  const result = await runPageActionInAuthTab(tabId, {
+  const result = await runAuthPageAction(tabId, {
     fields: [
       {
         selectors: OPENAI_LOGIN_INPUT_SELECTORS,
@@ -738,16 +638,21 @@ export const submitCodexLoginEmail = async (
   })
 
   if (!result.ok) {
-    const currentUrl = String(result.targetTab?.url || "").trim()
+    const currentUrl = String(result.tab?.url || "").trim()
     return {
-      ...result,
+      ok: false,
       message: currentUrl
         ? `${result.message}；当前页：${currentUrl}`
-        : result.message
+        : result.message,
+      targetTab: result.tab
     }
   }
 
-  return result
+  return {
+    ok: true,
+    message: result.message,
+    targetTab: result.tab
+  }
 }
 
 /**
@@ -760,8 +665,8 @@ export const submitCodexLoginEmail = async (
 const submitCodexLoginPassword = async (
   tabId: number,
   password: string
-): Promise<CodexLoginPageActionResponse> => {
-  const result = await runPageActionInAuthTab(tabId, {
+): Promise<PageActionRunResult> => {
+  const result = await runAuthPageAction(tabId, {
     fields: [
       {
         selectors: OPENAI_PASSWORD_INPUT_SELECTORS,
@@ -778,7 +683,7 @@ const submitCodexLoginPassword = async (
   })
 
   if (!result.ok) {
-    const currentUrl = String(result.targetTab?.url || "").trim()
+    const currentUrl = String(result.tab?.url || "").trim()
     return {
       ...result,
       message: currentUrl
@@ -803,7 +708,6 @@ export const fetchAndSubmitCodexVerificationCode = async (
   email: string,
   password: string
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
-
   // region ========== 获取验证码 ==========
   const mailResult = await fetchMail2925VerificationCode(email, password)
   if (!mailResult.code) {
@@ -834,7 +738,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
     }
   }
 
-  const result = await runPageActionInAuthTab(tabId, {
+  const result = await runAuthPageAction(tabId, {
     fields: [
       {
         selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
@@ -853,14 +757,16 @@ export const fetchAndSubmitCodexVerificationCode = async (
 
   if (!result.ok) {
     return {
-      ...result,
-      message: `${mailResult.message}；${result.message}`
+      ok: false,
+      message: `${mailResult.message}；${result.message}`,
+      targetTab: result.tab
     }
   }
 
   return {
-    ...result,
-    message: `${mailResult.message}；${result.message}`
+    ok: true,
+    message: `${mailResult.message}；${result.message}`,
+    targetTab: result.tab
   }
 }
 
@@ -879,7 +785,6 @@ export const completeCodexLoginEmailAuthFlow = async (
   email: string,
   password: string
 ): Promise<CompleteCodexLoginEmailAuthFlowResponse> => {
-
   // region ========== 邮箱登录，并正确进入下一个地址 ==========
   const emailResult = await submitCodexLoginEmail(tabId, email)
   if (!emailResult.ok) {
@@ -911,13 +816,14 @@ export const completeCodexLoginEmailAuthFlow = async (
   // endregion
 
   // region ========== 有可能还需要输入登录密码 ==========
-  let passwordResult: CodexLoginPageActionResponse | undefined
+  let passwordResult: PageActionRunResult | undefined
   if (isCodexPasswordUrl(authStepUrl)) {
     passwordResult = await submitCodexLoginPassword(tabId, password)
     if (!passwordResult.ok) {
       return {
-        ...passwordResult,
-        message: `${emailResult.message}；${passwordResult.message}`
+        ok: false,
+        message: `${emailResult.message}；${passwordResult.message}`,
+        targetTab: passwordResult.tab
       }
     }
     const verificationUrl = await waitForTabMatchingUrl(
@@ -951,7 +857,6 @@ export const completeCodexLoginEmailAuthFlow = async (
     password
   )
   // endregion
-
 
   return {
     ...codeResult,
@@ -995,7 +900,7 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
     }
   )
 
-  const confirmResult = await runPageActionInAuthTab(tabId, {
+  const confirmResult = await runAuthPageAction(tabId, {
     button: {
       texts: OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS,
       submitStrategy: "requestSubmit"
@@ -1008,7 +913,9 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
   if (!confirmResult.ok) {
     abortController.abort()
     return {
-      ...confirmResult,
+      ok: false,
+      message: confirmResult.message,
+      targetTab: confirmResult.tab,
       callbackUrl: ""
     }
   }
@@ -1077,7 +984,7 @@ export const confirmCodexOAuthAndSubmitCallback = async (
       ok: false,
       message: `已捕获回调地址，但提交到管理页失败：${submitResult.message}`,
       targetTab: callbackResult.targetTab,
-      managementTab: submitResult.targetTab,
+      managementTab: submitResult.tab,
       callbackUrl: callbackResult.callbackUrl
     }
   }
@@ -1091,7 +998,7 @@ export const confirmCodexOAuthAndSubmitCallback = async (
         ? "已关闭回调地址标签页"
         : "回调地址标签页已不存在或关闭失败"
     }`,
-    managementTab: submitResult.targetTab,
+    managementTab: submitResult.tab,
     callbackUrl: callbackResult.callbackUrl
   }
 }

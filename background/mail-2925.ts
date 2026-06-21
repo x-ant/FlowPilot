@@ -3,8 +3,8 @@ import {
   ensureMail2925SessionInPage,
   type EnsureMail2925SessionPayload
 } from "./mail-2925-page-session"
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./tab-utils"
 import type { BrowserTabInfo } from "./types"
+import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]
@@ -80,7 +80,6 @@ export const fetchMail2925VerificationCode = async (
   email: string,
   password: string
 ): Promise<Mail2925VerificationCodeResult> => {
-
   const tabId = await findOrOpenMatchedTab({
     targetUrl: MAIL2925_MAILBOX_URL,
     errorMessage: "无法打开 2925 邮箱页面",

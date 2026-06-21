@@ -73,11 +73,6 @@ export type CodexLoginStepResponseBase = {
 }
 
 /**
- * 注入页面脚本后的通用页面动作响应。
- */
-export type CodexLoginPageActionResponse = CodexLoginStepResponseBase
-
-/**
  * 步骤 1：点击目标页面里的“开始codex登录”按钮，并打开 OpenAI 登录页。
  */
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
