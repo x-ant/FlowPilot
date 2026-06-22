@@ -623,6 +623,8 @@ function SidePanel() {
         workingAccounts = nextAccounts
         // 这个set是为了触发UI更新
         setAccounts(nextAccounts)
+        // 这个是为了持久化，下次继续从断点处执行
+        persistState(normalizedLoginUrl, nextAccounts)
         return nextAccounts
       }
 
@@ -667,8 +669,6 @@ function SidePanel() {
       log.warn(`[${currentAccount.email}] ${runResult.message}`)
     }
 
-    // 持久化，方便下次插件从断点处继续
-    persistState(normalizedLoginUrl, workingAccounts)
     setRunningEmail("")
     setIsBatchRunning(false)
     if (!batchCancelRef.current) {
