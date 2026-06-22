@@ -345,6 +345,7 @@ const runManagedAccountFlow = async (
 
   onStage(2, step2Result.message)
 
+  debugger
   const step3Result = await confirmCodexOAuthAndSubmitCallback(
     authTabId,
     loginUrl

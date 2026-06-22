@@ -14,7 +14,8 @@ export type PageActionField = {
 }
 
 export type PageActionButton = {
-  texts: string[]
+  texts?: string[]
+  selectors?: string[]
   submitStrategy?: "auto" | "click" | "requestSubmit"
 }
 
@@ -165,7 +166,11 @@ export const performPageActionInPage = (
      */
     const isUnavailable = (element: Element) => {
       const htmlElement = element as HTMLElement
+      const rect = htmlElement.getBoundingClientRect()
+
       return (
+        rect.width <= 0 ||
+        rect.height <= 0 ||
         Boolean((element as HTMLButtonElement).disabled) ||
         htmlElement.getAttribute("aria-disabled") === "true" ||
         htmlElement.style.pointerEvents === "none"
@@ -182,16 +187,32 @@ export const performPageActionInPage = (
         return undefined
       }
 
-      const targetButtonTextArray = action.button.texts.map((buttonText) => {
-        return normalizeText(buttonText)
-      })
+      const targetButtonTextArray = (action.button.texts || []).map(
+        (buttonText) => {
+          return normalizeText(buttonText)
+        }
+      )
 
-      const buttonSelector =
-        "button,a,[role='button'],input[type='button'],input[type='submit']"
+      const buttonSelector = (
+        action.button.selectors && action.button.selectors.length > 0
+          ? action.button.selectors
+          : [
+              "button",
+              "a",
+              "[role='button']",
+              "input[type='button']",
+              "input[type='submit']"
+            ]
+      ).join(",")
+
       return Array.from(document.querySelectorAll(buttonSelector)).find(
         (element) => {
           if (isUnavailable(element)) {
             return false
+          }
+
+          if (targetButtonTextArray.length === 0) {
+            return true
           }
 
           const currentElementText = getElementText(element)
@@ -342,14 +363,14 @@ export const performPageActionInPage = (
     }
 
     /**
-     * 先执行输入框填写，再按需查找并点击按钮。
+     * 批量填写字段，并记录可用于关联表单的输入框。
      *
-     * @return 如果已经完成填写和点击，则返回 true；否则返回 false。
+     * @return 字段填写结果。
      */
-    const tryExecute = () => {
+    const fillFields = () => {
       const fields = action.fields || []
       const filledInputs: HTMLInputElement[] = []
-      let existFilledSplitInput = false
+      let hasFilledSplitInput = false
 
       for (const field of fields) {
         const fillResult = fillField(field)
@@ -358,28 +379,35 @@ export const performPageActionInPage = (
             continue
           }
 
-          return false
+          return {
+            ok: false,
+            filledInputs,
+            hasFilledSplitInput
+          }
         }
 
         if (fillResult.input) {
           filledInputs.push(fillResult.input)
         }
 
-        existFilledSplitInput = existFilledSplitInput || fillResult.hasFilledSplitInput
+        hasFilledSplitInput =
+          hasFilledSplitInput || fillResult.hasFilledSplitInput
       }
 
-      const formAnchorInput = filledInputs[0]
-
-      // 没有按钮得动作就结束了
-      if (!action.button) {
-        resolve({
-          ok: true,
-          message: action.successMessage,
-          buttonText: ""
-        })
-        return true
+      return {
+        ok: true,
+        filledInputs,
+        hasFilledSplitInput
       }
+    }
 
+    /**
+     * 根据按钮和已填写的输入框，寻找最适合触发提交的表单。
+     *
+     * @param formAnchorInput 已填写的第一个输入框，用于反查所在表单。
+     * @return 按钮、按钮直属表单和最终可用表单。
+     */
+    const getButtonActionContext = (formAnchorInput?: HTMLInputElement) => {
       const button = findButton() as
         | HTMLButtonElement
         | HTMLInputElement
@@ -397,9 +425,115 @@ export const performPageActionInPage = (
         (formAnchorInput?.closest?.("form") as HTMLFormElement | null) ||
         null
 
-      // 分格验证码填完以后，页面可能会自动提交或自动跳转，不一定还有“继续/提交”按钮。
+      return {
+        button,
+        buttonForm,
+        form
+      }
+    }
+
+    /**
+     * 读取实际触发按钮的文字，方便日志里展示。
+     *
+     * @param button 被点击或用于提交的按钮。
+     * @return 按钮文字。
+     */
+    const getButtonText = (button?: HTMLElement) => {
+      if (!button) {
+        return ""
+      }
+
+      return [
+        button.textContent,
+        button.getAttribute("aria-label"),
+        button.getAttribute("title")
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim()
+    }
+
+    /**
+     * 按指定策略执行按钮动作。
+     *
+     * requestSubmit 和 auto 都优先走表单提交；如果页面没有可提交表单，
+     * 再退回普通点击。click 则反过来，优先点击按钮，再用表单提交兜底。
+     *
+     * @param button 被点击或用于提交的按钮。
+     * @param buttonForm 按钮元素直属的表单。
+     * @param form 当前动作最终关联到的表单。
+     * @return 成功触发点击或提交时返回 true，否则返回 false。
+     */
+    const performButtonAction = (
+      button: HTMLElement | undefined,
+      buttonForm: HTMLFormElement | null,
+      form: HTMLFormElement | null
+    ) => {
+      const submitStrategy = action.button?.submitStrategy || "click"
+
+      /**
+       * 表单提交，必须有表单，表单必须有提交方法requestSubmit
+       */
+      const requestSubmit = () => {
+        if (!form || typeof form.requestSubmit !== "function") {
+          return false
+        }
+
+        // 表单和按钮是一套
+        if (buttonForm === form && button) {
+          form.requestSubmit(button)
+        } else {
+          form.requestSubmit()
+        }
+
+        return true
+      }
+
+      const clickButton = () => {
+        if (!button || typeof button.click !== "function") {
+          return false
+        }
+
+        button.click()
+        return true
+      }
+
+      // requestSubmit 和 auto 都优先走表单提交，click先尝试点击后提交
+      if (submitStrategy === "click") {
+        return clickButton() || requestSubmit()
+      } else {
+        return requestSubmit() || clickButton()
+      }
+    }
+
+    /**
+     * 先执行输入框填写，再按需查找并点击按钮。
+     *
+     * @return 如果已经完成填写和点击，则返回 true；否则返回 false。
+     */
+    const tryExecute = () => {
+      const fillResult = fillFields()
+      if (!fillResult.ok) {
+        return false
+      }
+
+      // 没有按钮得动作就结束了
+      if (!action.button) {
+        resolve({
+          ok: true,
+          message: action.successMessage,
+          buttonText: ""
+        })
+        return true
+      }
+
+      const { button, buttonForm, form } = getButtonActionContext(
+        fillResult.filledInputs[0]
+      )
+
+      // 分格验证码填完以后，页面可能会自动提交或自动跳转，可以没有按钮和表单。
       if (!button && !form) {
-        if (existFilledSplitInput) {
+        if (fillResult.hasFilledSplitInput) {
           resolve({
             ok: true,
             message: action.successMessage,
@@ -411,55 +545,14 @@ export const performPageActionInPage = (
         return false
       }
 
-      const performSubmit = () => {
-        const submitStrategy = action.button?.submitStrategy || "click"
-        if (
-          submitStrategy === "requestSubmit" ||
-          (submitStrategy === "auto" && form && "requestSubmit" in form)
-        ) {
-          if (form && typeof form.requestSubmit === "function") {
-            if (buttonForm === form && button) {
-              form.requestSubmit(button)
-            } else {
-              form.requestSubmit()
-            }
-            return true
-          }
-        }
-
-        if (button && typeof button.click === "function") {
-          button.click()
-          return true
-        }
-
-        if (form && typeof form.requestSubmit === "function") {
-          form.requestSubmit()
-          return true
-        }
-
+      if (!performButtonAction(button, buttonForm, form)) {
         return false
       }
-
-      if (!performSubmit()) {
-        return false
-      }
-
-      // 就是实际操作得按钮得文字描述
-      const buttonText = button
-        ? [
-            button.textContent,
-            button.getAttribute("aria-label"),
-            button.getAttribute("title")
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .trim()
-        : ""
 
       resolve({
         ok: true,
         message: action.successMessage,
-        buttonText
+        buttonText: getButtonText(button)
       })
       return true
     }

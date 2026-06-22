@@ -876,7 +876,7 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
   await activateBrowserTab(tabId)
   await waitForTabLoaded(tabId)
 
-  // region ========== 先判断一下 ==========
+  // region ========== 先判断一下是否已经是回调页面 ==========
   const currentTab = await chrome.tabs.get(tabId)
   if (isCodexOAuthCallbackUrl(currentTab.url)) {
     return {
