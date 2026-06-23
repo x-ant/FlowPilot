@@ -1,8 +1,10 @@
-import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code";
-import { ensureMail2925SessionInPage, type EnsureMail2925SessionPayload } from "./mail-2925-page-session";
-import type { BrowserTabInfo } from "./types";
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils";
-
+import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
+import {
+  ensureMail2925SessionInPage,
+  type EnsureMail2925SessionPayload
+} from "./mail-2925-page-session"
+import type { BrowserTabInfo } from "./types"
+import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]
@@ -15,6 +17,7 @@ export type Mail2925VerificationCodeResult = {
 
 export type FetchMail2925VerificationCodeOptions = {
   verificationRequestedAt?: number
+  excludeCodes?: string[]
 }
 
 /**
@@ -80,7 +83,6 @@ export const fetchMail2925VerificationCode = async (
   password: string,
   options: FetchMail2925VerificationCodeOptions = {}
 ): Promise<Mail2925VerificationCodeResult> => {
-
   // region ========== 方法域 ==========
   const createResult = async (
     code: string,
@@ -136,7 +138,8 @@ export const fetchMail2925VerificationCode = async (
         mailboxUrl: MAIL2925_MAILBOX_URL,
         timeoutMs: 90000,
         targetEmail: email,
-        verificationRequestedAt: Number(options.verificationRequestedAt || 0)
+        verificationRequestedAt: Number(options.verificationRequestedAt || 0),
+        excludeCodes: options.excludeCodes || []
       }
     ]
   })

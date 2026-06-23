@@ -6,6 +6,22 @@ export type ExtractCodexOAuthUrlResult = {
   authUrl?: string
 }
 
+export type DetectCodexAuthPageState =
+  | "oauth_consent_ready"
+  | "verification_invalid_code"
+  | "verification_pending"
+  | "password"
+  | "extra_verification"
+  | "other"
+
+export type DetectCodexAuthPageStateResult = {
+  ok: boolean
+  state: DetectCodexAuthPageState
+  message: string
+  url: string
+  buttonText?: string
+}
+
 export type PageActionField = {
   selectors: string[]
   value: string
@@ -36,75 +52,257 @@ export type PageActionConfig = {
  *
  * @return 读取到的授权链接和执行状态。
  */
-export const extractCodexOAuthUrlInPage =
-  (): ExtractCodexOAuthUrlResult => {
-    const authUrlPrefix = "https://auth.openai.com/oauth/authorize"
+export const extractCodexOAuthUrlInPage = (): ExtractCodexOAuthUrlResult => {
+  const authUrlPrefix = "https://auth.openai.com/oauth/authorize"
 
-    /**
-     * 校验并规范化授权 URL。
-     *
-     * @param value 待校验的 URL 字符串。
-     * @return 合法授权 URL；非法时返回 undefined。
-     */
-    const normalizeAuthUrl = (value?: string) => {
-      try {
-        const parsed = new URL(String(value || "").trim())
-        if (parsed.origin !== "https://auth.openai.com") {
-          return undefined
-        }
-
-        if (parsed.pathname !== "/oauth/authorize") {
-          return undefined
-        }
-
-        return parsed.href
-      } catch {
+  /**
+   * 校验并规范化授权 URL。
+   *
+   * @param value 待校验的 URL 字符串。
+   * @return 合法授权 URL；非法时返回 undefined。
+   */
+  const normalizeAuthUrl = (value?: string) => {
+    try {
+      const parsed = new URL(String(value || "").trim())
+      if (parsed.origin !== "https://auth.openai.com") {
         return undefined
       }
-    }
 
-    // 先看有没有符合的外链标签
-    const link = document.querySelector(
-      `a[href^="${authUrlPrefix}"]`
-    ) as HTMLAnchorElement | null
-    const hrefAuthUrl = normalizeAuthUrl(link?.href)
-    if (hrefAuthUrl) {
+      if (parsed.pathname !== "/oauth/authorize") {
+        return undefined
+      }
+
+      return parsed.href
+    } catch {
+      return undefined
+    }
+  }
+
+  // 先看有没有符合的外链标签
+  const link = document.querySelector(
+    `a[href^="${authUrlPrefix}"]`
+  ) as HTMLAnchorElement | null
+  const hrefAuthUrl = normalizeAuthUrl(link?.href)
+  if (hrefAuthUrl) {
+    return {
+      ok: true,
+      message: "已读取授权链接",
+      authUrl: hrefAuthUrl
+    }
+  }
+
+  // 没有符合的外链标签就遍历全部的文本标签
+  const walker = document.createTreeWalker(
+    // 从 body 开始扫；没有 body 就从 html 开始扫
+    document.body || document.documentElement,
+    // 只遍历文本节点，不会返回<div>、<p>、<a>、button
+    NodeFilter.SHOW_TEXT
+  )
+  let current = walker.nextNode()
+
+  while (current) {
+    const text = String(current.textContent || "").trim()
+    const match = text.match(
+      /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
+    )
+    const textAuthUrl = normalizeAuthUrl(match?.[0])
+    if (textAuthUrl) {
       return {
         ok: true,
         message: "已读取授权链接",
-        authUrl: hrefAuthUrl
+        authUrl: textAuthUrl
       }
     }
 
-    // 没有符合的外链标签就遍历全部的文本标签
-    const walker = document.createTreeWalker(
-      // 从 body 开始扫；没有 body 就从 html 开始扫
-      document.body || document.documentElement,
-      // 只遍历文本节点，不会返回<div>、<p>、<a>、button
-      NodeFilter.SHOW_TEXT
-    )
-    let current = walker.nextNode()
+    current = walker.nextNode()
+  }
 
-    while (current) {
-      const text = String(current.textContent || "").trim()
-      const match = text.match(
-        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
-      )
-      const textAuthUrl = normalizeAuthUrl(match?.[0])
-      if (textAuthUrl) {
-        return {
-          ok: true,
-          message: "已读取授权链接",
-          authUrl: textAuthUrl
-        }
+  return {
+    ok: false,
+    message: "未找到授权链接，请确认页面已经生成 OpenAI 授权链接"
+  }
+}
+
+/**
+ * 判断当前 OpenAI 授权页所处的认证状态。
+ *
+ * 这个函数用于 Step 2/Step 3 的页面状态确认：验证码提交后可能会跳转到
+ * OAuth 授权确认页，也可能仍停留在验证码页并显示错误。
+ *
+ * @return 当前认证页状态检测结果。
+ */
+export const detectCodexAuthPageStateInPage =
+  (): DetectCodexAuthPageStateResult => {
+    const normalizeText = (value: string) => {
+      return String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+    }
+    const pageText = normalizeText(
+      document.body?.innerText || document.body?.textContent || ""
+    )
+    const isVisible = (element: Element | null) => {
+      if (!element) {
+        return false
       }
 
-      current = walker.nextNode()
+      const htmlElement = element as HTMLElement
+      const rect = htmlElement.getBoundingClientRect()
+      const style = window.getComputedStyle(htmlElement)
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      )
+    }
+    const isEnabled = (element: Element | null) => {
+      const htmlElement = element as HTMLElement | null
+      return Boolean(
+        htmlElement &&
+          isVisible(htmlElement) &&
+          !(htmlElement as HTMLButtonElement).disabled &&
+          htmlElement.getAttribute("aria-disabled") !== "true"
+      )
+    }
+    const getActionText = (element: Element | null) => {
+      const htmlElement = element as HTMLElement | null
+      return normalizeText(
+        [
+          htmlElement?.textContent,
+          (htmlElement as HTMLInputElement | null)?.value,
+          htmlElement?.getAttribute?.("aria-label"),
+          htmlElement?.getAttribute?.("title")
+        ]
+          .filter(Boolean)
+          .join(" ")
+      )
+    }
+    const consentForm = document.querySelector(
+      'form[action*="/sign-in-with-chatgpt/" i][action*="/consent" i]'
+    )
+    const buttonSelectors = consentForm
+      ? "button[type='submit'], input[type='submit'], [role='button']"
+      : "button, input[type='submit'], [role='button']"
+    const buttonScope = consentForm || document
+    const continueButton = Array.from(
+      buttonScope.querySelectorAll(buttonSelectors)
+    ).find((element) => {
+      return (
+        isEnabled(element) &&
+        /继续|continue|続行|続ける|次へ/i.test(getActionText(element))
+      )
+    }) as HTMLElement | undefined
+
+    const verificationCodeInput = document.querySelector(
+      "input[name='code'], input[name='otp'], input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text'][maxlength='6'], input[type='tel'][maxlength='6']"
+    )
+    const verificationForm = document.querySelector(
+      'form[action*="email-verification" i]'
+    )
+    const resendAction = Array.from(
+      document.querySelectorAll("button, a, [role='button']")
+    ).find((element) => {
+      return (
+        isVisible(element) &&
+        /重新发送电子邮件|重新发送验证码|resend|send again|再送信/i.test(
+          getActionText(element)
+        )
+      )
+    })
+    const verificationPagePattern =
+      /检查您的收件箱|输入我们刚刚向|重新发送电子邮件|重新发送验证码|代码不正确|验证码|email\s+verification|check\s+your\s+inbox|enter\s+the\s+code|we\s+just\s+sent|we\s+emailed|resend/i
+    const invalidVerificationCodePattern =
+      /代码不正确|验证码不正确|验证码错误|验证码无效|无效的验证码|code\s+(?:is\s+)?incorrect|incorrect\s+code|invalid\s+code|wrong\s+code|try\s+again|コードが正しくありません|無効なコード|認証コードが正しくありません/i
+    const verificationPage =
+      Boolean(verificationForm) ||
+      Boolean(resendAction) ||
+      (Boolean(verificationCodeInput) &&
+        verificationPagePattern.test(pageText)) ||
+      (/\/email-verification(?:[/?#]|$)/i.test(location.href) &&
+        verificationPagePattern.test(pageText))
+    const passwordInput = document.querySelector(
+      "input[type='password'], input[autocomplete='current-password'], input[name='password']"
+    )
+    const passwordPage =
+      /\/password(?:[/?#]|$)/i.test(location.href) ||
+      (Boolean(passwordInput) &&
+        /password|密码|sign\s+in|log\s+in|继续|下一步/i.test(pageText))
+    const addPhonePage =
+      /add[\s-]*(?:a\s+)?phone|添加(?:手机|手机号|电话号码)|验证(?:你的|您)?(?:手机|手机号|电话号码)|phone\s+number|verify\s+(?:your\s+)?phone/i.test(
+        pageText
+      )
+    const addEmailPage =
+      /add[\s-]*email|添加(?:电子邮件|邮箱)|provide\s+(?:an?\s+)?email\s+address|email\s+address\s+required/i.test(
+        pageText
+      )
+    const oauthConsentPage =
+      /使用\s*ChatGPT\s*登录到\s*Codex|sign\s+in\s+to\s+codex(?:\s+with\s+chatgpt)?|login\s+to\s+codex|log\s+in\s+to\s+codex|authorize|授权/i.test(
+        pageText
+      ) ||
+      Boolean(consentForm) ||
+      (/\bcodex\b/i.test(pageText) && /\bchatgpt\b/i.test(pageText))
+
+    if (verificationPage && invalidVerificationCodePattern.test(pageText)) {
+      return {
+        ok: false,
+        state: "verification_invalid_code",
+        message: "验证码提交后页面提示验证码不正确",
+        url: location.href
+      }
+    }
+
+    if (verificationPage) {
+      return {
+        ok: false,
+        state: "verification_pending",
+        message: "当前仍在邮箱验证码页",
+        url: location.href
+      }
+    }
+
+    if (passwordPage) {
+      return {
+        ok: false,
+        state: "password",
+        message: "当前仍在密码页",
+        url: location.href
+      }
+    }
+
+    if (addPhonePage || addEmailPage) {
+      return {
+        ok: false,
+        state: "extra_verification",
+        message: "当前进入了额外验证/补充信息页面，不是 OAuth 授权确认页",
+        url: location.href
+      }
+    }
+
+    if (!oauthConsentPage) {
+      return {
+        ok: false,
+        state: "other",
+        message: "当前页面还不像 Codex OAuth 授权确认页",
+        url: location.href
+      }
+    }
+
+    if (!continueButton) {
+      return {
+        ok: false,
+        state: "other",
+        message: "OAuth 授权确认页还没有可点击的继续按钮",
+        url: location.href
+      }
     }
 
     return {
-      ok: false,
-      message: "未找到授权链接，请确认页面已经生成 OpenAI 授权链接"
+      ok: true,
+      state: "oauth_consent_ready",
+      message: "OAuth 授权确认页已就绪",
+      url: location.href,
+      buttonText: getActionText(continueButton)
     }
   }
 

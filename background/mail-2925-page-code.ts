@@ -3,6 +3,7 @@ export type PollMail2925VerificationCodePayload = {
   timeoutMs?: number
   targetEmail?: string
   verificationRequestedAt?: number
+  excludeCodes?: string[]
 }
 
 export type PollMail2925VerificationCodeResult = {
@@ -38,6 +39,11 @@ export const pollMail2925VerificationCodeInPage = async (
   const filterAfter = requestTimestamp
     ? Math.max(0, requestTimestamp - staleToleranceMs)
     : startedAt - 10 * 60 * 1000
+  const excludedCodes = new Set(
+    (payload?.excludeCodes || [])
+      .map((code) => String(code || "").trim())
+      .filter(Boolean)
+  )
   const seenCodes = new Set<string>()
   let lastSkipMessage = ""
   const wait = (timeout: number) => {
@@ -179,7 +185,12 @@ export const pollMail2925VerificationCodeInPage = async (
 
     match = normalized.match(/(?:今天\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/)
     if (match) {
-      date.setHours(Number(match[1]), Number(match[2]), Number(match[3] || 0), 0)
+      date.setHours(
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3] || 0),
+        0
+      )
       return date.getTime()
     }
 
@@ -188,7 +199,12 @@ export const pollMail2925VerificationCodeInPage = async (
     )
     if (match) {
       date.setMonth(Number(match[1]) - 1, Number(match[2]))
-      date.setHours(Number(match[3]), Number(match[4]), Number(match[5] || 0), 0)
+      date.setHours(
+        Number(match[3]),
+        Number(match[4]),
+        Number(match[5] || 0),
+        0
+      )
       return date.getTime()
     }
 
@@ -203,7 +219,9 @@ export const pollMail2925VerificationCodeInPage = async (
     return [...new Set(matches.map((item) => item.toLowerCase()))]
   }
   const normalizeTargetEmailHints = (email: string) => {
-    const normalized = String(email || "").trim().toLowerCase()
+    const normalized = String(email || "")
+      .trim()
+      .toLowerCase()
     if (!normalized) {
       return []
     }
@@ -211,7 +229,9 @@ export const pollMail2925VerificationCodeInPage = async (
     const hints = [normalized]
     const atIndex = normalized.indexOf("@")
     if (atIndex > 0) {
-      hints.push(`${normalized.slice(0, atIndex)}=${normalized.slice(atIndex + 1)}`)
+      hints.push(
+        `${normalized.slice(0, atIndex)}=${normalized.slice(atIndex + 1)}`
+      )
     }
 
     return hints
@@ -228,7 +248,9 @@ export const pollMail2925VerificationCodeInPage = async (
         const match = String(candidate || "").match(
           /bounce\+[a-z0-9._%+-]*-([a-z0-9._%+-]+)=([a-z0-9.-]+\.[a-z]{2,})@/i
         )
-        return match ? `${match[1].toLowerCase()}@${match[2].toLowerCase()}` : ""
+        return match
+          ? `${match[1].toLowerCase()}@${match[2].toLowerCase()}`
+          : ""
       })
       .filter(Boolean)
   }
@@ -243,7 +265,10 @@ export const pollMail2925VerificationCodeInPage = async (
       return true
     }
 
-    const emails = [...extractEmails(normalizedText), ...extractForwardedTargetEmails(normalizedText)]
+    const emails = [
+      ...extractEmails(normalizedText),
+      ...extractForwardedTargetEmails(normalizedText)
+    ]
     return emails.some((email) => email === targetEmail)
   }
   const parseMailDetailTimestamp = (text: string) => {
@@ -346,6 +371,11 @@ export const pollMail2925VerificationCodeInPage = async (
       }
 
       const bodyCode = extractVerificationCode(bodyText)
+      if (bodyCode && excludedCodes.has(bodyCode)) {
+        lastSkipMessage = `跳过已失败的验证码 ${bodyCode}`
+        continue
+      }
+
       if (bodyCode && !seenCodes.has(bodyCode)) {
         seenCodes.add(bodyCode)
         return {

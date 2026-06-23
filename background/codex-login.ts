@@ -1,5 +1,5 @@
 import { fetchMail2925VerificationCode } from "./mail-2925";
-import { extractCodexOAuthUrlInPage } from "./page-script";
+import { detectCodexAuthPageStateInPage, extractCodexOAuthUrlInPage, type DetectCodexAuthPageState } from "./page-script";
 import type { CompleteCodexLoginEmailAuthFlowResponse, ConfirmCodexOAuthCallbackResponse, FetchAndSubmitCodexVerificationCodeResponse, OpenCodexAuthLinkResponse, SubmitCodexLoginEmailResponse } from "./types";
 import { runAuthPageAction, runPageActionInTargetUrl, type PageActionRunResult } from "./utils/page-action-runner";
 import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils";
@@ -154,34 +154,6 @@ const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
 }
 
 /**
- * 判断当前页面是否已经进入 OpenAI 邮箱验证码页。
- *
- * @param rawUrl 浏览器标签页当前 URL。
- * @return 如果是邮箱验证码页则返回 true。
- */
-const isCodexVerificationCodeUrl = (rawUrl?: string) => {
-  return /\/email-verification(?:[/?#]|$)/i.test(String(rawUrl || "").trim())
-}
-
-/**
- * 判断当前页面是否已经进入 OpenAI 密码页。
- *
- * @param rawUrl 浏览器标签页当前 URL。
- * @return 如果是密码页则返回 true。
- */
-const isCodexPasswordUrl = (rawUrl?: string) => {
-  try {
-    const parsed = new URL(String(rawUrl || ""))
-    return (
-      parsed.hostname.toLowerCase() === "auth.openai.com" &&
-      /\/password(?:[/?#]|$)/i.test(parsed.pathname)
-    )
-  } catch {
-    return false
-  }
-}
-
-/**
  * 激活指定标签页，并切把当前浏览器也放前面。
  *
  * @param tabId 要激活的 Chrome 标签页 id。
@@ -211,6 +183,13 @@ const sleep = (milliseconds: number) => {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, milliseconds)
   })
+}
+
+type CodexAuthTabStateResult = {
+  ok: boolean
+  state: DetectCodexAuthPageState | "callback"
+  message: string
+  url: string
 }
 
 /**
@@ -518,6 +497,137 @@ const waitForCodexAuthorizeUrlInTab = async (tabId: number) => {
 }
 
 /**
+ * 读取当前 OpenAI 授权标签页的认证状态。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @return 认证页状态检测结果。
+ */
+const detectCodexAuthTabState = async (
+  tabId: number
+): Promise<CodexAuthTabStateResult> => {
+  const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+  const currentUrl = String(currentTab?.url || "")
+
+  if (isCodexOAuthCallbackUrl(currentUrl)) {
+    return {
+      ok: true,
+      state: "callback",
+      message: "当前页面已跳转到 localhost 回调地址",
+      url: currentUrl
+    }
+  }
+
+  try {
+    await waitForTabLoaded(tabId)
+    const [detectInjectionResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: detectCodexAuthPageStateInPage
+    })
+    const detectValue = detectInjectionResult?.result
+
+    return {
+      ok: Boolean(detectValue?.ok),
+      state: detectValue?.state || "other",
+      message: detectValue?.message || "未识别当前 OpenAI 授权页状态",
+      url: detectValue?.url || currentUrl
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      state: "other",
+      message:
+        error instanceof Error ? error.message : "授权页检测时页面暂不可用",
+      url: currentUrl
+    }
+  }
+}
+
+/**
+ * 等待 OpenAI 授权页进入指定状态。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @param acceptedStates 允许结束等待的状态。
+ * @param options 等待参数。
+ * @return 命中的状态；超时则返回最后一次检测状态。
+ */
+const waitForCodexAuthTabState = async (
+  tabId: number,
+  acceptedStates: Array<CodexAuthTabStateResult["state"]>,
+  options: {
+    timeoutMs: number
+    intervalMs?: number
+    timeoutMessage: string
+    stopStates?: Array<CodexAuthTabStateResult["state"]>
+  }
+): Promise<CodexAuthTabStateResult> => {
+  const intervalMs = options.intervalMs || 500
+  const startedAt = Date.now()
+  let lastState: CodexAuthTabStateResult = {
+    ok: false,
+    state: "other",
+    message: options.timeoutMessage,
+    url: ""
+  }
+
+  while (Date.now() - startedAt <= options.timeoutMs) {
+    lastState = await detectCodexAuthTabState(tabId)
+
+    if (acceptedStates.includes(lastState.state)) {
+      return {
+        ...lastState,
+        ok: true
+      }
+    }
+
+    if (options.stopStates?.includes(lastState.state)) {
+      return lastState
+    }
+
+    await sleep(intervalMs)
+  }
+
+  return {
+    ...lastState,
+    ok: false,
+    message: `${lastState.message}；${options.timeoutMessage}`
+  }
+}
+
+/**
+ * 等待验证码提交后的页面结果。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @return 验证码提交后的状态。
+ */
+const waitForCodexVerificationSubmitStateInTab = async (tabId: number) => {
+  return waitForCodexAuthTabState(
+    tabId,
+    ["oauth_consent_ready", "callback", "verification_invalid_code"],
+    {
+      timeoutMs: 45000,
+      intervalMs: 500,
+      timeoutMessage: "45 秒内未确认验证码提交后的页面状态",
+      stopStates: ["extra_verification"]
+    }
+  )
+}
+
+/**
+ * 等待 OpenAI 页面真正进入 Codex OAuth 授权确认页。
+ *
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @return 授权确认页是否已就绪。
+ */
+const waitForCodexOAuthConsentReadyInTab = async (tabId: number) => {
+  return waitForCodexAuthTabState(tabId, ["oauth_consent_ready", "callback"], {
+    timeoutMs: 90000,
+    intervalMs: 500,
+    timeoutMessage: "90 秒内未进入可点击的 OAuth 授权确认页",
+    stopStates: ["verification_invalid_code", "extra_verification"]
+  })
+}
+
+/**
  * 点击管理页入口，读取授权链接，打开 OpenAI 登录页，并清理旧会话。
  *
  * 这个步骤只负责把页面打开到 OpenAI 登录页，不再自动填写邮箱。
@@ -697,6 +807,7 @@ const submitCodexLoginPassword = async (
  * @param tabId 要操作的验证码页标签页 id。
  * @param email 2925 邮箱地址。
  * @param password 2925 邮箱密码。
+ * @param verificationRequestedAt 验证码发送时间
  * @return 返回给侧边栏展示的执行结果。
  */
 export const fetchAndSubmitCodexVerificationCode = async (
@@ -705,67 +816,111 @@ export const fetchAndSubmitCodexVerificationCode = async (
   password: string,
   verificationRequestedAt = 0
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
-  // region ========== 去2925邮箱获取验证码 ==========
-  const mailResult = await fetchMail2925VerificationCode(email, password, {
-    verificationRequestedAt
-  })
-  if (!mailResult.code) {
+  const maxAttempts = 2
+  const excludedCodes: string[] = []
+  const attemptMessages: string[] = []
+  let latestMailTab: FetchAndSubmitCodexVerificationCodeResponse["mailTab"]
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    // region ========== 去2925邮箱获取验证码 ==========
+    const mailResult = await fetchMail2925VerificationCode(email, password, {
+      verificationRequestedAt,
+      excludeCodes: excludedCodes
+    })
+    latestMailTab = mailResult.mailTab
+
+    if (!mailResult.code) {
+      return {
+        ok: false,
+        message: [...attemptMessages, mailResult.message]
+          .filter(Boolean)
+          .join("；"),
+        targetTab: {
+          id: mailResult.mailTab?.id || tabId,
+          url: mailResult.mailTab?.url
+        },
+        mailTab: mailResult.mailTab
+      }
+    }
+    // endregion
+
+    // 回到登录页面输入验证码。是否真在验证码页交给输入框和提交后的页面状态判断。
+    await activateBrowserTab(tabId)
+    const result = await runAuthPageAction(tabId, {
+      fields: [
+        {
+          selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+          value: mailResult.code,
+          allowSplitInput: true
+        }
+      ],
+      button: {
+        texts: OPENAI_VERIFICATION_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
+      },
+      timeoutMs: 15000,
+      successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
+      failureMessage: CODEX_AUTH_VERIFY_FAILURE_MESSAGE
+    })
+
+    if (!result.ok) {
+      return {
+        ok: false,
+        message: `${mailResult.message}；${result.message}`,
+        targetTab: result.tab,
+        mailTab: mailResult.mailTab
+      }
+    }
+
+    const submitState = await waitForCodexVerificationSubmitStateInTab(tabId)
+    const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
+
+    if (
+      submitState.state === "oauth_consent_ready" ||
+      submitState.state === "callback"
+    ) {
+      return {
+        ok: true,
+        message: currentAttemptMessage,
+        targetTab: {
+          id: tabId,
+          url: submitState.url || result.tab?.url
+        },
+        mailTab: mailResult.mailTab
+      }
+    }
+
+    if (submitState.state === "verification_invalid_code") {
+      excludedCodes.push(mailResult.code)
+      attemptMessages.push(
+        `${currentAttemptMessage}；已排除本次验证码并准备重新读取`
+      )
+
+      if (attempt < maxAttempts) {
+        continue
+      }
+    }
+
     return {
       ok: false,
-      message: mailResult.message,
+      message: currentAttemptMessage,
       targetTab: {
-        id: mailResult.mailTab?.id || tabId,
-        url: mailResult.mailTab?.url
+        id: tabId,
+        url: submitState.url || result.tab?.url
       },
       mailTab: mailResult.mailTab
     }
   }
-  // endregion
-
-  // 回到登录页面输入验证码
-  await activateBrowserTab(tabId)
-  const tab = await chrome.tabs.get(tabId)
-  const currentUrl = String(tab.url || "").trim()
-  if (!isCodexVerificationCodeUrl(currentUrl)) {
-    return {
-      ok: false,
-      message: `当前标签页不是 OpenAI 邮箱验证码页（${currentUrl || "unknown"}）`,
-      targetTab: {
-        id: tabId,
-        url: currentUrl || tab.url
-      }
-    }
-  }
-
-  const result = await runAuthPageAction(tabId, {
-    fields: [
-      {
-        selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
-        value: mailResult.code,
-        allowSplitInput: true
-      }
-    ],
-    button: {
-      texts: OPENAI_VERIFICATION_BUTTON_TEXTS,
-      triggerMode: "requestSubmit"
-    },
-    timeoutMs: 15000,
-    successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
-    failureMessage: CODEX_AUTH_VERIFY_FAILURE_MESSAGE
-  })
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      message: `${mailResult.message}；${result.message}`,
-      targetTab: result.tab
-    }
-  }
 
   return {
-    ok: true,
-    message: `${mailResult.message}；${result.message}`,
-    targetTab: result.tab
+    ok: false,
+    message: attemptMessages.length
+      ? attemptMessages.join("；")
+      : "验证码提交失败",
+    targetTab: {
+      id: tabId
+    },
+    mailTab: latestMailTab
   }
 }
 
@@ -794,26 +949,37 @@ export const completeCodexLoginEmailAuthFlow = async (
   if (!emailResult.ok) {
     return emailResult
   }
-  const authStepUrl = await waitForTabMatchingUrl(
+  const authStepState = await waitForCodexAuthTabState(
     tabId,
-    (url) => {
-      return isCodexVerificationCodeUrl(url) || isCodexPasswordUrl(url)
-    },
+    ["verification_pending", "password", "oauth_consent_ready", "callback"],
     {
       timeoutMs: 60000,
-      intervalMs: 500
+      intervalMs: 500,
+      timeoutMessage: "60 秒内未进入密码页、邮箱验证码页或 OAuth 授权确认页",
+      stopStates: ["extra_verification"]
     }
   )
-  if (!authStepUrl) {
-    const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+  if (!authStepState.ok) {
     return {
       ok: false,
-      message: `${emailResult.message}；60 秒内未进入密码页或邮箱验证码页（${
-        currentTab?.url || "unknown"
-      }）`,
+      message: `${emailResult.message}；${authStepState.message}`,
       targetTab: {
         id: tabId,
-        url: currentTab?.url
+        url: authStepState.url
+      }
+    }
+  }
+
+  if (
+    authStepState.state === "oauth_consent_ready" ||
+    authStepState.state === "callback"
+  ) {
+    return {
+      ok: true,
+      message: `${emailResult.message}；${authStepState.message}`,
+      targetTab: {
+        id: tabId,
+        url: authStepState.url
       }
     }
   }
@@ -821,7 +987,7 @@ export const completeCodexLoginEmailAuthFlow = async (
 
   // region ========== 有可能还需要输入登录密码 ==========
   let passwordResult: PageActionRunResult | undefined
-  if (isCodexPasswordUrl(authStepUrl)) {
+  if (authStepState.state === "password") {
     verificationRequestedAt = Date.now()
     passwordResult = await submitCodexLoginPassword(tabId, password)
     if (!passwordResult.ok) {
@@ -831,24 +997,37 @@ export const completeCodexLoginEmailAuthFlow = async (
         targetTab: passwordResult.tab
       }
     }
-    const verificationUrl = await waitForTabMatchingUrl(
+    const verificationState = await waitForCodexAuthTabState(
       tabId,
-      isCodexVerificationCodeUrl,
+      ["verification_pending", "oauth_consent_ready", "callback"],
       {
         timeoutMs: 60000,
-        intervalMs: 500
+        intervalMs: 500,
+        timeoutMessage: "60 秒内未进入邮箱验证码页或 OAuth 授权确认页",
+        stopStates: ["extra_verification"]
       }
     )
-    if (!verificationUrl) {
-      const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+    if (!verificationState.ok) {
       return {
         ok: false,
-        message: `${emailResult.message}；${passwordResult.message}；60 秒内未进入邮箱验证码页（${
-          currentTab?.url || "unknown"
-        }）`,
+        message: `${emailResult.message}；${passwordResult.message}；${verificationState.message}`,
         targetTab: {
           id: tabId,
-          url: currentTab?.url
+          url: verificationState.url
+        }
+      }
+    }
+
+    if (
+      verificationState.state === "oauth_consent_ready" ||
+      verificationState.state === "callback"
+    ) {
+      return {
+        ok: true,
+        message: `${emailResult.message}；${passwordResult.message}；${verificationState.message}`,
+        targetTab: {
+          id: tabId,
+          url: verificationState.url
         }
       }
     }
@@ -891,6 +1070,38 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
       targetTab: {
         id: tabId,
         url: currentTab.url
+      },
+      message: "当前页面已跳转到 localhost 回调地址"
+    }
+  }
+  // endregion
+
+  // region ========== 等待 OAuth 授权确认页真正就绪，避免过早点到验证码页按钮 ==========
+  const consentReadyResult = await waitForCodexOAuthConsentReadyInTab(tabId)
+  if (!consentReadyResult.ok) {
+    return {
+      ok: false,
+      message: consentReadyResult.url
+        ? `${consentReadyResult.message}；当前页：${consentReadyResult.url}`
+        : consentReadyResult.message,
+      targetTab: {
+        id: tabId,
+        url: consentReadyResult.url || currentTab.url
+      },
+      callbackUrl: ""
+    }
+  }
+
+  if (
+    consentReadyResult.state === "callback" &&
+    isCodexOAuthCallbackUrl(consentReadyResult.url)
+  ) {
+    return {
+      ok: true,
+      callbackUrl: consentReadyResult.url,
+      targetTab: {
+        id: tabId,
+        url: consentReadyResult.url
       },
       message: "当前页面已跳转到 localhost 回调地址"
     }
