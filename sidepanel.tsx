@@ -1,4 +1,4 @@
-import { Button, Card, ConfigProvider, Empty, Form, Input, Space, Tag, theme, Typography } from "antd";
+import { Button, Card, ConfigProvider, Empty, Form, Input, Select, Space, Tag, theme, Typography } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -17,7 +17,7 @@ import { createUiLogger, getTimeLabel, LOG_LEVEL_META, type LogItem } from "./sh
 
 
 type LoginFormValues = {
-  loginUrl?: string
+  cpaUrl?: string
 }
 
 type AccountFormValues = {
@@ -37,7 +37,7 @@ type ManagedAccount = {
 }
 
 type StoredState = {
-  loginUrl: string
+  cpaUrl: string
   accounts: ManagedAccount[]
 }
 
@@ -46,7 +46,10 @@ type AccountRunResult = {
   message: string
 }
 
-const LOGIN_URL_STORAGE_KEY = "codex-login:login-url"
+type DebugStep = 1 | 2 | 3
+
+const CPA_URL_STORAGE_KEY = "codex-login:cpa-url"
+const LEGACY_LOGIN_URL_STORAGE_KEY = "codex-login:login-url"
 const ACCOUNTS_STORAGE_KEY = "codex-login:accounts"
 
 const EMPTY_ACCOUNT_FORM: AccountFormValues = {
@@ -71,6 +74,12 @@ const STATUS_META: Record<ManagedAccountStatus, { label: string; color: string }
     label: "失败",
     color: "error"
   }
+}
+
+const DEBUG_STEP_LABELS: Record<DebugStep, string> = {
+  1: "Step 1 打开授权页",
+  2: "Step 2 填写登录信息",
+  3: "Step 3 确认授权并回填"
 }
 
 /**
@@ -266,30 +275,39 @@ const moveManagedAccount = (
 /**
  * 读取本地保存的账号状态。
  *
- * @return 登录地址和账号列表。
+ * @return CPA 地址和账号列表。
  */
 const loadStoredState = async (): Promise<StoredState> => {
   const storage = getStorage()
   if (!storage) {
     return {
-      loginUrl: "",
+      cpaUrl: "",
       accounts: []
     }
   }
 
   return new Promise<StoredState>((resolve) => {
-    storage.get([LOGIN_URL_STORAGE_KEY, ACCOUNTS_STORAGE_KEY], (result) => {
-      const loginUrl = String(result?.[LOGIN_URL_STORAGE_KEY] || "").trim()
-      const rawAccounts = Array.isArray(result?.[ACCOUNTS_STORAGE_KEY]) ? (result?.[ACCOUNTS_STORAGE_KEY] as unknown[]) : []
-      const accounts = rawAccounts
-        .map((account) => normalizeStoredAccount(account))
-        .filter((account): account is ManagedAccount => Boolean(account))
+    storage.get(
+      [CPA_URL_STORAGE_KEY, LEGACY_LOGIN_URL_STORAGE_KEY, ACCOUNTS_STORAGE_KEY],
+      (result) => {
+        const cpaUrl = String(
+          result?.[CPA_URL_STORAGE_KEY] ||
+            result?.[LEGACY_LOGIN_URL_STORAGE_KEY] ||
+            ""
+        ).trim()
+        const rawAccounts = Array.isArray(result?.[ACCOUNTS_STORAGE_KEY])
+          ? (result?.[ACCOUNTS_STORAGE_KEY] as unknown[])
+          : []
+        const accounts = rawAccounts
+          .map((account) => normalizeStoredAccount(account))
+          .filter((account): account is ManagedAccount => Boolean(account))
 
-      resolve({
-        loginUrl,
-        accounts
-      })
-    })
+        resolve({
+          cpaUrl,
+          accounts
+        })
+      }
+    )
   })
 }
 
@@ -302,7 +320,7 @@ const loadStoredState = async (): Promise<StoredState> => {
 const saveStoredState = (state: StoredState) => {
   const storage = getStorage()
   storage?.set({
-    [LOGIN_URL_STORAGE_KEY]: state.loginUrl,
+    [CPA_URL_STORAGE_KEY]: state.cpaUrl,
     [ACCOUNTS_STORAGE_KEY]: state.accounts
   })
 }
@@ -310,17 +328,17 @@ const saveStoredState = (state: StoredState) => {
 /**
  * 运行一个账号的完整登录流程。
  *
- * @param loginUrl Codex 登录地址。
+ * @param cpaUrl CPA 地址。
  * @param account 当前账号。
  * @param onStage 完成每一步后的回调。
  * @return 流程结果。
  */
 const runManagedAccountFlow = async (
-  loginUrl: string,
+  cpaUrl: string,
   account: ManagedAccount,
   onStage: (progress: 1 | 2 | 3, message: string) => void
 ): Promise<AccountRunResult> => {
-  const step1Result = await openCodexAuthLink(loginUrl)
+  const step1Result = await openCodexAuthLink(cpaUrl)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
     return {
       ok: false,
@@ -345,10 +363,9 @@ const runManagedAccountFlow = async (
 
   onStage(2, step2Result.message)
 
-  debugger
   const step3Result = await confirmCodexOAuthAndSubmitCallback(
     authTabId,
-    loginUrl
+    cpaUrl
   )
   if (!step3Result.ok) {
     return {
@@ -375,13 +392,17 @@ const runManagedAccountFlow = async (
 function SidePanel() {
   const [loginForm] = Form.useForm<LoginFormValues>()
   const [accountForm] = Form.useForm<AccountFormValues>()
-  const [loginUrl, setLoginUrl] = useState("")
+  const [cpaUrl, setCpaUrl] = useState("")
   const [accounts, setAccounts] = useState<ManagedAccount[]>([])
   const [editingEmail, setEditingEmail] = useState("")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [runningEmail, setRunningEmail] = useState("")
+  const [debugEmail, setDebugEmail] = useState("")
+  const [debugAuthTabId, setDebugAuthTabId] = useState("")
+  const [debugProgress, setDebugProgress] = useState<0 | DebugStep>(0)
+  const [isDebugRunning, setIsDebugRunning] = useState(false)
   const batchCancelRef = useRef(false)
   const logListRef = useRef<HTMLDivElement | null>(null)
 
@@ -402,17 +423,29 @@ function SidePanel() {
     })
   }, [])
 
-  const persistState = (nextLoginUrl: string, nextAccounts: ManagedAccount[]) => {
+  const persistState = (nextCpaUrl: string, nextAccounts: ManagedAccount[]) => {
     saveStoredState({
-      loginUrl: nextLoginUrl,
+      cpaUrl: nextCpaUrl,
       accounts: nextAccounts
     })
   }
 
   const syncAccounts = (nextAccounts: ManagedAccount[]) => {
     setAccounts(nextAccounts)
-    persistState(loginUrl, nextAccounts)
+    persistState(cpaUrl, nextAccounts)
   }
+
+  const selectedDebugAccount = useMemo(() => {
+    const normalizedDebugEmail = normalizeEmail(debugEmail)
+    return (
+      accounts.find((account) => {
+        return normalizeEmail(account.email) === normalizedDebugEmail
+      }) || null
+    )
+  }, [accounts, debugEmail])
+
+  const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
+  const hasDebugAuthTabId = Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
 
   useEffect(() => {
     const element = logListRef.current
@@ -426,27 +459,43 @@ function SidePanel() {
   useEffect(() => {
     void (async () => {
       const state = await loadStoredState()
-      setLoginUrl(state.loginUrl)
+      setCpaUrl(state.cpaUrl)
       setAccounts(state.accounts)
-      loginForm.setFieldsValue({ loginUrl: state.loginUrl })
+      loginForm.setFieldsValue({ cpaUrl: state.cpaUrl })
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
 
       if (state.accounts.length > 0 && storage) {
-        persistState(state.loginUrl, state.accounts)
+        persistState(state.cpaUrl, state.accounts)
       }
     })()
   }, [loginForm, storage])
 
+  useEffect(() => {
+    if (accounts.length === 0) {
+      setDebugEmail("")
+      return
+    }
+
+    const currentDebugEmail = normalizeEmail(debugEmail)
+    const hasCurrentDebugAccount = accounts.some((account) => {
+      return normalizeEmail(account.email) === currentDebugEmail
+    })
+
+    if (!hasCurrentDebugAccount) {
+      setDebugEmail(accounts[0].email)
+    }
+  }, [accounts, debugEmail])
+
   /**
-   * 保存登录地址的实时变更。
+   * 保存 CPA 地址的实时变更。
    *
    * @param values 当前表单值。
    * @return 无。
    */
-  const handleLoginUrlChange = (_: Partial<LoginFormValues>, values: LoginFormValues) => {
-    const nextLoginUrl = String(values.loginUrl || "")
-    setLoginUrl(nextLoginUrl)
-    persistState(nextLoginUrl, accounts)
+  const handleCpaUrlChange = (_: Partial<LoginFormValues>, values: LoginFormValues) => {
+    const nextCpaUrl = String(values.cpaUrl || "")
+    setCpaUrl(nextCpaUrl)
+    persistState(nextCpaUrl, accounts)
   }
 
   /**
@@ -563,16 +612,210 @@ function SidePanel() {
     setStatus("日志已清空")
   }
 
+  const patchDebugAccountState = (
+    email: string,
+    patch: Partial<ManagedAccount>
+  ) => {
+    const targetEmail = normalizeEmail(email)
+    setAccounts((currentAccounts) => {
+      const nextAccounts = currentAccounts.map((account) => {
+        if (normalizeEmail(account.email) !== targetEmail) {
+          return account
+        }
+
+        return {
+          ...account,
+          ...patch,
+          updatedAt: Date.now()
+        }
+      })
+
+      persistState(cpaUrl, nextAccounts)
+      return nextAccounts
+    })
+  }
+
+  /**
+   * 使用当前激活的浏览器标签页作为调试用 auth tab。
+   *
+   * @return 无。
+   */
+  const handleUseActiveTabAsDebugAuthTab = async () => {
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true
+    })
+
+    if (!activeTab?.id) {
+      setStatus("未找到当前激活标签页")
+      log.warn("未找到当前激活标签页，无法设置 auth tab")
+      return
+    }
+
+    setDebugAuthTabId(String(activeTab.id))
+    setStatus(`已使用当前标签页作为 auth tab：${activeTab.id}`)
+    log.debug(`调试 auth tab 已设置为 ${activeTab.id}（${activeTab.url || "unknown"}）`)
+  }
+
+  /**
+   * 执行调试控制台里的单个步骤。
+   *
+   * @param step 要执行的步骤编号。
+   * @return 无。
+   */
+  const handleRunDebugStep = async (step: DebugStep) => {
+    const normalizedCpaUrl = String(cpaUrl || "").trim()
+    const account = selectedDebugAccount
+
+    if (!normalizedCpaUrl) {
+      setStatus("请先填写 CPA 地址")
+      log.warn("调试步骤无法执行：未填写 CPA 地址")
+      return
+    }
+
+    if (!account) {
+      setStatus("请先选择调试账号")
+      log.warn("调试步骤无法执行：未选择账号")
+      return
+    }
+
+    if (isBatchRunning || isDebugRunning) {
+      return
+    }
+
+    if (step !== 1 && !hasDebugAuthTabId) {
+      setStatus("请先执行 Step 1 或手动设置 auth tab")
+      log.warn(`${DEBUG_STEP_LABELS[step]} 需要 auth tab，请先执行 Step 1 或点击“使用当前标签页”`)
+      return
+    }
+
+    setIsDebugRunning(true)
+    setRunningEmail(account.email)
+    setStatus(`正在调试 ${account.email}：${DEBUG_STEP_LABELS[step]}`)
+    log.info(`[调试][${account.email}] 开始执行 ${DEBUG_STEP_LABELS[step]}`)
+
+    try {
+      if (step === 1) {
+        patchDebugAccountState(account.email, {
+          progress: 0,
+          status: "running",
+          lastMessage: DEBUG_STEP_LABELS[step]
+        })
+
+        const result = await openCodexAuthLink(normalizedCpaUrl)
+        if (!result.ok || !result.targetTab?.id) {
+          patchDebugAccountState(account.email, {
+            status: "failed",
+            lastMessage: result.message || "Step 1 执行失败"
+          })
+          setStatus("Step 1 执行失败")
+          log.warn(`[调试][${account.email}] ${result.message || "Step 1 执行失败"}`)
+          return
+        }
+
+        setDebugAuthTabId(String(result.targetTab.id))
+        setDebugProgress(1)
+        patchDebugAccountState(account.email, {
+          progress: 1,
+          status: "running",
+          lastMessage: result.message
+        })
+        setStatus("Step 1 已完成")
+        log.info(
+          `[调试][${account.email}] ${result.message}；auth tab=${result.targetTab.id}；url=${
+            result.targetTab.url || "unknown"
+          }`
+        )
+        return
+      }
+
+      if (step === 2) {
+        const result = await completeCodexLoginEmailAuthFlow(
+          parsedDebugAuthTabId,
+          account.email,
+          account.password
+        )
+        if (!result.ok) {
+          patchDebugAccountState(account.email, {
+            progress: Math.max(debugProgress, 1) as ManagedAccount["progress"],
+            status: "failed",
+            lastMessage: result.message || "Step 2 执行失败"
+          })
+          setStatus("Step 2 执行失败")
+          log.warn(`[调试][${account.email}] ${result.message || "Step 2 执行失败"}`)
+          return
+        }
+
+        setDebugProgress(2)
+        patchDebugAccountState(account.email, {
+          progress: 2,
+          status: "running",
+          lastMessage: result.message
+        })
+        setStatus("Step 2 已完成")
+        log.info(`[调试][${account.email}] ${result.message}`)
+        return
+      }
+
+      const result = await confirmCodexOAuthAndSubmitCallback(
+        parsedDebugAuthTabId,
+        normalizedCpaUrl
+      )
+      if (!result.ok) {
+        patchDebugAccountState(account.email, {
+          progress: Math.max(debugProgress, 2) as ManagedAccount["progress"],
+          status: "failed",
+          lastMessage: result.message || "Step 3 执行失败"
+        })
+        setStatus("Step 3 执行失败")
+        log.warn(`[调试][${account.email}] ${result.message || "Step 3 执行失败"}`)
+        return
+      }
+
+      setDebugProgress(3)
+      patchDebugAccountState(account.email, {
+        progress: 3,
+        status: "done",
+        lastMessage: result.message
+      })
+      setStatus("Step 3 已完成")
+      log.info(`[调试][${account.email}] ${result.message}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "调试步骤执行异常"
+      patchDebugAccountState(account.email, {
+        status: "failed",
+        lastMessage: message
+      })
+      setStatus("调试步骤执行异常")
+      log.warn(`[调试][${account.email}] ${message}`)
+    } finally {
+      setIsDebugRunning(false)
+      setRunningEmail("")
+    }
+  }
+
+  /**
+   * 按当前调试进度执行下一步。
+   *
+   * @return 无。
+   */
+  const handleRunNextDebugStep = () => {
+    const nextStep: DebugStep =
+      debugProgress <= 0 ? 1 : debugProgress === 1 ? 2 : 3
+
+    void handleRunDebugStep(nextStep)
+  }
+
   /**
    * 启动所有账号的顺序执行。
    *
    * @return 无。
    */
   const handleStartBatch = async () => {
-    const normalizedLoginUrl = String(loginUrl || "").trim()
-    if (!normalizedLoginUrl) {
-      setStatus("请先填写 Codex 登录地址")
-      log.warn("未填写 Codex 登录地址")
+    const normalizedCpaUrl = String(cpaUrl || "").trim()
+    if (!normalizedCpaUrl) {
+      setStatus("请先填写 CPA 地址")
+      log.warn("未填写 CPA 地址")
       return
     }
 
@@ -592,7 +835,7 @@ function SidePanel() {
 
     let workingAccounts = accounts.map((account) => resetManagedAccountState(account))
     setAccounts(workingAccounts)
-    persistState(normalizedLoginUrl, workingAccounts)
+    persistState(normalizedCpaUrl, workingAccounts)
 
     setStatus(`开始循环 ${workingAccounts.length} 个账号`)
     log.info(`开始循环 ${workingAccounts.length} 个账号`)
@@ -625,7 +868,7 @@ function SidePanel() {
         // 这个set是为了触发UI更新
         setAccounts(nextAccounts)
         // 这个是为了持久化，下次继续从断点处执行
-        persistState(normalizedLoginUrl, nextAccounts)
+        persistState(normalizedCpaUrl, nextAccounts)
         return nextAccounts
       }
 
@@ -635,7 +878,7 @@ function SidePanel() {
       })
 
       const runResult = await runManagedAccountFlow(
-        normalizedLoginUrl,
+        normalizedCpaUrl,
         currentAccount,
         (progress, message) => {
           const nextStatus: ManagedAccountStatus =
@@ -714,16 +957,16 @@ function SidePanel() {
         </header>
 
         <section className="panel-stack">
-          <Card className="panel-card" title="登录地址">
+          <Card className="panel-card" title="CPA 地址">
             <Form
               form={loginForm}
               layout="vertical"
               requiredMark={false}
-              onValuesChange={handleLoginUrlChange}>
+              onValuesChange={handleCpaUrlChange}>
               <Form.Item
-                label="Codex 登录地址"
-                name="loginUrl"
-                rules={[{ required: true, message: "请输入 Codex 登录地址" }]}>
+                label="CPA 地址"
+                name="cpaUrl"
+                rules={[{ required: true, message: "请输入 CPA 地址" }]}>
                 <Input placeholder="https://..." allowClear disabled={isBatchRunning} />
               </Form.Item>
             </Form>
@@ -788,7 +1031,7 @@ function SidePanel() {
                     void handleStartBatch()
                   }}
                   loading={isBatchRunning}
-                  disabled={!loginUrl.trim() || accounts.length === 0}>
+                  disabled={!cpaUrl.trim() || accounts.length === 0}>
                   启动循环
                 </Button>
                 <Button
@@ -813,8 +1056,8 @@ function SidePanel() {
                         <div className="account-head">
                           <span className="account-email">{account.email}</span>
                           <Space size={6} wrap>
-                            <Tag bordered={false}>{`${account.progress}/3`}</Tag>
-                            <Tag bordered={false} color={statusMeta.color}>
+                            <Tag variant="filled">{`${account.progress}/3`}</Tag>
+                            <Tag variant="filled" color={statusMeta.color}>
                               {statusMeta.label}
                             </Tag>
                           </Space>
@@ -877,6 +1120,110 @@ function SidePanel() {
 
           <Card
             className="panel-card"
+            title="调试控制台"
+            extra={<Tag color="default">{`当前进度 ${debugProgress}/3`}</Tag>}>
+            <div className="debug-panel">
+              <div className="debug-row">
+                <div className="debug-field">
+                  <span className="debug-label">账号</span>
+                  <Select
+                    value={debugEmail || undefined}
+                    placeholder="选择账号"
+                    options={accounts.map((account) => {
+                      return {
+                        label: account.email,
+                        value: account.email
+                      }
+                    })}
+                    onChange={(value) => {
+                      setDebugEmail(value)
+                      setDebugProgress(0)
+                    }}
+                    disabled={isBatchRunning || isDebugRunning || accounts.length === 0}
+                  />
+                </div>
+
+                <div className="debug-field">
+                  <span className="debug-label">Auth tab</span>
+                  <Input
+                    value={debugAuthTabId}
+                    placeholder="tabId"
+                    inputMode="numeric"
+                    onChange={(event) => {
+                      setDebugAuthTabId(event.target.value.replace(/[^\d]/g, ""))
+                    }}
+                    disabled={isBatchRunning || isDebugRunning}
+                  />
+                </div>
+              </div>
+
+              <Space size={8} wrap>
+                <Button
+                  onClick={() => {
+                    void handleUseActiveTabAsDebugAuthTab()
+                  }}
+                  disabled={isBatchRunning || isDebugRunning}>
+                  使用当前标签页
+                </Button>
+                <Button
+                  onClick={() => {
+                    setDebugAuthTabId("")
+                    setDebugProgress(0)
+                    setStatus("调试状态已清空")
+                  }}
+                  disabled={isBatchRunning || isDebugRunning}>
+                  清空调试状态
+                </Button>
+              </Space>
+
+              <Space size={8} wrap>
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    void handleRunDebugStep(1)
+                  }}
+                  loading={isDebugRunning && debugProgress === 0}
+                  disabled={isBatchRunning || isDebugRunning || !selectedDebugAccount}>
+                  Step 1
+                </Button>
+                <Button
+                  onClick={() => {
+                    void handleRunDebugStep(2)
+                  }}
+                  disabled={
+                    isBatchRunning ||
+                    isDebugRunning ||
+                    !selectedDebugAccount ||
+                    !hasDebugAuthTabId
+                  }>
+                  Step 2
+                </Button>
+                <Button
+                  onClick={() => {
+                    void handleRunDebugStep(3)
+                  }}
+                  disabled={
+                    isBatchRunning ||
+                    isDebugRunning ||
+                    !selectedDebugAccount ||
+                    !hasDebugAuthTabId
+                  }>
+                  Step 3
+                </Button>
+                <Button
+                  type="primary"
+                  ghost
+                  onClick={handleRunNextDebugStep}
+                  loading={isDebugRunning}
+                  disabled={isBatchRunning || isDebugRunning || !selectedDebugAccount}>
+                  下一步
+                </Button>
+              </Space>
+            </div>
+          </Card>
+
+          <Card
+            className="panel-card"
             title="执行日志"
             extra={
               <Button size="small" onClick={handleClearLogs}>
@@ -894,7 +1241,7 @@ function SidePanel() {
                         <Tag
                           className="log-level-tag"
                           color={levelMeta.color}
-                          bordered={false}>
+                          variant="filled">
                           {levelMeta.label}
                         </Tag>
                         <span className="log-message">{logItem.message}</span>

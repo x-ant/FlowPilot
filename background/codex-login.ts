@@ -625,7 +625,7 @@ export const submitCodexLoginEmail = async (
     ],
     button: {
       texts: OPENAI_LOGIN_BUTTON_TEXTS,
-      submitStrategy: "requestSubmit"
+      triggerMode: "requestSubmit"
     },
     timeoutMs: 15000,
     successMessage: CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE,
@@ -671,7 +671,7 @@ const submitCodexLoginPassword = async (
     ],
     button: {
       texts: OPENAI_LOGIN_BUTTON_TEXTS,
-      submitStrategy: "requestSubmit"
+      triggerMode: "requestSubmit"
     },
     timeoutMs: 15000,
     successMessage: CODEX_AUTH_PASSWORD_SUCCESS_MESSAGE,
@@ -744,7 +744,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
     ],
     button: {
       texts: OPENAI_VERIFICATION_BUTTON_TEXTS,
-      submitStrategy: "requestSubmit"
+      triggerMode: "requestSubmit"
     },
     timeoutMs: 15000,
     successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
@@ -907,7 +907,7 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
   const confirmResult = await runAuthPageAction(tabId, {
     button: {
       texts: OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS,
-      submitStrategy: "requestSubmit"
+      triggerMode: "click"
     },
     timeoutMs: 15000,
     successMessage: CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE,
@@ -976,7 +976,7 @@ export const confirmCodexOAuthAndSubmitCallback = async (
     ],
     button: {
       texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
-      submitStrategy: "requestSubmit"
+      triggerMode: "requestSubmit"
     },
     timeoutMs: 15000,
     successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,

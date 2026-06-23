@@ -16,7 +16,7 @@ export type PageActionField = {
 export type PageActionButton = {
   texts?: string[]
   selectors?: string[]
-  submitStrategy?: "auto" | "click" | "requestSubmit"
+  triggerMode?: "auto" | "click" | "requestSubmit"
 }
 
 export type PageActionConfig = {
@@ -469,7 +469,7 @@ export const performPageActionInPage = (
       buttonForm: HTMLFormElement | null,
       form: HTMLFormElement | null
     ) => {
-      const submitStrategy = action.button?.submitStrategy || "click"
+      const triggerMode = action.button?.triggerMode || "click"
 
       /**
        * 表单提交，必须有表单，表单必须有提交方法requestSubmit
@@ -498,8 +498,8 @@ export const performPageActionInPage = (
         return true
       }
 
-      // requestSubmit 和 auto 都优先走表单提交，click先尝试点击后提交
-      if (submitStrategy === "click") {
+      // requestSubmit 和 auto 都优先走表单提交，click 先尝试点击后提交。
+      if (triggerMode === "click") {
         return clickButton() || requestSubmit()
       } else {
         return requestSubmit() || clickButton()

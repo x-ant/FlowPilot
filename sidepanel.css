@@ -145,6 +145,31 @@ body {
   min-width: 56px;
 }
 
+.debug-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.debug-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 10px;
+}
+
+.debug-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-label {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .log-list {
   max-height: 220px;
   overflow: auto;
@@ -186,4 +211,10 @@ body {
 .log-level-tag {
   margin: 0;
   flex: 0 0 auto;
+}
+
+@media (max-width: 420px) {
+  .debug-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
