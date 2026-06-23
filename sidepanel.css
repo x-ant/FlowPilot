@@ -75,6 +75,7 @@ body {
 }
 
 .account-row {
+  container-type: inline-size;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
@@ -135,13 +136,65 @@ body {
 
 .account-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.account-actions .ant-btn {
+.account-inline-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.account-menu-actions {
+  display: none;
+}
+
+.account-icon-button.ant-btn {
+  min-width: 48px;
+  padding: 0 8px;
+}
+
+.account-action-icon {
+  display: none;
+  align-items: center;
+  line-height: 1;
+}
+
+.account-action-text {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+@container (max-width: 520px) {
+  .account-icon-button.ant-btn {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+  }
+
+  .account-action-icon {
+    display: inline-flex;
+  }
+
+  .account-action-text {
+    display: none;
+  }
+}
+
+@container (max-width: 360px) {
+  .account-inline-actions {
+    display: none;
+  }
+
+  .account-menu-actions {
+    display: inline-flex;
+  }
+}
+
+.account-menu-actions.ant-btn {
   min-width: 56px;
 }
 

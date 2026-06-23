@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -66,6 +67,8 @@ type AccountRunResult = {
 }
 
 type DebugStep = 1 | 2 | 3 | 4 | 5 | 6
+
+type BatchRunMode = "pending" | "all"
 
 type FlowRunContext = {
   authTabId?: number
@@ -277,6 +280,16 @@ const resetManagedAccountState = (account: ManagedAccount): ManagedAccount => {
     status: "idle",
     lastMessage: ""
   }
+}
+
+/**
+ * 判断账号是否已经完成全部自动流程。
+ *
+ * @param account 当前账号。
+ * @return 完成则返回 true。
+ */
+const isManagedAccountDone = (account: ManagedAccount) => {
+  return account.status === "done" || account.progress >= STEP_COUNT
 }
 
 /**
@@ -1075,11 +1088,14 @@ function SidePanel() {
   }
 
   /**
-   * 启动所有账号的顺序执行。
+   * 顺序执行账号。
    *
+   * pending 模式会跳过已完成账号；all 模式会重置并执行全部账号。
+   *
+   * @param mode 批量执行模式。
    * @return 无。
    */
-  const handleStartBatch = async () => {
+  const handleStartBatch = async (mode: BatchRunMode) => {
     const normalizedCpaUrl = String(cpaUrl || "").trim()
     if (!normalizedCpaUrl) {
       setStatus("请先填写 CPA 地址")
@@ -1097,30 +1113,52 @@ function SidePanel() {
       return
     }
 
+    const runnableCount =
+      mode === "all"
+        ? accounts.length
+        : accounts.filter((account) => {
+            return !isManagedAccountDone(account)
+          }).length
+    if (runnableCount === 0) {
+      setStatus("没有需要执行的账号")
+      log.info("所有账号都已完成，已跳过批量执行")
+      return
+    }
+
     batchCancelRef.current = false
     setIsBatchRunning(true)
     setRunningEmail("")
 
-    let workingAccounts = accounts.map((account) =>
-      resetManagedAccountState(account)
-    )
+    let workingAccounts = accounts.map((account) => {
+      return mode === "pending" && isManagedAccountDone(account)
+        ? account
+        : resetManagedAccountState(account)
+    })
     setAccounts(workingAccounts)
     persistState(normalizedCpaUrl, workingAccounts)
 
-    setStatus(`开始循环 ${workingAccounts.length} 个账号`)
-    log.info(`开始循环 ${workingAccounts.length} 个账号`)
+    const batchLabel = mode === "all" ? "全部账号" : "未完成账号"
+    setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
+    log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
 
+    let currentRunnableIndex = 0
     for (let index = 0; index < workingAccounts.length; index += 1) {
       if (batchCancelRef.current) {
-        setStatus("已停止循环")
-        log.warn("循环已停止")
+        setStatus("已停止批量执行")
+        log.warn("批量执行已停止")
         break
       }
 
       const currentAccount = workingAccounts[index]
+      if (mode === "pending" && isManagedAccountDone(currentAccount)) {
+        log.info(`跳过已完成账号 ${currentAccount.email}`)
+        continue
+      }
+
+      currentRunnableIndex += 1
       setRunningEmail(currentAccount.email)
       setStatus(
-        `正在处理 ${currentAccount.email}（${index + 1}/${workingAccounts.length}）`
+        `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
       )
       log.info(`开始处理账号 ${currentAccount.email}`)
 
@@ -1147,21 +1185,32 @@ function SidePanel() {
         lastMessage: "正在打开登录页"
       })
 
-      const runResult = await runManagedAccountFlow(
-        normalizedCpaUrl,
-        currentAccount,
-        (progress, message) => {
-          const nextStatus: ManagedAccountStatus =
-            progress === STEP_COUNT ? "done" : "running"
-          updateCurrentAccount({
-            progress,
-            status: nextStatus,
-            lastMessage: message
-          })
-          setStatus(`账号 ${currentAccount.email} 已完成第 ${progress} 步`)
-          log.info(`[${currentAccount.email}] ${message}`)
+      let runResult: AccountRunResult
+      try {
+        runResult = await runManagedAccountFlow(
+          normalizedCpaUrl,
+          currentAccount,
+          (progress, message) => {
+            const nextStatus: ManagedAccountStatus =
+              progress === STEP_COUNT ? "done" : "running"
+            updateCurrentAccount({
+              progress,
+              status: nextStatus,
+              lastMessage: message
+            })
+            setStatus(
+              `账号 ${currentAccount.email} 已完成「${getFlowStepLabel(progress)}」`
+            )
+            log.info(`[${currentAccount.email}] ${message}`)
+          }
+        )
+      } catch (error) {
+        runResult = {
+          ok: false,
+          message:
+            error instanceof Error ? error.message : "账号自动执行时发生异常"
         }
-      )
+      }
 
       if (runResult.ok) {
         updateCurrentAccount({
@@ -1186,7 +1235,7 @@ function SidePanel() {
     setRunningEmail("")
     setIsBatchRunning(false)
     if (!batchCancelRef.current) {
-      setStatus("账号循环已结束")
+      setStatus(`${mode === "all" ? "全部账号" : "未完成账号"}执行已结束`)
     }
   }
 
@@ -1201,9 +1250,12 @@ function SidePanel() {
     log.warn("收到停止请求，等待当前步骤结束")
   }
 
-  const completedCount = accounts.filter(
-    (account) => account.status === "done"
+  const completedCount = accounts.filter((account) =>
+    isManagedAccountDone(account)
   ).length
+  const runnableCount = accounts.filter((account) => {
+    return !isManagedAccountDone(account)
+  }).length
   const runningCount = accounts.filter(
     (account) => account.status === "running"
   ).length
@@ -1315,11 +1367,20 @@ function SidePanel() {
                 <Button
                   type="primary"
                   onClick={() => {
-                    void handleStartBatch()
+                    void handleStartBatch("pending")
                   }}
                   loading={isBatchRunning}
-                  disabled={!cpaUrl.trim() || accounts.length === 0}>
-                  启动循环
+                  disabled={!cpaUrl.trim() || runnableCount === 0}>
+                  执行未完成
+                </Button>
+                <Button
+                  onClick={() => {
+                    void handleStartBatch("all")
+                  }}
+                  disabled={
+                    !cpaUrl.trim() || accounts.length === 0 || isBatchRunning
+                  }>
+                  全部执行
                 </Button>
                 <Button
                   danger
@@ -1357,41 +1418,118 @@ function SidePanel() {
                       </div>
 
                       <div className="account-actions">
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            handleEditAccount(account)
-                          }}
-                          disabled={isBatchRunning}>
-                          编辑
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            handleMoveAccount(index, -1)
-                          }}
-                          disabled={isBatchRunning || index === 0}>
-                          上移
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            handleMoveAccount(index, 1)
-                          }}
-                          disabled={
-                            isBatchRunning || index === accounts.length - 1
-                          }>
-                          下移
-                        </Button>
-                        <Button
-                          size="small"
-                          danger
-                          onClick={() => {
-                            handleRemoveAccount(account.email)
-                          }}
-                          disabled={isBatchRunning}>
-                          删除
-                        </Button>
+                        <div className="account-inline-actions">
+                          <Button
+                            aria-label="编辑"
+                            className="account-icon-button"
+                            size="small"
+                            title="编辑"
+                            onClick={() => {
+                              handleEditAccount(account)
+                            }}
+                            disabled={isBatchRunning}>
+                            <span className="account-action-icon">✎</span>
+                            <span className="account-action-text">编辑</span>
+                          </Button>
+                          <Button
+                            aria-label="上移"
+                            className="account-icon-button"
+                            size="small"
+                            title="上移"
+                            onClick={() => {
+                              handleMoveAccount(index, -1)
+                            }}
+                            disabled={isBatchRunning || index === 0}>
+                            <span className="account-action-icon">↑</span>
+                            <span className="account-action-text">上移</span>
+                          </Button>
+                          <Button
+                            aria-label="下移"
+                            className="account-icon-button"
+                            size="small"
+                            title="下移"
+                            onClick={() => {
+                              handleMoveAccount(index, 1)
+                            }}
+                            disabled={
+                              isBatchRunning || index === accounts.length - 1
+                            }>
+                            <span className="account-action-icon">↓</span>
+                            <span className="account-action-text">下移</span>
+                          </Button>
+                          <Button
+                            aria-label="删除"
+                            className="account-icon-button"
+                            size="small"
+                            title="删除"
+                            danger
+                            onClick={() => {
+                              handleRemoveAccount(account.email)
+                            }}
+                            disabled={isBatchRunning}>
+                            <span className="account-action-icon">×</span>
+                            <span className="account-action-text">删除</span>
+                          </Button>
+                        </div>
+                        <Dropdown
+                          trigger={["click"]}
+                          menu={{
+                            items: [
+                              {
+                                key: "edit",
+                                label: "编辑",
+                                disabled: isBatchRunning
+                              },
+                              {
+                                key: "move-up",
+                                label: "上移",
+                                disabled: isBatchRunning || index === 0
+                              },
+                              {
+                                key: "move-down",
+                                label: "下移",
+                                disabled:
+                                  isBatchRunning ||
+                                  index === accounts.length - 1
+                              },
+                              {
+                                type: "divider"
+                              },
+                              {
+                                key: "remove",
+                                label: "删除",
+                                danger: true,
+                                disabled: isBatchRunning
+                              }
+                            ],
+                            onClick: ({ key }) => {
+                              if (key === "edit") {
+                                handleEditAccount(account)
+                                return
+                              }
+
+                              if (key === "move-up") {
+                                handleMoveAccount(index, -1)
+                                return
+                              }
+
+                              if (key === "move-down") {
+                                handleMoveAccount(index, 1)
+                                return
+                              }
+
+                              if (key === "remove") {
+                                handleRemoveAccount(account.email)
+                              }
+                            }
+                          }}>
+                          <Button
+                            className="account-menu-actions"
+                            size="small"
+                            disabled={isBatchRunning}>
+                            操作
+                          </Button>
+                        </Dropdown>
                       </div>
                     </div>
                   )
