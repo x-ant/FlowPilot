@@ -1,10 +1,8 @@
-import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
-import {
-  ensureMail2925SessionInPage,
-  type EnsureMail2925SessionPayload
-} from "./mail-2925-page-session"
-import type { BrowserTabInfo } from "./types"
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
+import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code";
+import { ensureMail2925SessionInPage, type EnsureMail2925SessionPayload } from "./mail-2925-page-session";
+import type { BrowserTabInfo } from "./types";
+import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils";
+
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]
@@ -76,6 +74,7 @@ const navigateMail2925TabToMailbox = async (tabId: number) => {
  *
  * @param email 2925 邮箱地址。
  * @param password 2925 邮箱密码。
+ * @param options 取验证码的条件
  * @return 读取结果。
  */
 export const fetchMail2925VerificationCode = async (

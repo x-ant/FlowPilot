@@ -1,9 +1,25 @@
-import { fetchMail2925VerificationCode } from "./mail-2925";
-import { detectCodexAuthPageStateInPage, extractCodexOAuthUrlInPage, type DetectCodexAuthPageState } from "./page-script";
-import type { CompleteCodexLoginEmailAuthFlowResponse, ConfirmCodexOAuthCallbackResponse, FetchAndSubmitCodexVerificationCodeResponse, OpenCodexAuthLinkResponse, SubmitCodexLoginEmailResponse } from "./types";
-import { runAuthPageAction, runPageActionInTargetUrl, type PageActionRunResult } from "./utils/page-action-runner";
-import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils";
-
+import { fetchMail2925VerificationCode } from "./mail-2925"
+import {
+  detectCodexAuthPageStateInPage,
+  extractCodexOAuthUrlInPage,
+  type DetectCodexAuthPageState
+} from "./page-script"
+import type {
+  CodexAuthProgressStepResponse,
+  CompleteCodexLoginEmailAuthFlowResponse,
+  ConfirmCodexOAuthCallbackResponse,
+  ConfirmCodexOAuthConsentResponse,
+  FetchAndSubmitCodexVerificationCodeResponse,
+  OpenCodexAuthLinkResponse,
+  SubmitCodexLoginEmailResponse,
+  SubmitCodexOAuthCallbackResponse
+} from "./types"
+import {
+  runAuthPageAction,
+  runPageActionInTargetUrl,
+  type PageActionRunResult
+} from "./utils/page-action-runner"
+import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 
 const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
 
@@ -117,6 +133,25 @@ const CODEX_SESSION_STORAGE_HOSTNAMES = [
   "chatgpt.com",
   "www.chatgpt.com"
 ]
+
+/**
+ * 把 CPA 管理页地址统一指向 OAuth 页面。
+ *
+ * Step 1 和 Step 6 都依赖 OAuth 页上的控件。标签页复用逻辑会忽略 hash，
+ * 所以如果当前停在 #/quota，必须在执行页面动作前显式切到 #/oauth。
+ *
+ * @param rawUrl 侧边栏保存的 CPA 地址。
+ * @return 指向 #/oauth 的 CPA 地址；URL 无法解析时返回原值。
+ */
+const buildCpaOAuthUrl = (rawUrl: string) => {
+  try {
+    const parsed = new URL(String(rawUrl || "").trim())
+    parsed.hash = "#/oauth"
+    return parsed.href
+  } catch {
+    return rawUrl
+  }
+}
 
 const isCodexSessionStorageUrl = (rawUrl?: string) => {
   try {
@@ -638,6 +673,7 @@ const waitForCodexOAuthConsentReadyInTab = async (tabId: number) => {
 export const openCodexAuthLink = async (
   targetUrl: string
 ): Promise<OpenCodexAuthLinkResponse> => {
+  const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
   // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
   const cleanupResult = await clearCodexSessionCookies()
   const storageResult = await clearCodexSessionStorage()
@@ -646,7 +682,7 @@ export const openCodexAuthLink = async (
 
   // region ========== 到cpa点击开始Codex登录 ==========
   const runPageActionResult = await runPageActionInTargetUrl(
-    targetUrl,
+    cpaOAuthUrl,
     {
       button: {
         texts: CODEX_LOGIN_BUTTON_TEXTS
@@ -761,6 +797,51 @@ export const submitCodexLoginEmail = async (
 }
 
 /**
+ * 填写邮箱并等待 OpenAI 登录流程进入下一页。
+ *
+ * @param tabId 要操作的登录页标签页 id。
+ * @param email 2925 邮箱地址。
+ * @return 下一页状态；如果直接进入验证码页，会带上验证码发送时间。
+ */
+export const submitCodexLoginEmailAndWait = async (
+  tabId: number,
+  email: string
+): Promise<CodexAuthProgressStepResponse> => {
+  await waitForTabLoaded(tabId)
+
+  const verificationRequestedAt = Date.now()
+  const emailResult = await submitCodexLoginEmail(tabId, email)
+  if (!emailResult.ok) {
+    return emailResult
+  }
+
+  const authStepState = await waitForCodexAuthTabState(
+    tabId,
+    ["verification_pending", "password", "oauth_consent_ready", "callback"],
+    {
+      timeoutMs: 60000,
+      intervalMs: 500,
+      timeoutMessage: "60 秒内未进入密码页、邮箱验证码页或 OAuth 授权确认页",
+      stopStates: ["extra_verification"]
+    }
+  )
+
+  return {
+    ok: authStepState.ok,
+    message: `${emailResult.message}；${authStepState.message}`,
+    targetTab: {
+      id: tabId,
+      url: authStepState.url
+    },
+    authState: authStepState.state,
+    verificationRequestedAt:
+      authStepState.state === "verification_pending"
+        ? verificationRequestedAt
+        : undefined
+  }
+}
+
+/**
  * 等页面加载完成后
  * 在 OpenAI 密码页填写密码并提交。
  *
@@ -802,6 +883,84 @@ const submitCodexLoginPassword = async (
 }
 
 /**
+ * 如果当前是密码页，则填写密码并等待验证码页；如果已经越过密码页则直接跳过。
+ *
+ * @param tabId 要操作的登录页标签页 id。
+ * @param password Codex/OpenAI 登录密码。
+ * @return 下一页状态；提交密码后进入验证码页时，会带上验证码发送时间。
+ */
+export const submitCodexLoginPasswordAndWait = async (
+  tabId: number,
+  password: string
+): Promise<CodexAuthProgressStepResponse> => {
+  const currentState = await detectCodexAuthTabState(tabId)
+  if (
+    currentState.state === "verification_pending" ||
+    currentState.state === "oauth_consent_ready" ||
+    currentState.state === "callback"
+  ) {
+    return {
+      ok: true,
+      message: `当前不需要填写密码；${currentState.message}`,
+      targetTab: {
+        id: tabId,
+        url: currentState.url
+      },
+      authState: currentState.state,
+      skipped: true
+    }
+  }
+
+  if (currentState.state !== "password") {
+    return {
+      ok: false,
+      message: `当前页面不是密码页，无法填写密码；${currentState.message}`,
+      targetTab: {
+        id: tabId,
+        url: currentState.url
+      },
+      authState: currentState.state
+    }
+  }
+
+  const verificationRequestedAt = Date.now()
+  const passwordResult = await submitCodexLoginPassword(tabId, password)
+  if (!passwordResult.ok) {
+    return {
+      ok: false,
+      message: passwordResult.message,
+      targetTab: passwordResult.tab,
+      authState: "password"
+    }
+  }
+
+  const verificationState = await waitForCodexAuthTabState(
+    tabId,
+    ["verification_pending", "oauth_consent_ready", "callback"],
+    {
+      timeoutMs: 60000,
+      intervalMs: 500,
+      timeoutMessage: "60 秒内未进入邮箱验证码页或 OAuth 授权确认页",
+      stopStates: ["extra_verification"]
+    }
+  )
+
+  return {
+    ok: verificationState.ok,
+    message: `${passwordResult.message}；${verificationState.message}`,
+    targetTab: {
+      id: tabId,
+      url: verificationState.url
+    },
+    authState: verificationState.state,
+    verificationRequestedAt:
+      verificationState.state === "verification_pending"
+        ? verificationRequestedAt
+        : undefined
+  }
+}
+
+/**
  * 在 OpenAI 邮箱验证码页读取 2925 验证码，并回填到当前 tab。
  *
  * @param tabId 要操作的验证码页标签页 id。
@@ -816,6 +975,32 @@ export const fetchAndSubmitCodexVerificationCode = async (
   password: string,
   verificationRequestedAt = 0
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
+  const currentState = await detectCodexAuthTabState(tabId)
+  if (
+    currentState.state === "oauth_consent_ready" ||
+    currentState.state === "callback"
+  ) {
+    return {
+      ok: true,
+      message: `当前不需要填写验证码；${currentState.message}`,
+      targetTab: {
+        id: tabId,
+        url: currentState.url
+      }
+    }
+  }
+
+  if (currentState.state !== "verification_pending") {
+    return {
+      ok: false,
+      message: `当前页面不是邮箱验证码页，无法回填验证码；${currentState.message}`,
+      targetTab: {
+        id: tabId,
+        url: currentState.url
+      }
+    }
+  }
+
   const maxAttempts = 2
   const excludedCodes: string[] = []
   const attemptMessages: string[] = []
@@ -1167,28 +1352,36 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
 }
 
 /**
- * 执行第三步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
+ * 执行第五步：点击 Codex OAuth 授权确认页的“继续”，捕获回调 URL。
  *
- * @param tabId 当前 codex 授权页标签页 id。
- * @param targetUrl cpa页面的地址，用于回填回调地址数据
- * @return 返回给侧边栏展示的执行结果。
+ * @param tabId 当前 OpenAI 授权页标签页 id。
+ * @return 捕获到的 localhost 回调地址。
  */
-export const confirmCodexOAuthAndSubmitCallback = async (
-  tabId: number,
-  targetUrl: string
-): Promise<ConfirmCodexOAuthCallbackResponse> => {
-  // 拿到回调地址
-  const callbackResult = await confirmOAuthConsentAndCaptureCallback(tabId)
-  if (!callbackResult.ok || !callbackResult.callbackUrl) {
-    return callbackResult
-  }
+export const confirmCodexOAuthConsent = async (
+  tabId: number
+): Promise<ConfirmCodexOAuthConsentResponse> => {
+  return confirmOAuthConsentAndCaptureCallback(tabId)
+}
 
-  // 提交给cpa页面的回调地址框
-  const submitResult = await runPageActionInTargetUrl(targetUrl, {
+/**
+ * 执行第六步：把 OAuth 回调 URL 提交回 CPA 管理页。
+ *
+ * @param targetUrl cpa 页面的地址，用于回填回调地址。
+ * @param callbackUrl 第五步捕获到的 localhost 回调地址。
+ * @param callbackTabId 可选，提交成功后关闭这个授权标签页。
+ * @return 回填结果。
+ */
+export const submitCodexOAuthCallbackToCpa = async (
+  targetUrl: string,
+  callbackUrl: string,
+  callbackTabId?: number
+): Promise<SubmitCodexOAuthCallbackResponse> => {
+  const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
+  const submitResult = await runPageActionInTargetUrl(cpaOAuthUrl, {
     fields: [
       {
         selectors: CODEX_CALLBACK_INPUT_SELECTORS,
-        value: callbackResult.callbackUrl
+        value: callbackUrl
       }
     ],
     button: {
@@ -1202,23 +1395,66 @@ export const confirmCodexOAuthAndSubmitCallback = async (
   if (!submitResult.ok) {
     return {
       ok: false,
-      message: `已捕获回调地址，但提交到管理页失败：${submitResult.message}`,
-      targetTab: callbackResult.targetTab,
+      message: `提交回调地址到管理页失败：${submitResult.message}`,
       managementTab: submitResult.tab,
+      callbackUrl
+    }
+  }
+
+  const closedCallbackTab =
+    typeof callbackTabId === "number"
+      ? await closeBrowserTab(callbackTabId)
+      : false
+
+  return {
+    ok: true,
+    message: `${submitResult.message}；${
+      closedCallbackTab
+        ? "已关闭回调地址标签页"
+        : "回调地址标签页未关闭或不需要关闭"
+    }`,
+    managementTab: submitResult.tab,
+    callbackUrl
+  }
+}
+
+/**
+ * 执行第三步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
+ *
+ * @param tabId 当前 codex 授权页标签页 id。
+ * @param targetUrl cpa页面的地址，用于回填回调地址数据
+ * @return 返回给侧边栏展示的执行结果。
+ */
+export const confirmCodexOAuthAndSubmitCallback = async (
+  tabId: number,
+  targetUrl: string
+): Promise<ConfirmCodexOAuthCallbackResponse> => {
+  // 拿到回调地址
+  const callbackResult = await confirmCodexOAuthConsent(tabId)
+  if (!callbackResult.ok || !callbackResult.callbackUrl) {
+    return callbackResult
+  }
+
+  // 提交给cpa页面的回调地址框
+  const submitResult = await submitCodexOAuthCallbackToCpa(
+    targetUrl,
+    callbackResult.callbackUrl,
+    tabId
+  )
+  if (!submitResult.ok) {
+    return {
+      ok: false,
+      message: `已捕获回调地址，但${submitResult.message}`,
+      targetTab: callbackResult.targetTab,
+      managementTab: submitResult.managementTab,
       callbackUrl: callbackResult.callbackUrl
     }
   }
 
-  // 关闭用于提供回调地址的codex tab
-  const closedCallbackTab = await closeBrowserTab(tabId)
   return {
     ok: true,
-    message: `${callbackResult.message}；${submitResult.message}；${
-      closedCallbackTab
-        ? "已关闭回调地址标签页"
-        : "回调地址标签页已不存在或关闭失败"
-    }`,
-    managementTab: submitResult.tab,
+    message: `${callbackResult.message}；${submitResult.message}`,
+    managementTab: submitResult.managementTab,
     callbackUrl: callbackResult.callbackUrl
   }
 }

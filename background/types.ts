@@ -20,7 +20,42 @@ export type OpenCodexAuthLinkRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 2：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
+ * 步骤 2：在 OpenAI 登录页填写邮箱并等待下一页。
+ */
+export type SubmitCodexLoginEmailRequest = BackgroundRequestBase<
+  "codex-login:submit-login-email",
+  {
+    tabId: number
+    email: string
+  }
+>
+
+/**
+ * 步骤 3：如果出现密码页，则填写密码并等待验证码页。
+ */
+export type SubmitCodexLoginPasswordRequest = BackgroundRequestBase<
+  "codex-login:submit-login-password",
+  {
+    tabId: number
+    password: string
+  }
+>
+
+/**
+ * 步骤 4：读取 2925 验证码并回填。
+ */
+export type FetchAndSubmitCodexVerificationCodeRequest = BackgroundRequestBase<
+  "codex-login:submit-verification-code",
+  {
+    tabId: number
+    email: string
+    password: string
+    verificationRequestedAt?: number
+  }
+>
+
+/**
+ * 兼容旧入口：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
  */
 export type CompleteCodexLoginEmailAuthFlowRequest = BackgroundRequestBase<
   "codex-login:fill-auth-email-and-code",
@@ -32,7 +67,29 @@ export type CompleteCodexLoginEmailAuthFlowRequest = BackgroundRequestBase<
 >
 
 /**
- * 步骤 3：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
+ * 步骤 5：确认 OAuth 授权并捕获 localhost 回调 URL。
+ */
+export type ConfirmCodexOAuthConsentRequest = BackgroundRequestBase<
+  "codex-login:confirm-oauth-consent",
+  {
+    tabId: number
+  }
+>
+
+/**
+ * 步骤 6：把 localhost 回调 URL 提交到管理页。
+ */
+export type SubmitCodexOAuthCallbackRequest = BackgroundRequestBase<
+  "codex-login:submit-oauth-callback",
+  {
+    tabId?: number
+    targetUrl: string
+    callbackUrl: string
+  }
+>
+
+/**
+ * 兼容旧入口：确认 OAuth 授权并把 localhost 回调 URL 提交到管理页。
  */
 export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
   "codex-login:confirm-oauth-callback",
@@ -49,7 +106,12 @@ export type ConfirmCodexOAuthCallbackRequest = BackgroundRequestBase<
  */
 export type BackgroundRequest =
   | OpenCodexAuthLinkRequest
+  | SubmitCodexLoginEmailRequest
+  | SubmitCodexLoginPasswordRequest
+  | FetchAndSubmitCodexVerificationCodeRequest
   | CompleteCodexLoginEmailAuthFlowRequest
+  | ConfirmCodexOAuthConsentRequest
+  | SubmitCodexOAuthCallbackRequest
   | ConfirmCodexOAuthCallbackRequest
 
 /**
@@ -77,6 +139,24 @@ export type CodexLoginStepResponseBase = {
  */
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
 
+export type CodexAuthFlowState =
+  | "oauth_consent_ready"
+  | "verification_invalid_code"
+  | "verification_pending"
+  | "password"
+  | "extra_verification"
+  | "callback"
+  | "other"
+
+/**
+ * 步骤 2/3 的响应：除了页面信息，还会告诉侧边栏当前认证流走到了哪里。
+ */
+export type CodexAuthProgressStepResponse = CodexLoginStepResponseBase & {
+  authState?: CodexAuthFlowState
+  verificationRequestedAt?: number
+  skipped?: boolean
+}
+
 /**
  * 步骤 2：在 OpenAI 登录页填写邮箱，读取 2925 验证码并回填。
  *
@@ -103,7 +183,22 @@ export type FetchAndSubmitCodexVerificationCodeResponse =
   }
 
 /**
- * 步骤 3：确认 OAuth 授权并提交回调 URL。
+ * 步骤 5：确认 OAuth 授权并捕获回调 URL。
+ */
+export type ConfirmCodexOAuthConsentResponse = CodexLoginStepResponseBase & {
+  callbackUrl?: string
+}
+
+/**
+ * 步骤 6：提交回调 URL 到 CPA 管理页。
+ */
+export type SubmitCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
+  callbackUrl?: string
+  managementTab?: BrowserTabInfo
+}
+
+/**
+ * 兼容旧入口：确认 OAuth 授权并提交回调 URL。
  *
  * managementTab 表示被回填 callback URL 的 Codex 管理页。
  */
@@ -117,7 +212,11 @@ export type ConfirmCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
  */
 export type BackgroundResponse =
   | OpenCodexAuthLinkResponse
+  | CodexAuthProgressStepResponse
+  | FetchAndSubmitCodexVerificationCodeResponse
   | CompleteCodexLoginEmailAuthFlowResponse
+  | ConfirmCodexOAuthConsentResponse
+  | SubmitCodexOAuthCallbackResponse
   | ConfirmCodexOAuthCallbackResponse
 
 /**

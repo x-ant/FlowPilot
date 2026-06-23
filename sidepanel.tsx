@@ -1,20 +1,37 @@
-import { Button, Card, ConfigProvider, Empty, Form, Input, Select, Space, Tag, theme, Typography } from "antd";
-import zhCN from "antd/locale/zh_CN";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Button,
+  Card,
+  ConfigProvider,
+  Empty,
+  Form,
+  Input,
+  Select,
+  Space,
+  Tag,
+  theme,
+  Typography
+} from "antd"
+import zhCN from "antd/locale/zh_CN"
+import { useEffect, useMemo, useRef, useState } from "react"
 
+import {
+  confirmCodexOAuthConsent,
+  fetchAndSubmitCodexVerificationCode,
+  openCodexAuthLink,
+  submitCodexLoginEmailAndWait,
+  submitCodexLoginPasswordAndWait,
+  submitCodexOAuthCallbackToCpa
+} from "./background/codex-login"
 
+import "antd/dist/reset.css"
+import "./sidepanel.css"
 
-import { completeCodexLoginEmailAuthFlow, confirmCodexOAuthAndSubmitCallback, openCodexAuthLink } from "./background/codex-login";
-
-
-
-import "antd/dist/reset.css";
-import "./sidepanel.css";
-
-
-
-import { createUiLogger, getTimeLabel, LOG_LEVEL_META, type LogItem } from "./shared/logging";
-
+import {
+  createUiLogger,
+  getTimeLabel,
+  LOG_LEVEL_META,
+  type LogItem
+} from "./shared/logging"
 
 type LoginFormValues = {
   cpaUrl?: string
@@ -27,10 +44,12 @@ type AccountFormValues = {
 
 type ManagedAccountStatus = "idle" | "running" | "done" | "failed"
 
+type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6
+
 type ManagedAccount = {
   email: string
   password: string
-  progress: 0 | 1 | 2 | 3
+  progress: ManagedAccountProgress
   status: ManagedAccountStatus
   lastMessage: string
   updatedAt: number
@@ -46,7 +65,15 @@ type AccountRunResult = {
   message: string
 }
 
-type DebugStep = 1 | 2 | 3
+type DebugStep = 1 | 2 | 3 | 4 | 5 | 6
+
+type FlowRunContext = {
+  authTabId?: number
+  verificationRequestedAt?: number
+  callbackUrl?: string
+}
+
+const STEP_COUNT = 6
 
 const CPA_URL_STORAGE_KEY = "codex-login:cpa-url"
 const LEGACY_LOGIN_URL_STORAGE_KEY = "codex-login:login-url"
@@ -57,7 +84,10 @@ const EMPTY_ACCOUNT_FORM: AccountFormValues = {
   password: ""
 }
 
-const STATUS_META: Record<ManagedAccountStatus, { label: string; color: string }> = {
+const STATUS_META: Record<
+  ManagedAccountStatus,
+  { label: string; color: string }
+> = {
   idle: {
     label: "待执行",
     color: "default"
@@ -78,8 +108,11 @@ const STATUS_META: Record<ManagedAccountStatus, { label: string; color: string }
 
 const DEBUG_STEP_LABELS: Record<DebugStep, string> = {
   1: "Step 1 打开授权页",
-  2: "Step 2 填写登录信息",
-  3: "Step 3 确认授权并回填"
+  2: "Step 2 填写邮箱",
+  3: "Step 3 填写密码",
+  4: "Step 4 回填验证码",
+  5: "Step 5 确认授权",
+  6: "Step 6 回填 CPA"
 }
 
 /**
@@ -102,7 +135,9 @@ const getStorage = () => {
  * @return 规范化后的邮箱。
  */
 const normalizeEmail = (value: string) => {
-  return String(value || "").trim().toLowerCase()
+  return String(value || "")
+    .trim()
+    .toLowerCase()
 }
 
 /**
@@ -129,8 +164,8 @@ const normalizeStoredAccount = (value: unknown): ManagedAccount | null => {
       ? record.status
       : "idle"
 
-  const progress = [0, 1, 2, 3].includes(Number(record.progress))
-    ? (Number(record.progress) as 0 | 1 | 2 | 3)
+  const progress = [0, 1, 2, 3, 4, 5, 6].includes(Number(record.progress))
+    ? (Number(record.progress) as ManagedAccountProgress)
     : 0
 
   return {
@@ -195,9 +230,8 @@ const upsertManagedAccount = (
   nextAccount: ManagedAccount,
   previousEmail?: string
 ) => {
-
   const nextNormalizedEmail = normalizeEmail(nextAccount.email)
-  let nextAccounts : ManagedAccount[];
+  let nextAccounts: ManagedAccount[]
   let previousIndex = -1
 
   // region ========== 处理 修改和删除 的旧邮箱 ==========
@@ -336,7 +370,7 @@ const saveStoredState = (state: StoredState) => {
 const runManagedAccountFlow = async (
   cpaUrl: string,
   account: ManagedAccount,
-  onStage: (progress: 1 | 2 | 3, message: string) => void
+  onStage: (progress: DebugStep, message: string) => void
 ): Promise<AccountRunResult> => {
   const step1Result = await openCodexAuthLink(cpaUrl)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
@@ -349,10 +383,9 @@ const runManagedAccountFlow = async (
   onStage(1, step1Result.message)
 
   const authTabId = step1Result.targetTab.id
-  const step2Result = await completeCodexLoginEmailAuthFlow(
+  const step2Result = await submitCodexLoginEmailAndWait(
     authTabId,
-    account.email,
-    account.password
+    account.email
   )
   if (!step2Result.ok) {
     return {
@@ -363,9 +396,10 @@ const runManagedAccountFlow = async (
 
   onStage(2, step2Result.message)
 
-  const step3Result = await confirmCodexOAuthAndSubmitCallback(
+  let verificationRequestedAt = step2Result.verificationRequestedAt || 0
+  const step3Result = await submitCodexLoginPasswordAndWait(
     authTabId,
-    cpaUrl
+    account.password
   )
   if (!step3Result.ok) {
     return {
@@ -373,12 +407,60 @@ const runManagedAccountFlow = async (
       message: step3Result.message || "步骤 3 执行失败"
     }
   }
+  verificationRequestedAt =
+    step3Result.verificationRequestedAt || verificationRequestedAt
 
   onStage(3, step3Result.message)
 
+  const step4Result = await fetchAndSubmitCodexVerificationCode(
+    authTabId,
+    account.email,
+    account.password,
+    verificationRequestedAt
+  )
+  if (!step4Result.ok) {
+    return {
+      ok: false,
+      message: step4Result.message || "步骤 4 执行失败"
+    }
+  }
+
+  onStage(4, step4Result.message)
+
+  const step5Result = await confirmCodexOAuthConsent(authTabId)
+  if (!step5Result.ok || !step5Result.callbackUrl) {
+    return {
+      ok: false,
+      message: step5Result.message || "步骤 5 执行失败"
+    }
+  }
+
+  onStage(5, step5Result.message)
+
+  const step6Result = await submitCodexOAuthCallbackToCpa(
+    cpaUrl,
+    step5Result.callbackUrl,
+    authTabId
+  )
+  if (!step6Result.ok) {
+    return {
+      ok: false,
+      message: step6Result.message || "步骤 6 执行失败"
+    }
+  }
+
+  onStage(6, step6Result.message)
+
   return {
     ok: true,
-    message: [step1Result.message, step2Result.message, step3Result.message]
+    message: [
+      step1Result.message,
+      step2Result.message,
+      step3Result.message,
+      step4Result.message,
+      step5Result.message,
+      step6Result.message
+    ]
       .filter(Boolean)
       .join("；")
   }
@@ -402,6 +484,9 @@ function SidePanel() {
   const [debugEmail, setDebugEmail] = useState("")
   const [debugAuthTabId, setDebugAuthTabId] = useState("")
   const [debugProgress, setDebugProgress] = useState<0 | DebugStep>(0)
+  const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
+    useState(0)
+  const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const batchCancelRef = useRef(false)
   const logListRef = useRef<HTMLDivElement | null>(null)
@@ -445,7 +530,8 @@ function SidePanel() {
   }, [accounts, debugEmail])
 
   const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
-  const hasDebugAuthTabId = Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
+  const hasDebugAuthTabId =
+    Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
 
   useEffect(() => {
     const element = logListRef.current
@@ -492,7 +578,10 @@ function SidePanel() {
    * @param values 当前表单值。
    * @return 无。
    */
-  const handleCpaUrlChange = (_: Partial<LoginFormValues>, values: LoginFormValues) => {
+  const handleCpaUrlChange = (
+    _: Partial<LoginFormValues>,
+    values: LoginFormValues
+  ) => {
     const nextCpaUrl = String(values.cpaUrl || "")
     setCpaUrl(nextCpaUrl)
     persistState(nextCpaUrl, accounts)
@@ -654,7 +743,9 @@ function SidePanel() {
 
     setDebugAuthTabId(String(activeTab.id))
     setStatus(`已使用当前标签页作为 auth tab：${activeTab.id}`)
-    log.debug(`调试 auth tab 已设置为 ${activeTab.id}（${activeTab.url || "unknown"}）`)
+    log.debug(
+      `调试 auth tab 已设置为 ${activeTab.id}（${activeTab.url || "unknown"}）`
+    )
   }
 
   /**
@@ -685,7 +776,9 @@ function SidePanel() {
 
     if (step !== 1 && !hasDebugAuthTabId) {
       setStatus("请先执行 Step 1 或手动设置 auth tab")
-      log.warn(`${DEBUG_STEP_LABELS[step]} 需要 auth tab，请先执行 Step 1 或点击“使用当前标签页”`)
+      log.warn(
+        `${DEBUG_STEP_LABELS[step]} 需要 auth tab，请先执行 Step 1 或点击“使用当前标签页”`
+      )
       return
     }
 
@@ -696,6 +789,8 @@ function SidePanel() {
 
     try {
       if (step === 1) {
+        setDebugVerificationRequestedAt(0)
+        setDebugCallbackUrl("")
         patchDebugAccountState(account.email, {
           progress: 0,
           status: "running",
@@ -709,7 +804,9 @@ function SidePanel() {
             lastMessage: result.message || "Step 1 执行失败"
           })
           setStatus("Step 1 执行失败")
-          log.warn(`[调试][${account.email}] ${result.message || "Step 1 执行失败"}`)
+          log.warn(
+            `[调试][${account.email}] ${result.message || "Step 1 执行失败"}`
+          )
           return
         }
 
@@ -730,10 +827,9 @@ function SidePanel() {
       }
 
       if (step === 2) {
-        const result = await completeCodexLoginEmailAuthFlow(
+        const result = await submitCodexLoginEmailAndWait(
           parsedDebugAuthTabId,
-          account.email,
-          account.password
+          account.email
         )
         if (!result.ok) {
           patchDebugAccountState(account.email, {
@@ -742,10 +838,15 @@ function SidePanel() {
             lastMessage: result.message || "Step 2 执行失败"
           })
           setStatus("Step 2 执行失败")
-          log.warn(`[调试][${account.email}] ${result.message || "Step 2 执行失败"}`)
+          log.warn(
+            `[调试][${account.email}] ${result.message || "Step 2 执行失败"}`
+          )
           return
         }
 
+        if (result.verificationRequestedAt) {
+          setDebugVerificationRequestedAt(result.verificationRequestedAt)
+        }
         setDebugProgress(2)
         patchDebugAccountState(account.email, {
           progress: 2,
@@ -757,31 +858,131 @@ function SidePanel() {
         return
       }
 
-      const result = await confirmCodexOAuthAndSubmitCallback(
-        parsedDebugAuthTabId,
-        normalizedCpaUrl
-      )
-      if (!result.ok) {
+      if (step === 3) {
+        const result = await submitCodexLoginPasswordAndWait(
+          parsedDebugAuthTabId,
+          account.password
+        )
+        if (!result.ok) {
+          patchDebugAccountState(account.email, {
+            progress: Math.max(debugProgress, 2) as ManagedAccount["progress"],
+            status: "failed",
+            lastMessage: result.message || "Step 3 执行失败"
+          })
+          setStatus("Step 3 执行失败")
+          log.warn(
+            `[调试][${account.email}] ${result.message || "Step 3 执行失败"}`
+          )
+          return
+        }
+
+        if (result.verificationRequestedAt) {
+          setDebugVerificationRequestedAt(result.verificationRequestedAt)
+        }
+        setDebugProgress(3)
         patchDebugAccountState(account.email, {
-          progress: Math.max(debugProgress, 2) as ManagedAccount["progress"],
-          status: "failed",
-          lastMessage: result.message || "Step 3 执行失败"
+          progress: 3,
+          status: "running",
+          lastMessage: result.message
         })
-        setStatus("Step 3 执行失败")
-        log.warn(`[调试][${account.email}] ${result.message || "Step 3 执行失败"}`)
+        setStatus("Step 3 已完成")
+        log.info(`[调试][${account.email}] ${result.message}`)
         return
       }
 
-      setDebugProgress(3)
+      if (step === 4) {
+        const result = await fetchAndSubmitCodexVerificationCode(
+          parsedDebugAuthTabId,
+          account.email,
+          account.password,
+          debugVerificationRequestedAt
+        )
+        if (!result.ok) {
+          patchDebugAccountState(account.email, {
+            progress: Math.max(debugProgress, 3) as ManagedAccount["progress"],
+            status: "failed",
+            lastMessage: result.message || "Step 4 执行失败"
+          })
+          setStatus("Step 4 执行失败")
+          log.warn(
+            `[调试][${account.email}] ${result.message || "Step 4 执行失败"}`
+          )
+          return
+        }
+
+        setDebugProgress(4)
+        patchDebugAccountState(account.email, {
+          progress: 4,
+          status: "running",
+          lastMessage: result.message
+        })
+        setStatus("Step 4 已完成")
+        log.info(`[调试][${account.email}] ${result.message}`)
+        return
+      }
+
+      if (step === 5) {
+        const result = await confirmCodexOAuthConsent(parsedDebugAuthTabId)
+        if (!result.ok || !result.callbackUrl) {
+          patchDebugAccountState(account.email, {
+            progress: Math.max(debugProgress, 4) as ManagedAccount["progress"],
+            status: "failed",
+            lastMessage: result.message || "Step 5 执行失败"
+          })
+          setStatus("Step 5 执行失败")
+          log.warn(
+            `[调试][${account.email}] ${result.message || "Step 5 执行失败"}`
+          )
+          return
+        }
+
+        setDebugCallbackUrl(result.callbackUrl)
+        setDebugProgress(5)
+        patchDebugAccountState(account.email, {
+          progress: 5,
+          status: "running",
+          lastMessage: result.message
+        })
+        setStatus("Step 5 已完成")
+        log.info(`[调试][${account.email}] ${result.message}`)
+        return
+      }
+
+      if (!debugCallbackUrl) {
+        setStatus("请先执行 Step 5 获取 callback URL")
+        log.warn("Step 6 无法执行：缺少 callback URL")
+        return
+      }
+
+      const result = await submitCodexOAuthCallbackToCpa(
+        normalizedCpaUrl,
+        debugCallbackUrl,
+        parsedDebugAuthTabId
+      )
+      if (!result.ok) {
+        patchDebugAccountState(account.email, {
+          progress: Math.max(debugProgress, 5) as ManagedAccount["progress"],
+          status: "failed",
+          lastMessage: result.message || "Step 6 执行失败"
+        })
+        setStatus("Step 6 执行失败")
+        log.warn(
+          `[调试][${account.email}] ${result.message || "Step 6 执行失败"}`
+        )
+        return
+      }
+
+      setDebugProgress(6)
       patchDebugAccountState(account.email, {
-        progress: 3,
+        progress: 6,
         status: "done",
         lastMessage: result.message
       })
-      setStatus("Step 3 已完成")
+      setStatus("Step 6 已完成")
       log.info(`[调试][${account.email}] ${result.message}`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : "调试步骤执行异常"
+      const message =
+        error instanceof Error ? error.message : "调试步骤执行异常"
       patchDebugAccountState(account.email, {
         status: "failed",
         lastMessage: message
@@ -800,8 +1001,10 @@ function SidePanel() {
    * @return 无。
    */
   const handleRunNextDebugStep = () => {
-    const nextStep: DebugStep =
-      debugProgress <= 0 ? 1 : debugProgress === 1 ? 2 : 3
+    const nextStep = Math.min(
+      STEP_COUNT,
+      Math.max(1, debugProgress + 1)
+    ) as DebugStep
 
     void handleRunDebugStep(nextStep)
   }
@@ -833,7 +1036,9 @@ function SidePanel() {
     setIsBatchRunning(true)
     setRunningEmail("")
 
-    let workingAccounts = accounts.map((account) => resetManagedAccountState(account))
+    let workingAccounts = accounts.map((account) =>
+      resetManagedAccountState(account)
+    )
     setAccounts(workingAccounts)
     persistState(normalizedCpaUrl, workingAccounts)
 
@@ -882,7 +1087,7 @@ function SidePanel() {
         currentAccount,
         (progress, message) => {
           const nextStatus: ManagedAccountStatus =
-            progress === 3 ? "done" : "running"
+            progress === STEP_COUNT ? "done" : "running"
           updateCurrentAccount({
             progress,
             status: nextStatus,
@@ -895,7 +1100,7 @@ function SidePanel() {
 
       if (runResult.ok) {
         updateCurrentAccount({
-          progress: 3,
+          progress: STEP_COUNT,
           status: "done",
           lastMessage: runResult.message
         })
@@ -931,9 +1136,15 @@ function SidePanel() {
     log.warn("收到停止请求，等待当前步骤结束")
   }
 
-  const completedCount = accounts.filter((account) => account.status === "done").length
-  const runningCount = accounts.filter((account) => account.status === "running").length
-  const failedCount = accounts.filter((account) => account.status === "failed").length
+  const completedCount = accounts.filter(
+    (account) => account.status === "done"
+  ).length
+  const runningCount = accounts.filter(
+    (account) => account.status === "running"
+  ).length
+  const failedCount = accounts.filter(
+    (account) => account.status === "failed"
+  ).length
 
   return (
     <ConfigProvider
@@ -967,7 +1178,11 @@ function SidePanel() {
                 label="CPA 地址"
                 name="cpaUrl"
                 rules={[{ required: true, message: "请输入 CPA 地址" }]}>
-                <Input placeholder="https://..." allowClear disabled={isBatchRunning} />
+                <Input
+                  placeholder="https://..."
+                  allowClear
+                  disabled={isBatchRunning}
+                />
               </Form.Item>
             </Form>
           </Card>
@@ -994,14 +1209,21 @@ function SidePanel() {
                   { required: true, message: "请输入邮箱" },
                   { type: "email", message: "邮箱格式不正确" }
                 ]}>
-                <Input placeholder="name@example.com" allowClear disabled={isBatchRunning} />
+                <Input
+                  placeholder="name@example.com"
+                  allowClear
+                  disabled={isBatchRunning}
+                />
               </Form.Item>
 
               <Form.Item
                 label="密码"
                 name="password"
                 rules={[{ required: true, message: "请输入密码" }]}>
-                <Input.Password placeholder="请输入密码" disabled={isBatchRunning} />
+                <Input.Password
+                  placeholder="请输入密码"
+                  disabled={isBatchRunning}
+                />
               </Form.Item>
 
               <Space size={8} wrap>
@@ -1049,14 +1271,16 @@ function SidePanel() {
                   return (
                     <div
                       className={`account-row account-row--${account.status} ${
-                        runningEmail === account.email ? "account-row--active" : ""
+                        runningEmail === account.email
+                          ? "account-row--active"
+                          : ""
                       }`}
                       key={account.email}>
                       <div className="account-main">
                         <div className="account-head">
                           <span className="account-email">{account.email}</span>
                           <Space size={6} wrap>
-                            <Tag variant="filled">{`${account.progress}/3`}</Tag>
+                            <Tag variant="filled">{`${account.progress}/${STEP_COUNT}`}</Tag>
                             <Tag variant="filled" color={statusMeta.color}>
                               {statusMeta.label}
                             </Tag>
@@ -1089,7 +1313,9 @@ function SidePanel() {
                           onClick={() => {
                             handleMoveAccount(index, 1)
                           }}
-                          disabled={isBatchRunning || index === accounts.length - 1}>
+                          disabled={
+                            isBatchRunning || index === accounts.length - 1
+                          }>
                           下移
                         </Button>
                         <Button
@@ -1121,7 +1347,9 @@ function SidePanel() {
           <Card
             className="panel-card"
             title="调试控制台"
-            extra={<Tag color="default">{`当前进度 ${debugProgress}/3`}</Tag>}>
+            extra={
+              <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
+            }>
             <div className="debug-panel">
               <div className="debug-row">
                 <div className="debug-field">
@@ -1138,8 +1366,12 @@ function SidePanel() {
                     onChange={(value) => {
                       setDebugEmail(value)
                       setDebugProgress(0)
+                      setDebugVerificationRequestedAt(0)
+                      setDebugCallbackUrl("")
                     }}
-                    disabled={isBatchRunning || isDebugRunning || accounts.length === 0}
+                    disabled={
+                      isBatchRunning || isDebugRunning || accounts.length === 0
+                    }
                   />
                 </div>
 
@@ -1150,7 +1382,9 @@ function SidePanel() {
                     placeholder="tabId"
                     inputMode="numeric"
                     onChange={(event) => {
-                      setDebugAuthTabId(event.target.value.replace(/[^\d]/g, ""))
+                      setDebugAuthTabId(
+                        event.target.value.replace(/[^\d]/g, "")
+                      )
                     }}
                     disabled={isBatchRunning || isDebugRunning}
                   />
@@ -1169,6 +1403,8 @@ function SidePanel() {
                   onClick={() => {
                     setDebugAuthTabId("")
                     setDebugProgress(0)
+                    setDebugVerificationRequestedAt(0)
+                    setDebugCallbackUrl("")
                     setStatus("调试状态已清空")
                   }}
                   disabled={isBatchRunning || isDebugRunning}>
@@ -1183,7 +1419,9 @@ function SidePanel() {
                     void handleRunDebugStep(1)
                   }}
                   loading={isDebugRunning && debugProgress === 0}
-                  disabled={isBatchRunning || isDebugRunning || !selectedDebugAccount}>
+                  disabled={
+                    isBatchRunning || isDebugRunning || !selectedDebugAccount
+                  }>
                   Step 1
                 </Button>
                 <Button
@@ -1211,11 +1449,50 @@ function SidePanel() {
                   Step 3
                 </Button>
                 <Button
+                  onClick={() => {
+                    void handleRunDebugStep(4)
+                  }}
+                  disabled={
+                    isBatchRunning ||
+                    isDebugRunning ||
+                    !selectedDebugAccount ||
+                    !hasDebugAuthTabId
+                  }>
+                  Step 4
+                </Button>
+                <Button
+                  onClick={() => {
+                    void handleRunDebugStep(5)
+                  }}
+                  disabled={
+                    isBatchRunning ||
+                    isDebugRunning ||
+                    !selectedDebugAccount ||
+                    !hasDebugAuthTabId
+                  }>
+                  Step 5
+                </Button>
+                <Button
+                  onClick={() => {
+                    void handleRunDebugStep(6)
+                  }}
+                  disabled={
+                    isBatchRunning ||
+                    isDebugRunning ||
+                    !selectedDebugAccount ||
+                    !hasDebugAuthTabId ||
+                    !debugCallbackUrl
+                  }>
+                  Step 6
+                </Button>
+                <Button
                   type="primary"
                   ghost
                   onClick={handleRunNextDebugStep}
                   loading={isDebugRunning}
-                  disabled={isBatchRunning || isDebugRunning || !selectedDebugAccount}>
+                  disabled={
+                    isBatchRunning || isDebugRunning || !selectedDebugAccount
+                  }>
                   下一步
                 </Button>
               </Space>
