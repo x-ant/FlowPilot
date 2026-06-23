@@ -702,10 +702,13 @@ const submitCodexLoginPassword = async (
 export const fetchAndSubmitCodexVerificationCode = async (
   tabId: number,
   email: string,
-  password: string
+  password: string,
+  verificationRequestedAt = 0
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
   // region ========== 去2925邮箱获取验证码 ==========
-  const mailResult = await fetchMail2925VerificationCode(email, password)
+  const mailResult = await fetchMail2925VerificationCode(email, password, {
+    verificationRequestedAt
+  })
   if (!mailResult.code) {
     return {
       ok: false,
@@ -786,6 +789,7 @@ export const completeCodexLoginEmailAuthFlow = async (
   await waitForTabLoaded(tabId)
 
   // region ========== 邮箱登录，并正确进入下一个地址 ==========
+  let verificationRequestedAt = Date.now()
   const emailResult = await submitCodexLoginEmail(tabId, email)
   if (!emailResult.ok) {
     return emailResult
@@ -818,6 +822,7 @@ export const completeCodexLoginEmailAuthFlow = async (
   // region ========== 有可能还需要输入登录密码 ==========
   let passwordResult: PageActionRunResult | undefined
   if (isCodexPasswordUrl(authStepUrl)) {
+    verificationRequestedAt = Date.now()
     passwordResult = await submitCodexLoginPassword(tabId, password)
     if (!passwordResult.ok) {
       return {
@@ -854,7 +859,8 @@ export const completeCodexLoginEmailAuthFlow = async (
   const codeResult = await fetchAndSubmitCodexVerificationCode(
     tabId,
     email,
-    password
+    password,
+    verificationRequestedAt
   )
   // endregion
 

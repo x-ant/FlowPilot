@@ -13,6 +13,10 @@ export type Mail2925VerificationCodeResult = {
   mailTab?: BrowserTabInfo
 }
 
+export type FetchMail2925VerificationCodeOptions = {
+  verificationRequestedAt?: number
+}
+
 /**
  * 是否是2925邮箱页面
  *
@@ -73,7 +77,8 @@ const navigateMail2925TabToMailbox = async (tabId: number) => {
  */
 export const fetchMail2925VerificationCode = async (
   email: string,
-  password: string
+  password: string,
+  options: FetchMail2925VerificationCodeOptions = {}
 ): Promise<Mail2925VerificationCodeResult> => {
 
   // region ========== 方法域 ==========
@@ -129,7 +134,9 @@ export const fetchMail2925VerificationCode = async (
     args: [
       {
         mailboxUrl: MAIL2925_MAILBOX_URL,
-        timeoutMs: 90000
+        timeoutMs: 90000,
+        targetEmail: email,
+        verificationRequestedAt: Number(options.verificationRequestedAt || 0)
       }
     ]
   })

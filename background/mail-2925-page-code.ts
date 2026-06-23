@@ -1,6 +1,8 @@
 export type PollMail2925VerificationCodePayload = {
   mailboxUrl: string
   timeoutMs?: number
+  targetEmail?: string
+  verificationRequestedAt?: number
 }
 
 export type PollMail2925VerificationCodeResult = {
@@ -25,8 +27,19 @@ export const pollMail2925VerificationCodeInPage = async (
   )
   const timeoutMs = Math.max(30000, Number(payload?.timeoutMs) || 90000)
   const startedAt = Date.now()
-  const filterAfter = startedAt - 10 * 60 * 1000
+  const targetEmail = String(payload?.targetEmail || "")
+    .trim()
+    .toLowerCase()
+  const requestTimestamp = Math.max(
+    0,
+    Number(payload?.verificationRequestedAt || 0)
+  )
+  const staleToleranceMs = 60 * 1000
+  const filterAfter = requestTimestamp
+    ? Math.max(0, requestTimestamp - staleToleranceMs)
+    : startedAt - 10 * 60 * 1000
   const seenCodes = new Set<string>()
+  let lastSkipMessage = ""
   const wait = (timeout: number) => {
     return new Promise<void>((resolve) => {
       setTimeout(resolve, timeout)
@@ -135,33 +148,145 @@ export const pollMail2925VerificationCodeInPage = async (
     const plainMatch = normalized.match(/\b(\d{6})\b/)
     return plainMatch?.[1] || ""
   }
-  const parseMailItemTimestamp = (item: HTMLElement) => {
-    const text = getText(item)
+  const parseTimestampText = (text: string) => {
+    const normalized = normalizeText(text)
     const now = new Date()
-    let match = text.match(/(\d+)\s*分钟前/)
+    const date = new Date(now)
+    let match = normalized.match(/(\d+)\s*分钟前/)
     if (match) {
       return Date.now() - Number(match[1]) * 60 * 1000
     }
 
-    match = text.match(/(\d+)\s*秒前|刚刚/)
-    if (match || /刚刚/.test(text)) {
+    match = normalized.match(/(\d+)\s*秒前|刚刚/)
+    if (match || /刚刚/.test(normalized)) {
       return Date.now()
     }
 
-    match = text.match(/(?:今天\s*)?(\d{1,2}):(\d{2})/)
+    match = normalized.match(
+      /(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/
+    )
     if (match) {
-      now.setHours(Number(match[1]), Number(match[2]), 0, 0)
-      return now.getTime()
+      return new Date(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3]),
+        Number(match[4]),
+        Number(match[5]),
+        Number(match[6] || 0),
+        0
+      ).getTime()
     }
 
-    match = text.match(/(\d{1,2})[-月](\d{1,2})(?:日)?\s*(\d{1,2}):(\d{2})/)
+    match = normalized.match(/(?:今天\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/)
     if (match) {
-      now.setMonth(Number(match[1]) - 1, Number(match[2]))
-      now.setHours(Number(match[3]), Number(match[4]), 0, 0)
-      return now.getTime()
+      date.setHours(Number(match[1]), Number(match[2]), Number(match[3] || 0), 0)
+      return date.getTime()
+    }
+
+    match = normalized.match(
+      /(\d{1,2})[-月](\d{1,2})(?:日)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/
+    )
+    if (match) {
+      date.setMonth(Number(match[1]) - 1, Number(match[2]))
+      date.setHours(Number(match[3]), Number(match[4]), Number(match[5] || 0), 0)
+      return date.getTime()
     }
 
     return 0
+  }
+  const parseMailItemTimestamp = (item: HTMLElement) => {
+    return parseTimestampText(getText(item))
+  }
+  const extractEmails = (text: string) => {
+    const matches =
+      String(text || "").match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []
+    return [...new Set(matches.map((item) => item.toLowerCase()))]
+  }
+  const normalizeTargetEmailHints = (email: string) => {
+    const normalized = String(email || "").trim().toLowerCase()
+    if (!normalized) {
+      return []
+    }
+
+    const hints = [normalized]
+    const atIndex = normalized.indexOf("@")
+    if (atIndex > 0) {
+      hints.push(`${normalized.slice(0, atIndex)}=${normalized.slice(atIndex + 1)}`)
+    }
+
+    return hints
+  }
+  const extractForwardedTargetEmails = (text: string) => {
+    const normalizedText = String(text || "").toLowerCase()
+    const matches =
+      normalizedText.match(
+        /bounce\+[a-z0-9._%+-]*-([a-z0-9._%+-]+)=([a-z0-9.-]+\.[a-z]{2,})@[a-z0-9.-]+\.[a-z]{2,}/gi
+      ) || []
+
+    return matches
+      .map((candidate) => {
+        const match = String(candidate || "").match(
+          /bounce\+[a-z0-9._%+-]*-([a-z0-9._%+-]+)=([a-z0-9.-]+\.[a-z]{2,})@/i
+        )
+        return match ? `${match[1].toLowerCase()}@${match[2].toLowerCase()}` : ""
+      })
+      .filter(Boolean)
+  }
+  const isTargetRecipient = (text: string) => {
+    if (!targetEmail) {
+      return true
+    }
+
+    const normalizedText = String(text || "").toLowerCase()
+    const hints = normalizeTargetEmailHints(targetEmail)
+    if (hints.some((hint) => normalizedText.includes(hint))) {
+      return true
+    }
+
+    const emails = [...extractEmails(normalizedText), ...extractForwardedTargetEmails(normalizedText)]
+    return emails.some((email) => email === targetEmail)
+  }
+  const parseMailDetailTimestamp = (text: string) => {
+    const normalized = normalizeText(text)
+    const labeledTimeMatch = normalized.match(
+      /(?:时间|时\s*间|date|time|sent|received)[：:\s]*(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:日)?\s*\d{1,2}:\d{2}(?::\d{2})?)/
+    )
+    if (labeledTimeMatch?.[1]) {
+      return parseTimestampText(labeledTimeMatch[1])
+    }
+
+    return parseTimestampText(normalized)
+  }
+  const validateMailDetail = (text: string, listTimestamp: number) => {
+    const detailTimestamp = parseMailDetailTimestamp(text) || listTimestamp
+
+    if (targetEmail && !isTargetRecipient(text)) {
+      return {
+        ok: false,
+        message: `跳过非当前账号邮件（目标 ${targetEmail}）`
+      }
+    }
+
+    if (filterAfter && (!detailTimestamp || detailTimestamp < filterAfter)) {
+      const requestedLabel = requestTimestamp
+        ? new Date(requestTimestamp).toLocaleString("zh-CN", { hour12: false })
+        : "本次轮询开始时间"
+      const mailLabel = detailTimestamp
+        ? new Date(detailTimestamp).toLocaleString("zh-CN", { hour12: false })
+        : "未知时间"
+
+      return {
+        ok: false,
+        message: `跳过旧验证码邮件（邮件时间 ${mailLabel}，请求时间 ${requestedLabel}）`
+      }
+    }
+
+    return {
+      ok: true,
+      message: detailTimestamp
+        ? `邮件时间 ${new Date(detailTimestamp).toLocaleString("zh-CN", { hour12: false })}`
+        : "邮件时间未知"
+    }
   }
   const returnToInbox = async () => {
     if (location.hash === "#/mailList") {
@@ -213,24 +338,20 @@ export const pollMail2925VerificationCodeInPage = async (
         continue
       }
 
-      const previewCode = extractVerificationCode(previewText)
-      if (previewCode && !seenCodes.has(previewCode)) {
-        seenCodes.add(previewCode)
-        return {
-          ok: true,
-          code: previewCode,
-          message: "已从 2925 邮件列表读取验证码"
-        }
+      const bodyText = await openMailAndRead(item)
+      const validation = validateMailDetail(bodyText, timestamp)
+      if (!validation.ok) {
+        lastSkipMessage = validation.message
+        continue
       }
 
-      const bodyText = await openMailAndRead(item)
       const bodyCode = extractVerificationCode(bodyText)
       if (bodyCode && !seenCodes.has(bodyCode)) {
         seenCodes.add(bodyCode)
         return {
           ok: true,
           code: bodyCode,
-          message: "已打开 2925 邮件并读取验证码"
+          message: `已打开 2925 邮件并读取验证码（${validation.message}）`
         }
       }
     }
@@ -241,6 +362,8 @@ export const pollMail2925VerificationCodeInPage = async (
   return {
     ok: false,
     code: "",
-    message: "未在 2925 邮箱中找到验证码"
+    message: lastSkipMessage
+      ? `未在 2925 邮箱中找到新的匹配验证码；${lastSkipMessage}`
+      : "未在 2925 邮箱中找到验证码"
   }
 }
