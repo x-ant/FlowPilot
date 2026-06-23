@@ -106,13 +106,78 @@ const STATUS_META: Record<
   }
 }
 
-const DEBUG_STEP_LABELS: Record<DebugStep, string> = {
-  1: "Step 1 打开授权页",
-  2: "Step 2 填写邮箱",
-  3: "Step 3 填写密码",
-  4: "Step 4 回填验证码",
-  5: "Step 5 确认授权",
-  6: "Step 6 回填 CPA"
+const FLOW_STEPS: Record<
+  DebugStep,
+  {
+    name: string
+    label: string
+  }
+> = {
+  1: {
+    name: "打开授权",
+    label: "1 打开授权"
+  },
+  2: {
+    name: "填写邮箱",
+    label: "2 填写邮箱"
+  },
+  3: {
+    name: "填写密码",
+    label: "3 填写密码"
+  },
+  4: {
+    name: "提交验证码",
+    label: "4 提交验证码"
+  },
+  5: {
+    name: "确认授权",
+    label: "5 确认授权"
+  },
+  6: {
+    name: "回填 CPA",
+    label: "6 回填 CPA"
+  }
+}
+
+const getFlowStepName = (step: DebugStep) => {
+  return FLOW_STEPS[step].name
+}
+
+const getFlowStepLabel = (step: DebugStep) => {
+  return FLOW_STEPS[step].label
+}
+
+/**
+ * 生成账号列表里的轻量进度文案。
+ *
+ * 账号列表只展示走到哪一步，详细执行结果放到日志里看。
+ *
+ * @param account 账号执行状态。
+ * @return 适合列表展示的进度文案。
+ */
+const getAccountProgressSummary = (account: ManagedAccount) => {
+  if (account.status === "done") {
+    return "已完成全部步骤"
+  }
+
+  const nextStep = Math.min(
+    STEP_COUNT,
+    Math.max(1, account.progress + 1)
+  ) as DebugStep
+  const stepLabel =
+    account.progress >= STEP_COUNT
+      ? getFlowStepLabel(STEP_COUNT)
+      : getFlowStepLabel(nextStep)
+
+  if (account.status === "failed") {
+    return `停在：${stepLabel}`
+  }
+
+  if (account.status === "running") {
+    return `当前：${stepLabel}`
+  }
+
+  return `待执行：${getFlowStepLabel(1)}`
 }
 
 /**
@@ -775,17 +840,17 @@ function SidePanel() {
     }
 
     if (step !== 1 && !hasDebugAuthTabId) {
-      setStatus("请先执行 Step 1 或手动设置 auth tab")
+      setStatus(`请先执行「${getFlowStepLabel(1)}」或手动设置 auth tab`)
       log.warn(
-        `${DEBUG_STEP_LABELS[step]} 需要 auth tab，请先执行 Step 1 或点击“使用当前标签页”`
+        `「${getFlowStepLabel(step)}」需要 auth tab，请先执行「${getFlowStepLabel(1)}」或点击“使用当前标签页”`
       )
       return
     }
 
     setIsDebugRunning(true)
     setRunningEmail(account.email)
-    setStatus(`正在调试 ${account.email}：${DEBUG_STEP_LABELS[step]}`)
-    log.info(`[调试][${account.email}] 开始执行 ${DEBUG_STEP_LABELS[step]}`)
+    setStatus(`正在调试 ${account.email}：${getFlowStepLabel(step)}`)
+    log.info(`[调试][${account.email}] 开始执行 ${getFlowStepLabel(step)}`)
 
     try {
       if (step === 1) {
@@ -794,18 +859,18 @@ function SidePanel() {
         patchDebugAccountState(account.email, {
           progress: 0,
           status: "running",
-          lastMessage: DEBUG_STEP_LABELS[step]
+          lastMessage: getFlowStepLabel(step)
         })
 
         const result = await openCodexAuthLink(normalizedCpaUrl)
         if (!result.ok || !result.targetTab?.id) {
           patchDebugAccountState(account.email, {
             status: "failed",
-            lastMessage: result.message || "Step 1 执行失败"
+            lastMessage: result.message || `${getFlowStepName(1)}失败`
           })
-          setStatus("Step 1 执行失败")
+          setStatus(`${getFlowStepName(1)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || "Step 1 执行失败"}`
+            `[调试][${account.email}] ${result.message || `${getFlowStepName(1)}失败`}`
           )
           return
         }
@@ -817,7 +882,7 @@ function SidePanel() {
           status: "running",
           lastMessage: result.message
         })
-        setStatus("Step 1 已完成")
+        setStatus(`${getFlowStepName(1)}已完成`)
         log.info(
           `[调试][${account.email}] ${result.message}；auth tab=${result.targetTab.id}；url=${
             result.targetTab.url || "unknown"
@@ -835,11 +900,11 @@ function SidePanel() {
           patchDebugAccountState(account.email, {
             progress: Math.max(debugProgress, 1) as ManagedAccount["progress"],
             status: "failed",
-            lastMessage: result.message || "Step 2 执行失败"
+            lastMessage: result.message || `${getFlowStepName(2)}失败`
           })
-          setStatus("Step 2 执行失败")
+          setStatus(`${getFlowStepName(2)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || "Step 2 执行失败"}`
+            `[调试][${account.email}] ${result.message || `${getFlowStepName(2)}失败`}`
           )
           return
         }
@@ -853,7 +918,7 @@ function SidePanel() {
           status: "running",
           lastMessage: result.message
         })
-        setStatus("Step 2 已完成")
+        setStatus(`${getFlowStepName(2)}已完成`)
         log.info(`[调试][${account.email}] ${result.message}`)
         return
       }
@@ -867,11 +932,11 @@ function SidePanel() {
           patchDebugAccountState(account.email, {
             progress: Math.max(debugProgress, 2) as ManagedAccount["progress"],
             status: "failed",
-            lastMessage: result.message || "Step 3 执行失败"
+            lastMessage: result.message || `${getFlowStepName(3)}失败`
           })
-          setStatus("Step 3 执行失败")
+          setStatus(`${getFlowStepName(3)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || "Step 3 执行失败"}`
+            `[调试][${account.email}] ${result.message || `${getFlowStepName(3)}失败`}`
           )
           return
         }
@@ -885,7 +950,7 @@ function SidePanel() {
           status: "running",
           lastMessage: result.message
         })
-        setStatus("Step 3 已完成")
+        setStatus(`${getFlowStepName(3)}已完成`)
         log.info(`[调试][${account.email}] ${result.message}`)
         return
       }
@@ -901,11 +966,11 @@ function SidePanel() {
           patchDebugAccountState(account.email, {
             progress: Math.max(debugProgress, 3) as ManagedAccount["progress"],
             status: "failed",
-            lastMessage: result.message || "Step 4 执行失败"
+            lastMessage: result.message || `${getFlowStepName(4)}失败`
           })
-          setStatus("Step 4 执行失败")
+          setStatus(`${getFlowStepName(4)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || "Step 4 执行失败"}`
+            `[调试][${account.email}] ${result.message || `${getFlowStepName(4)}失败`}`
           )
           return
         }
@@ -916,7 +981,7 @@ function SidePanel() {
           status: "running",
           lastMessage: result.message
         })
-        setStatus("Step 4 已完成")
+        setStatus(`${getFlowStepName(4)}已完成`)
         log.info(`[调试][${account.email}] ${result.message}`)
         return
       }
@@ -927,11 +992,11 @@ function SidePanel() {
           patchDebugAccountState(account.email, {
             progress: Math.max(debugProgress, 4) as ManagedAccount["progress"],
             status: "failed",
-            lastMessage: result.message || "Step 5 执行失败"
+            lastMessage: result.message || `${getFlowStepName(5)}失败`
           })
-          setStatus("Step 5 执行失败")
+          setStatus(`${getFlowStepName(5)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || "Step 5 执行失败"}`
+            `[调试][${account.email}] ${result.message || `${getFlowStepName(5)}失败`}`
           )
           return
         }
@@ -943,14 +1008,14 @@ function SidePanel() {
           status: "running",
           lastMessage: result.message
         })
-        setStatus("Step 5 已完成")
+        setStatus(`${getFlowStepName(5)}已完成`)
         log.info(`[调试][${account.email}] ${result.message}`)
         return
       }
 
       if (!debugCallbackUrl) {
-        setStatus("请先执行 Step 5 获取 callback URL")
-        log.warn("Step 6 无法执行：缺少 callback URL")
+        setStatus(`请先执行「${getFlowStepLabel(5)}」获取 callback URL`)
+        log.warn(`「${getFlowStepLabel(6)}」无法执行：缺少 callback URL`)
         return
       }
 
@@ -963,11 +1028,11 @@ function SidePanel() {
         patchDebugAccountState(account.email, {
           progress: Math.max(debugProgress, 5) as ManagedAccount["progress"],
           status: "failed",
-          lastMessage: result.message || "Step 6 执行失败"
+          lastMessage: result.message || `${getFlowStepName(6)}失败`
         })
-        setStatus("Step 6 执行失败")
+        setStatus(`${getFlowStepName(6)}失败`)
         log.warn(
-          `[调试][${account.email}] ${result.message || "Step 6 执行失败"}`
+          `[调试][${account.email}] ${result.message || `${getFlowStepName(6)}失败`}`
         )
         return
       }
@@ -978,7 +1043,7 @@ function SidePanel() {
         status: "done",
         lastMessage: result.message
       })
-      setStatus("Step 6 已完成")
+      setStatus(`${getFlowStepName(6)}已完成`)
       log.info(`[调试][${account.email}] ${result.message}`)
     } catch (error) {
       const message =
@@ -1287,7 +1352,7 @@ function SidePanel() {
                           </Space>
                         </div>
                         <div className="account-meta">
-                          {account.lastMessage || "等待执行"}
+                          {getAccountProgressSummary(account)}
                         </div>
                       </div>
 
@@ -1393,6 +1458,15 @@ function SidePanel() {
 
               <Space size={8} wrap>
                 <Button
+                  type="primary"
+                  onClick={handleRunNextDebugStep}
+                  loading={isDebugRunning}
+                  disabled={
+                    isBatchRunning || isDebugRunning || !selectedDebugAccount
+                  }>
+                  下一步
+                </Button>
+                <Button
                   onClick={() => {
                     void handleUseActiveTabAsDebugAuthTab()
                   }}
@@ -1422,7 +1496,7 @@ function SidePanel() {
                   disabled={
                     isBatchRunning || isDebugRunning || !selectedDebugAccount
                   }>
-                  Step 1
+                  {getFlowStepLabel(1)}
                 </Button>
                 <Button
                   onClick={() => {
@@ -1434,7 +1508,7 @@ function SidePanel() {
                     !selectedDebugAccount ||
                     !hasDebugAuthTabId
                   }>
-                  Step 2
+                  {getFlowStepLabel(2)}
                 </Button>
                 <Button
                   onClick={() => {
@@ -1446,7 +1520,7 @@ function SidePanel() {
                     !selectedDebugAccount ||
                     !hasDebugAuthTabId
                   }>
-                  Step 3
+                  {getFlowStepLabel(3)}
                 </Button>
                 <Button
                   onClick={() => {
@@ -1458,7 +1532,7 @@ function SidePanel() {
                     !selectedDebugAccount ||
                     !hasDebugAuthTabId
                   }>
-                  Step 4
+                  {getFlowStepLabel(4)}
                 </Button>
                 <Button
                   onClick={() => {
@@ -1470,7 +1544,7 @@ function SidePanel() {
                     !selectedDebugAccount ||
                     !hasDebugAuthTabId
                   }>
-                  Step 5
+                  {getFlowStepLabel(5)}
                 </Button>
                 <Button
                   onClick={() => {
@@ -1483,17 +1557,7 @@ function SidePanel() {
                     !hasDebugAuthTabId ||
                     !debugCallbackUrl
                   }>
-                  Step 6
-                </Button>
-                <Button
-                  type="primary"
-                  ghost
-                  onClick={handleRunNextDebugStep}
-                  loading={isDebugRunning}
-                  disabled={
-                    isBatchRunning || isDebugRunning || !selectedDebugAccount
-                  }>
-                  下一步
+                  {getFlowStepLabel(6)}
                 </Button>
               </Space>
             </div>
