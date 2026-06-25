@@ -315,19 +315,41 @@ export const pollMail2925VerificationCodeInPage = async (
         : "邮件时间未知"
     }
   }
+  const waitForInboxReady = async (timeout = 5000) => {
+    const waitStartedAt = Date.now()
+    while (Date.now() - waitStartedAt < timeout) {
+      if (
+        (location.hash === "#/mailList" ||
+          location.hash.startsWith("#/mailList?")) &&
+        findMailItems().length > 0
+      ) {
+        return true
+      }
+
+      await wait(300)
+    }
+
+    return false
+  }
   const returnToInbox = async () => {
     if (
       location.hash === "#/mailList" ||
       location.hash.startsWith("#/mailList?")
     ) {
-      return
+      return false
     }
 
     location.href = mailboxUrl
-    await wait(1200)
+    // 回到列表本身会触发 2925 前端重新加载列表，后续不需要立刻再点刷新。
+    lastRefreshAt = Date.now()
+    await waitForInboxReady()
+    return true
   }
   const refreshInbox = async () => {
-    await returnToInbox()
+    const navigatedToInbox = await returnToInbox()
+    if (navigatedToInbox) {
+      return
+    }
 
     if (Date.now() - lastRefreshAt < refreshIntervalMs) {
       return
@@ -341,7 +363,8 @@ export const pollMail2925VerificationCodeInPage = async (
     if (refreshButton) {
       lastRefreshAt = Date.now()
       refreshButton.click()
-      await wait(2000)
+      await wait(1000)
+      await waitForInboxReady()
     }
   }
   const openMailAndRead = async (item: HTMLElement) => {
@@ -357,8 +380,12 @@ export const pollMail2925VerificationCodeInPage = async (
   while (Date.now() - startedAt < timeoutMs) {
     await refreshInbox()
 
-    const items = findMailItems().slice(0, 8)
-    for (const item of items) {
+    for (let itemIndex = 0; itemIndex < 8; itemIndex += 1) {
+      const item = findMailItems().slice(0, 8)[itemIndex]
+      if (!item) {
+        break
+      }
+
       const timestamp = parseMailItemTimestamp(item)
       if (timestamp > 0 && timestamp < filterAfter) {
         continue

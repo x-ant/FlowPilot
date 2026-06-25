@@ -18,6 +18,7 @@ export type Mail2925VerificationCodeResult = {
 export type FetchMail2925VerificationCodeOptions = {
   verificationRequestedAt?: number
   excludeCodes?: string[]
+  activateTabs?: boolean
 }
 
 /**
@@ -61,16 +62,29 @@ const isMail2925MailboxUrl = (rawUrl?: string) => {
  * @param tabId 2925 标签页 id。
  * @return 无。
  */
-const navigateMail2925TabToMailbox = async (tabId: number) => {
+const navigateMail2925TabToMailbox = async (
+  tabId: number,
+  options: { activateTabs?: boolean } = {}
+) => {
   const tab = await chrome.tabs.get(tabId)
+  const shouldActivate = options.activateTabs ?? true
 
   if (isMail2925MailboxUrl(tab.url)) {
-    await chrome.tabs.update(tabId, { active: true })
+    if (shouldActivate) {
+      await chrome.tabs.update(tabId, { active: true })
+    }
   } else {
-    await chrome.tabs.update(tabId, {
-      active: true,
-      url: MAIL2925_MAILBOX_URL
-    })
+    await chrome.tabs.update(
+      tabId,
+      shouldActivate
+        ? {
+            active: true,
+            url: MAIL2925_MAILBOX_URL
+          }
+        : {
+            url: MAIL2925_MAILBOX_URL
+          }
+    )
   }
 }
 
@@ -110,6 +124,7 @@ export const fetchMail2925VerificationCode = async (
   const tabId = await findOrOpenMatchedTab({
     targetUrl: MAIL2925_MAILBOX_URL,
     errorMessage: "无法打开 2925 邮箱页面",
+    activate: options.activateTabs,
     matcher: (tab) => {
       return Boolean(getMail2925Url(tab.url))
     }
@@ -133,8 +148,10 @@ export const fetchMail2925VerificationCode = async (
   }
   // endregion
 
-  // region ========== 登录就调到收件箱页面 ==========
-  await navigateMail2925TabToMailbox(tabId)
+  // region ========== 登录就转到收件箱页面 ==========
+  await navigateMail2925TabToMailbox(tabId, {
+    activateTabs: options.activateTabs
+  })
   await waitForTabLoaded(tabId)
   const [codeInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },

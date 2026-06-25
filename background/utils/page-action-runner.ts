@@ -1,10 +1,10 @@
-import { performPageActionInPage, type PageActionConfig } from "../page-script";
-import type { BrowserTabInfo } from "../types";
-import { findOrOpenTab, waitForTabLoaded } from "./tab-utils";
-
+import { performPageActionInPage, type PageActionConfig } from "../page-script"
+import type { BrowserTabInfo } from "../types"
+import { findOrOpenTab, waitForTabLoaded } from "./tab-utils"
 
 type RunPageActionInTabOptions = {
   reloadBeforeAction?: boolean
+  activateTabs?: boolean
 }
 
 export type PageActionRunResult = {
@@ -25,7 +25,6 @@ export const runPageActionInTab = async (
   tabId: number,
   action: PageActionConfig
 ): Promise<PageActionRunResult> => {
-
   // 等待页面加载完成
   await waitForTabLoaded(tabId)
 
@@ -73,7 +72,9 @@ export const runPageActionInTargetUrl = async (
   action: PageActionConfig,
   tabOptions: RunPageActionInTabOptions = {}
 ): Promise<PageActionRunResult> => {
-  const tabId = await findOrOpenTab(targetUrl)
+  const tabId = await findOrOpenTab(targetUrl, {
+    activate: tabOptions.activateTabs
+  })
 
   if (tabOptions.reloadBeforeAction) {
     await chrome.tabs.reload(tabId)

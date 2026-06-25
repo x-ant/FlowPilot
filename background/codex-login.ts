@@ -21,6 +21,10 @@ import {
 } from "./utils/page-action-runner"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 
+type CodexLoginExecutionOptions = {
+  activateTabs?: boolean
+}
+
 const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
 
 const OPENAI_LOGIN_BUTTON_TEXTS = [
@@ -194,7 +198,14 @@ const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
  * @param tabId 要激活的 Chrome 标签页 id。
  * @return 激活后的标签页信息。
  */
-const activateBrowserTab = async (tabId: number) => {
+const activateBrowserTab = async (
+  tabId: number,
+  options: CodexLoginExecutionOptions = {}
+) => {
+  if (options.activateTabs === false) {
+    return chrome.tabs.get(tabId)
+  }
+
   const tab = await chrome.tabs.update(tabId, { active: true })
 
   if (typeof tab.windowId === "number" && chrome.windows?.update) {
@@ -671,9 +682,11 @@ const waitForCodexOAuthConsentReadyInTab = async (tabId: number) => {
  * @return 返回给侧边栏展示的执行结果。
  */
 export const openCodexAuthLink = async (
-  targetUrl: string
+  targetUrl: string,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<OpenCodexAuthLinkResponse> => {
   const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
+  const shouldActivateTabs = options.activateTabs ?? true
   // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
   const cleanupResult = await clearCodexSessionCookies()
   const storageResult = await clearCodexSessionStorage()
@@ -693,7 +706,8 @@ export const openCodexAuthLink = async (
         "刷新管理页后仍未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
     },
     {
-      reloadBeforeAction: true
+      reloadBeforeAction: true,
+      activateTabs: shouldActivateTabs
     }
   )
   // 处理失败
@@ -726,7 +740,7 @@ export const openCodexAuthLink = async (
   }
   // 不使用页面里的“打开链接”按钮，避免脚本点击触发 window.open 被浏览器拦截。
   const authTab = await chrome.tabs.create({
-    active: true,
+    active: shouldActivateTabs,
     url: extractResult.authUrl
   })
   if (authTab.id) {
@@ -973,7 +987,8 @@ export const fetchAndSubmitCodexVerificationCode = async (
   tabId: number,
   email: string,
   password: string,
-  verificationRequestedAt = 0
+  verificationRequestedAt = 0,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
   const currentState = await detectCodexAuthTabState(tabId)
   if (
@@ -1010,7 +1025,8 @@ export const fetchAndSubmitCodexVerificationCode = async (
     // region ========== 去2925邮箱获取验证码 ==========
     const mailResult = await fetchMail2925VerificationCode(email, password, {
       verificationRequestedAt,
-      excludeCodes: excludedCodes
+      excludeCodes: excludedCodes,
+      activateTabs: options.activateTabs
     })
     latestMailTab = mailResult.mailTab
 
@@ -1030,7 +1046,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
     // endregion
 
     // 回到登录页面输入验证码。是否真在验证码页交给输入框和提交后的页面状态判断。
-    await activateBrowserTab(tabId)
+    await activateBrowserTab(tabId, options)
     const result = await runAuthPageAction(tabId, {
       fields: [
         {
@@ -1123,7 +1139,8 @@ export const fetchAndSubmitCodexVerificationCode = async (
 export const completeCodexLoginEmailAuthFlow = async (
   tabId: number,
   email: string,
-  password: string
+  password: string,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<CompleteCodexLoginEmailAuthFlowResponse> => {
   // 先等页面已经好了再操作
   await waitForTabLoaded(tabId)
@@ -1224,7 +1241,8 @@ export const completeCodexLoginEmailAuthFlow = async (
     tabId,
     email,
     password,
-    verificationRequestedAt
+    verificationRequestedAt,
+    options
   )
   // endregion
 
@@ -1242,8 +1260,11 @@ export const completeCodexLoginEmailAuthFlow = async (
  * @param tabId 当前 OpenAI 授权页标签页 id。
  * @return 捕获到的 localhost 回调地址；超时则返回空。
  */
-const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
-  await activateBrowserTab(tabId)
+const confirmOAuthConsentAndCaptureCallback = async (
+  tabId: number,
+  options: CodexLoginExecutionOptions = {}
+) => {
+  await activateBrowserTab(tabId, options)
   await waitForTabLoaded(tabId)
 
   // region ========== 先判断一下是否已经是回调页面 ==========
@@ -1358,9 +1379,10 @@ const confirmOAuthConsentAndCaptureCallback = async (tabId: number) => {
  * @return 捕获到的 localhost 回调地址。
  */
 export const confirmCodexOAuthConsent = async (
-  tabId: number
+  tabId: number,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<ConfirmCodexOAuthConsentResponse> => {
-  return confirmOAuthConsentAndCaptureCallback(tabId)
+  return confirmOAuthConsentAndCaptureCallback(tabId, options)
 }
 
 /**
@@ -1374,24 +1396,31 @@ export const confirmCodexOAuthConsent = async (
 export const submitCodexOAuthCallbackToCpa = async (
   targetUrl: string,
   callbackUrl: string,
-  callbackTabId?: number
+  callbackTabId?: number,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<SubmitCodexOAuthCallbackResponse> => {
   const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
-  const submitResult = await runPageActionInTargetUrl(cpaOAuthUrl, {
-    fields: [
-      {
-        selectors: CODEX_CALLBACK_INPUT_SELECTORS,
-        value: callbackUrl
-      }
-    ],
-    button: {
-      texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
-      triggerMode: "requestSubmit"
+  const submitResult = await runPageActionInTargetUrl(
+    cpaOAuthUrl,
+    {
+      fields: [
+        {
+          selectors: CODEX_CALLBACK_INPUT_SELECTORS,
+          value: callbackUrl
+        }
+      ],
+      button: {
+        texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
+      },
+      timeoutMs: 15000,
+      successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
+      failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
     },
-    timeoutMs: 15000,
-    successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
-    failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
-  })
+    {
+      activateTabs: options.activateTabs
+    }
+  )
   if (!submitResult.ok) {
     return {
       ok: false,

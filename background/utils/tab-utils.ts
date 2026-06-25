@@ -13,6 +13,7 @@ type FindOrOpenMatchedTabOptions = {
   targetUrl: string
   matcher: (tab: chrome.tabs.Tab) => boolean
   errorMessage: string
+  activate?: boolean
 }
 
 /**
@@ -39,7 +40,10 @@ const waitForDelay = (timeoutMs: number) => {
  * @param timeoutMs 最大等待时间，单位毫秒，默认15s
  * @return 等待完成后 resolve 的 Promise。
  */
-export const waitForTabLoaded = (tabId: number, urlMatcher?: (url: string) => boolean, timeoutMs = 15000
+export const waitForTabLoaded = (
+  tabId: number,
+  urlMatcher?: (url: string) => boolean,
+  timeoutMs = 15000
 ) => {
   return new Promise<void>((resolve) => {
     let done = false
@@ -232,7 +236,8 @@ export const waitForTabMatchingUrl = async (
     }
 
     const inspectCurrentTab = () => {
-      void chrome.tabs.get(tabId)
+      void chrome.tabs
+        .get(tabId)
         .then((tab) => {
           inspectUrl(tab.url)
         })
@@ -303,21 +308,34 @@ export const findOrOpenMatchedTab = async (
   options: FindOrOpenMatchedTabOptions
 ) => {
   const tabs = await chrome.tabs.query({})
-  const matchedTab = tabs.find(options.matcher)
+  const shouldActivate = options.activate ?? true
+  const matchedTabs = tabs.filter(options.matcher)
+  const matchedTab = shouldActivate
+    ? matchedTabs[0]
+    : matchedTabs.find((tab) => {
+        return !tab.active
+      })
 
   // region ========== 已经存在 ==========
   if (matchedTab?.id) {
-    await chrome.tabs.update(matchedTab.id, {
-      active: true,
-      url: options.targetUrl
-    })
+    await chrome.tabs.update(
+      matchedTab.id,
+      shouldActivate
+        ? {
+            active: true,
+            url: options.targetUrl
+          }
+        : {
+            url: options.targetUrl
+          }
+    )
     return matchedTab.id
   }
   // endregion
 
   // region ========== 不存在就创建 ==========
   const tab = await chrome.tabs.create({
-    active: true,
+    active: shouldActivate,
     url: options.targetUrl
   })
   if (!tab.id) {
@@ -336,11 +354,15 @@ export const findOrOpenMatchedTab = async (
  * @param loginUrl 侧边栏里填写的 Codex 登录地址
  * @return 可以注入脚本的 Chrome 标签页 id。
  */
-export const findOrOpenTab = async (loginUrl: string) => {
+export const findOrOpenTab = async (
+  loginUrl: string,
+  options: { activate?: boolean } = {}
+) => {
   const targetBaseUrl = normalizeUrlForTabMatch(loginUrl)
   return findOrOpenMatchedTab({
     targetUrl: loginUrl,
     errorMessage: "无法打开 Codex 管理页面",
+    activate: options.activate,
     matcher: (tab) => {
       if (!tab.url) {
         return false

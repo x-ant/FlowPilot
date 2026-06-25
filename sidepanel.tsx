@@ -9,6 +9,7 @@ import {
   Input,
   Select,
   Space,
+  Switch,
   Tag,
   theme,
   Typography
@@ -60,6 +61,7 @@ type ManagedAccount = {
 type StoredState = {
   cpaUrl: string
   accounts: ManagedAccount[]
+  backgroundExecution: boolean
 }
 
 type AccountRunResult = {
@@ -77,11 +79,16 @@ type FlowRunContext = {
   callbackUrl?: string
 }
 
+type ExecutionSettings = {
+  backgroundExecution: boolean
+}
+
 const STEP_COUNT = 6
 
 const CPA_URL_STORAGE_KEY = "codex-login:cpa-url"
 const LEGACY_LOGIN_URL_STORAGE_KEY = "codex-login:login-url"
 const ACCOUNTS_STORAGE_KEY = "codex-login:accounts"
+const BACKGROUND_EXECUTION_STORAGE_KEY = "codex-login:background-execution"
 
 const EMPTY_ACCOUNT_FORM: AccountFormValues = {
   email: "",
@@ -395,13 +402,19 @@ const loadStoredState = async (): Promise<StoredState> => {
   if (!storage) {
     return {
       cpaUrl: "",
-      accounts: []
+      accounts: [],
+      backgroundExecution: false
     }
   }
 
   return new Promise<StoredState>((resolve) => {
     storage.get(
-      [CPA_URL_STORAGE_KEY, LEGACY_LOGIN_URL_STORAGE_KEY, ACCOUNTS_STORAGE_KEY],
+      [
+        CPA_URL_STORAGE_KEY,
+        LEGACY_LOGIN_URL_STORAGE_KEY,
+        ACCOUNTS_STORAGE_KEY,
+        BACKGROUND_EXECUTION_STORAGE_KEY
+      ],
       (result) => {
         const cpaUrl = String(
           result?.[CPA_URL_STORAGE_KEY] ||
@@ -417,7 +430,9 @@ const loadStoredState = async (): Promise<StoredState> => {
 
         resolve({
           cpaUrl,
-          accounts
+          accounts,
+          backgroundExecution:
+            result?.[BACKGROUND_EXECUTION_STORAGE_KEY] === true
         })
       }
     )
@@ -434,7 +449,8 @@ const saveStoredState = (state: StoredState) => {
   const storage = getStorage()
   storage?.set({
     [CPA_URL_STORAGE_KEY]: state.cpaUrl,
-    [ACCOUNTS_STORAGE_KEY]: state.accounts
+    [ACCOUNTS_STORAGE_KEY]: state.accounts,
+    [BACKGROUND_EXECUTION_STORAGE_KEY]: state.backgroundExecution
   })
 }
 
@@ -449,9 +465,13 @@ const saveStoredState = (state: StoredState) => {
 const runManagedAccountFlow = async (
   cpaUrl: string,
   account: ManagedAccount,
-  onStage: (progress: DebugStep, message: string) => void
+  onStage: (progress: DebugStep, message: string) => void,
+  settings: ExecutionSettings
 ): Promise<AccountRunResult> => {
-  const step1Result = await openCodexAuthLink(cpaUrl)
+  const browserOptions = {
+    activateTabs: !settings.backgroundExecution
+  }
+  const step1Result = await openCodexAuthLink(cpaUrl, browserOptions)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
     return {
       ok: false,
@@ -495,7 +515,8 @@ const runManagedAccountFlow = async (
     authTabId,
     account.email,
     account.password,
-    verificationRequestedAt
+    verificationRequestedAt,
+    browserOptions
   )
   if (!step4Result.ok) {
     return {
@@ -506,7 +527,7 @@ const runManagedAccountFlow = async (
 
   onStage(4, step4Result.message)
 
-  const step5Result = await confirmCodexOAuthConsent(authTabId)
+  const step5Result = await confirmCodexOAuthConsent(authTabId, browserOptions)
   if (!step5Result.ok || !step5Result.callbackUrl) {
     return {
       ok: false,
@@ -519,7 +540,8 @@ const runManagedAccountFlow = async (
   const step6Result = await submitCodexOAuthCallbackToCpa(
     cpaUrl,
     step5Result.callbackUrl,
-    authTabId
+    authTabId,
+    browserOptions
   )
   if (!step6Result.ok) {
     return {
@@ -555,6 +577,7 @@ function SidePanel() {
   const [accountForm] = Form.useForm<AccountFormValues>()
   const [cpaUrl, setCpaUrl] = useState("")
   const [accounts, setAccounts] = useState<ManagedAccount[]>([])
+  const [backgroundExecution, setBackgroundExecution] = useState(false)
   const [editingEmail, setEditingEmail] = useState("")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
@@ -591,7 +614,16 @@ function SidePanel() {
   const persistState = (nextCpaUrl: string, nextAccounts: ManagedAccount[]) => {
     saveStoredState({
       cpaUrl: nextCpaUrl,
-      accounts: nextAccounts
+      accounts: nextAccounts,
+      backgroundExecution
+    })
+  }
+
+  const persistExecutionSettings = (nextBackgroundExecution: boolean) => {
+    saveStoredState({
+      cpaUrl,
+      accounts,
+      backgroundExecution: nextBackgroundExecution
     })
   }
 
@@ -635,11 +667,12 @@ function SidePanel() {
       const state = await loadStoredState()
       setCpaUrl(state.cpaUrl)
       setAccounts(state.accounts)
+      setBackgroundExecution(state.backgroundExecution)
       loginForm.setFieldsValue({ cpaUrl: state.cpaUrl })
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
 
       if (state.accounts.length > 0 && storage) {
-        persistState(state.cpaUrl, state.accounts)
+        saveStoredState(state)
       }
     })()
   }, [loginForm, storage])
@@ -684,6 +717,19 @@ function SidePanel() {
     const nextCpaUrl = String(values.cpaUrl || "")
     setCpaUrl(nextCpaUrl)
     persistState(nextCpaUrl, accounts)
+  }
+
+  /**
+   * 切换批量流程是否在后台标签页执行。
+   *
+   * @param checked 是否后台执行。
+   * @return 无。
+   */
+  const handleBackgroundExecutionChange = (checked: boolean) => {
+    setBackgroundExecution(checked)
+    persistExecutionSettings(checked)
+    setStatus(checked ? "已开启后台执行" : "已关闭后台执行")
+    log.info(checked ? "已开启后台执行" : "已关闭后台执行")
   }
 
   /**
@@ -1354,6 +1400,9 @@ function SidePanel() {
               `账号 ${currentAccount.email} 已完成「${getFlowStepLabel(progress)}」`
             )
             log.info(`[${currentAccount.email}] ${message}`)
+          },
+          {
+            backgroundExecution
           }
         )
       } catch (error) {
@@ -1449,6 +1498,19 @@ function SidePanel() {
                   allowClear
                   disabled={isBatchRunning}
                 />
+              </Form.Item>
+              <Form.Item label="执行设置">
+                <Space align="center" size={8} wrap>
+                  <Switch
+                    checked={backgroundExecution}
+                    disabled={isBatchRunning}
+                    onChange={handleBackgroundExecutionChange}
+                  />
+                  <span>后台执行</span>
+                  <Typography.Text type="secondary">
+                    批量执行时不主动激活标签页
+                  </Typography.Text>
+                </Space>
               </Form.Item>
             </Form>
           </Card>
