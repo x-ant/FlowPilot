@@ -77,12 +77,16 @@ body {
 .account-row {
   container-type: inline-size;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
   padding: 12px;
   border: 1px solid #e6eaf0;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.account-select {
+  padding-top: 2px;
 }
 
 .account-row--active {
@@ -168,7 +172,7 @@ body {
   font-size: 12px;
 }
 
-@container (max-width: 520px) {
+@container (max-width: 420px) {
   .account-icon-button.ant-btn {
     width: 28px;
     min-width: 28px;
@@ -184,7 +188,7 @@ body {
   }
 }
 
-@container (max-width: 360px) {
+@container (max-width: 300px) {
   .account-inline-actions {
     display: none;
   }

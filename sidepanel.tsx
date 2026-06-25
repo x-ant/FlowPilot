@@ -1,6 +1,7 @@
 import {
   Button,
   Card,
+  Checkbox,
   ConfigProvider,
   Dropdown,
   Empty,
@@ -559,6 +560,7 @@ function SidePanel() {
   const [logs, setLogs] = useState<LogItem[]>([])
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [runningEmail, setRunningEmail] = useState("")
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([])
   const [debugEmail, setDebugEmail] = useState("")
   const [debugAuthTabId, setDebugAuthTabId] = useState("")
   const [debugProgress, setDebugProgress] = useState<0 | DebugStep>(0)
@@ -610,6 +612,14 @@ function SidePanel() {
   const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
   const hasDebugAuthTabId =
     Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
+  const selectedEmailSet = useMemo(() => {
+    return new Set(selectedEmails.map((email) => normalizeEmail(email)))
+  }, [selectedEmails])
+  const selectedCount = selectedEmails.length
+  const isAllAccountsSelected =
+    accounts.length > 0 && selectedCount === accounts.length
+  const isSomeAccountsSelected =
+    selectedCount > 0 && selectedCount < accounts.length
 
   useEffect(() => {
     const element = logListRef.current
@@ -649,6 +659,17 @@ function SidePanel() {
       setDebugEmail(accounts[0].email)
     }
   }, [accounts, debugEmail])
+
+  useEffect(() => {
+    const existingEmails = new Set(
+      accounts.map((account) => normalizeEmail(account.email))
+    )
+    setSelectedEmails((currentSelectedEmails) => {
+      return currentSelectedEmails.filter((email) => {
+        return existingEmails.has(normalizeEmail(email))
+      })
+    })
+  }, [accounts])
 
   /**
    * 保存 CPA 地址的实时变更。
@@ -768,6 +789,77 @@ function SidePanel() {
     }
 
     syncAccounts(nextAccounts)
+  }
+
+  /**
+   * 切换单个账号的选中状态。
+   *
+   * @param email 账号邮箱。
+   * @param checked 是否选中。
+   * @return 无。
+   */
+  const handleToggleAccountSelected = (email: string, checked: boolean) => {
+    const normalizedEmail = normalizeEmail(email)
+    setSelectedEmails((currentSelectedEmails) => {
+      const currentSet = new Set(
+        currentSelectedEmails.map((item) => normalizeEmail(item))
+      )
+
+      if (checked) {
+        currentSet.add(normalizedEmail)
+      } else {
+        currentSet.delete(normalizedEmail)
+      }
+
+      return accounts
+        .map((account) => normalizeEmail(account.email))
+        .filter((accountEmail) => currentSet.has(accountEmail))
+    })
+  }
+
+  /**
+   * 切换全部账号的选中状态。
+   *
+   * @param checked 是否全选。
+   * @return 无。
+   */
+  const handleToggleAllAccountsSelected = (checked: boolean) => {
+    setSelectedEmails(
+      checked ? accounts.map((account) => normalizeEmail(account.email)) : []
+    )
+  }
+
+  /**
+   * 移动当前唯一选中的账号。
+   *
+   * @param direction 移动方向，-1 表示上移，1 表示下移。
+   * @return 无。
+   */
+  const handleMoveSelectedAccount = (direction: -1 | 1) => {
+    if (selectedEmails.length !== 1) {
+      setStatus("上移或下移时只能选择一条账号")
+      log.warn("上移或下移时只能选择一条账号")
+      return
+    }
+
+    const selectedEmail = normalizeEmail(selectedEmails[0])
+    const selectedIndex = accounts.findIndex((account) => {
+      return normalizeEmail(account.email) === selectedEmail
+    })
+
+    if (selectedIndex < 0) {
+      setStatus("未找到选中的账号")
+      log.warn("未找到选中的账号，无法移动")
+      return
+    }
+
+    const nextIndex = selectedIndex + direction
+    if (nextIndex < 0 || nextIndex >= accounts.length) {
+      setStatus(direction < 0 ? "选中账号已经在最上方" : "选中账号已经在最下方")
+      return
+    }
+
+    handleMoveAccount(selectedIndex, direction)
   }
 
   /**
@@ -1091,7 +1183,7 @@ function SidePanel() {
   /**
    * 顺序执行账号。
    *
-   * pending 模式会跳过已完成账号；all 模式会重置并执行全部账号。
+   * pending 模式会跳过选中账号里已完成的；all 模式会重置并执行全部选中账号。
    *
    * @param mode 批量执行模式。
    * @return 无。
@@ -1114,15 +1206,28 @@ function SidePanel() {
       return
     }
 
-    const runnableCount =
-      mode === "all"
-        ? accounts.length
-        : accounts.filter((account) => {
-            return !isManagedAccountDone(account)
-          }).length
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要执行的账号")
+      log.info("请先选择要执行的账号")
+      return
+    }
+
+    const isTargetAccount = (account: ManagedAccount) => {
+      if (mode === "all") {
+        return selectedEmailSet.has(normalizeEmail(account.email))
+      }
+
+      return (
+        selectedEmailSet.has(normalizeEmail(account.email)) &&
+        !isManagedAccountDone(account)
+      )
+    }
+    const runnableCount = accounts.filter(isTargetAccount).length
     if (runnableCount === 0) {
-      setStatus("没有需要执行的账号")
-      log.info("所有账号都已完成，已跳过批量执行")
+      const emptyMessage =
+        mode === "pending" ? "选中的账号都已完成" : "没有需要执行的账号"
+      setStatus(emptyMessage)
+      log.info(emptyMessage)
       return
     }
 
@@ -1131,14 +1236,14 @@ function SidePanel() {
     setRunningEmail("")
 
     let workingAccounts = accounts.map((account) => {
-      return mode === "pending" && isManagedAccountDone(account)
+      return !isTargetAccount(account)
         ? account
         : resetManagedAccountState(account)
     })
     setAccounts(workingAccounts)
     persistState(normalizedCpaUrl, workingAccounts)
 
-    const batchLabel = mode === "all" ? "全部账号" : "未完成账号"
+    const batchLabel = mode === "all" ? "选中账号" : "选中的未完成账号"
     setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
     log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
 
@@ -1151,8 +1256,10 @@ function SidePanel() {
       }
 
       const currentAccount = workingAccounts[index]
-      if (mode === "pending" && isManagedAccountDone(currentAccount)) {
-        log.info(`跳过已完成账号 ${currentAccount.email}`)
+      if (!isTargetAccount(currentAccount)) {
+        if (isManagedAccountDone(currentAccount)) {
+          log.info(`跳过已完成账号 ${currentAccount.email}`)
+        }
         continue
       }
 
@@ -1236,7 +1343,7 @@ function SidePanel() {
     setRunningEmail("")
     setIsBatchRunning(false)
     if (!batchCancelRef.current) {
-      setStatus(`${mode === "all" ? "全部账号" : "未完成账号"}执行已结束`)
+      setStatus(`${batchLabel}执行已结束`)
     }
   }
 
@@ -1254,9 +1361,6 @@ function SidePanel() {
   const completedCount = accounts.filter((account) =>
     isManagedAccountDone(account)
   ).length
-  const runnableCount = accounts.filter((account) => {
-    return !isManagedAccountDone(account)
-  }).length
   const runningCount = accounts.filter(
     (account) => account.status === "running"
   ).length
@@ -1365,24 +1469,52 @@ function SidePanel() {
             title="账号列表"
             extra={
               <Space size={8} wrap>
+                <Checkbox
+                  checked={isAllAccountsSelected}
+                  indeterminate={isSomeAccountsSelected}
+                  disabled={isBatchRunning || accounts.length === 0}
+                  onChange={(event) => {
+                    handleToggleAllAccountsSelected(event.target.checked)
+                  }}>
+                  全选
+                </Checkbox>
                 <Button
+                  onClick={() => {
+                    handleMoveSelectedAccount(-1)
+                  }}
+                  disabled={isBatchRunning || selectedCount === 0}>
+                  上移
+                </Button>
+                <Button
+                  onClick={() => {
+                    handleMoveSelectedAccount(1)
+                  }}
+                  disabled={isBatchRunning || selectedCount === 0}>
+                  下移
+                </Button>
+                <Dropdown.Button
                   type="primary"
+                  trigger={["click"]}
+                  loading={isBatchRunning}
+                  disabled={
+                    !cpaUrl.trim() || selectedCount === 0 || isBatchRunning
+                  }
+                  menu={{
+                    items: [
+                      {
+                        key: "all",
+                        label: "全部执行"
+                      }
+                    ],
+                    onClick: () => {
+                      void handleStartBatch("all")
+                    }
+                  }}
                   onClick={() => {
                     void handleStartBatch("pending")
-                  }}
-                  loading={isBatchRunning}
-                  disabled={!cpaUrl.trim() || runnableCount === 0}>
+                  }}>
                   执行未完成
-                </Button>
-                <Button
-                  onClick={() => {
-                    void handleStartBatch("all")
-                  }}
-                  disabled={
-                    !cpaUrl.trim() || accounts.length === 0 || isBatchRunning
-                  }>
-                  全部执行
-                </Button>
+                </Dropdown.Button>
                 <Button
                   danger
                   onClick={handleStopBatch}
@@ -1403,6 +1535,20 @@ function SidePanel() {
                           : ""
                       }`}
                       key={account.email}>
+                      <div className="account-select">
+                        <Checkbox
+                          checked={selectedEmailSet.has(
+                            normalizeEmail(account.email)
+                          )}
+                          disabled={isBatchRunning}
+                          onChange={(event) => {
+                            handleToggleAccountSelected(
+                              account.email,
+                              event.target.checked
+                            )
+                          }}
+                        />
+                      </div>
                       <div className="account-main">
                         <div className="account-head">
                           <span className="account-email">{account.email}</span>
@@ -1433,32 +1579,6 @@ function SidePanel() {
                             <span className="account-action-text">编辑</span>
                           </Button>
                           <Button
-                            aria-label="上移"
-                            className="account-icon-button"
-                            size="small"
-                            title="上移"
-                            onClick={() => {
-                              handleMoveAccount(index, -1)
-                            }}
-                            disabled={isBatchRunning || index === 0}>
-                            <span className="account-action-icon">↑</span>
-                            <span className="account-action-text">上移</span>
-                          </Button>
-                          <Button
-                            aria-label="下移"
-                            className="account-icon-button"
-                            size="small"
-                            title="下移"
-                            onClick={() => {
-                              handleMoveAccount(index, 1)
-                            }}
-                            disabled={
-                              isBatchRunning || index === accounts.length - 1
-                            }>
-                            <span className="account-action-icon">↓</span>
-                            <span className="account-action-text">下移</span>
-                          </Button>
-                          <Button
                             aria-label="删除"
                             className="account-icon-button"
                             size="small"
@@ -1482,18 +1602,6 @@ function SidePanel() {
                                 disabled: isBatchRunning
                               },
                               {
-                                key: "move-up",
-                                label: "上移",
-                                disabled: isBatchRunning || index === 0
-                              },
-                              {
-                                key: "move-down",
-                                label: "下移",
-                                disabled:
-                                  isBatchRunning ||
-                                  index === accounts.length - 1
-                              },
-                              {
                                 type: "divider"
                               },
                               {
@@ -1506,16 +1614,6 @@ function SidePanel() {
                             onClick: ({ key }) => {
                               if (key === "edit") {
                                 handleEditAccount(account)
-                                return
-                              }
-
-                              if (key === "move-up") {
-                                handleMoveAccount(index, -1)
-                                return
-                              }
-
-                              if (key === "move-down") {
-                                handleMoveAccount(index, 1)
                                 return
                               }
 
