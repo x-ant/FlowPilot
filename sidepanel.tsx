@@ -1257,9 +1257,6 @@ function SidePanel() {
 
       const currentAccount = workingAccounts[index]
       if (!isTargetAccount(currentAccount)) {
-        if (isManagedAccountDone(currentAccount)) {
-          log.info(`跳过已完成账号 ${currentAccount.email}`)
-        }
         continue
       }
 
@@ -1464,12 +1461,10 @@ function SidePanel() {
             </Form>
           </Card>
 
-          <Card
-            className="panel-card"
-            title="账号列表"
-            extra={
+          <Card className="panel-card" title="账号列表">
+            {accounts.length > 0 ? (
               <div className="account-toolbar">
-                <Space size={8} wrap>
+                <div className="account-toolbar-main">
                   <Checkbox
                     checked={isAllAccountsSelected}
                     indeterminate={isSomeAccountsSelected}
@@ -1479,52 +1474,59 @@ function SidePanel() {
                     }}>
                     全选
                   </Checkbox>
-                  <Button
-                    onClick={() => {
-                      handleMoveSelectedAccount(-1)
-                    }}
-                    disabled={isBatchRunning || selectedCount === 0}>
-                    上移
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      handleMoveSelectedAccount(1)
-                    }}
-                    disabled={isBatchRunning || selectedCount === 0}>
-                    下移
-                  </Button>
-                  <Dropdown.Button
-                    type="primary"
+                  <Tag color="default">{`已选 ${selectedCount}`}</Tag>
+                </div>
+                <div className="account-toolbar-secondary">
+                  {isBatchRunning ? (
+                    <Button danger onClick={handleStopBatch}>
+                      停止当前流程
+                    </Button>
+                  ) : (
+                    <Dropdown.Button
+                      type="primary"
+                      trigger={["click"]}
+                      disabled={!cpaUrl.trim() || selectedCount === 0}
+                      menu={{
+                        items: [
+                          {
+                            key: "all",
+                            label: "全部执行"
+                          }
+                        ],
+                        onClick: () => {
+                          void handleStartBatch("all")
+                        }
+                      }}
+                      onClick={() => {
+                        void handleStartBatch("pending")
+                      }}>
+                      执行未完成
+                    </Dropdown.Button>
+                  )}
+                  <Dropdown
                     trigger={["click"]}
-                    loading={isBatchRunning}
-                    disabled={
-                      !cpaUrl.trim() || selectedCount === 0 || isBatchRunning
-                    }
                     menu={{
                       items: [
                         {
-                          key: "all",
-                          label: "全部执行"
+                          key: "move-up",
+                          label: "上移"
+                        },
+                        {
+                          key: "move-down",
+                          label: "下移"
                         }
                       ],
-                      onClick: () => {
-                        void handleStartBatch("all")
+                      onClick: ({ key }) => {
+                        handleMoveSelectedAccount(key === "move-up" ? -1 : 1)
                       }
-                    }}
-                    onClick={() => {
-                      void handleStartBatch("pending")
                     }}>
-                    执行未完成
-                  </Dropdown.Button>
-                </Space>
-                <Button
-                  danger
-                  onClick={handleStopBatch}
-                  disabled={!isBatchRunning}>
-                  停止当前流程
-                </Button>
+                    <Button disabled={isBatchRunning || selectedCount === 0}>
+                      更多
+                    </Button>
+                  </Dropdown>
+                </div>
               </div>
-            }>
+            ) : null}
             {accounts.length > 0 ? (
               <div className="account-list">
                 {accounts.map((account, index) => {
@@ -1553,8 +1555,10 @@ function SidePanel() {
                       </div>
                       <div className="account-main">
                         <div className="account-head">
-                          <span className="account-email">{account.email}</span>
-                          <Space size={6} wrap>
+                          <span className="account-email" title={account.email}>
+                            {account.email}
+                          </span>
+                          <Space className="account-status-tags" size={6}>
                             <Tag variant="filled">{`${account.progress}/${STEP_COUNT}`}</Tag>
                             <Tag variant="filled" color={statusMeta.color}>
                               {statusMeta.label}
