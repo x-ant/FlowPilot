@@ -690,8 +690,9 @@ function SidePanel() {
 
     syncAccounts(nextAccounts)
     setEditingEmail("")
-    accountForm.resetFields()
-    accountForm.setFieldsValue(EMPTY_ACCOUNT_FORM)
+    // 添加账户后不清理，先注释掉后续看有没有必要
+    // accountForm.resetFields()
+    // accountForm.setFieldsValue(EMPTY_ACCOUNT_FORM)
     setStatus(`已保存账号 ${email}`)
     log.info(`已保存账号 ${email}`)
   }
