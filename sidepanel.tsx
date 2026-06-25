@@ -1468,60 +1468,62 @@ function SidePanel() {
             className="panel-card"
             title="账号列表"
             extra={
-              <Space size={8} wrap>
-                <Checkbox
-                  checked={isAllAccountsSelected}
-                  indeterminate={isSomeAccountsSelected}
-                  disabled={isBatchRunning || accounts.length === 0}
-                  onChange={(event) => {
-                    handleToggleAllAccountsSelected(event.target.checked)
-                  }}>
-                  全选
-                </Checkbox>
-                <Button
-                  onClick={() => {
-                    handleMoveSelectedAccount(-1)
-                  }}
-                  disabled={isBatchRunning || selectedCount === 0}>
-                  上移
-                </Button>
-                <Button
-                  onClick={() => {
-                    handleMoveSelectedAccount(1)
-                  }}
-                  disabled={isBatchRunning || selectedCount === 0}>
-                  下移
-                </Button>
-                <Dropdown.Button
-                  type="primary"
-                  trigger={["click"]}
-                  loading={isBatchRunning}
-                  disabled={
-                    !cpaUrl.trim() || selectedCount === 0 || isBatchRunning
-                  }
-                  menu={{
-                    items: [
-                      {
-                        key: "all",
-                        label: "全部执行"
-                      }
-                    ],
-                    onClick: () => {
-                      void handleStartBatch("all")
+              <div className="account-toolbar">
+                <Space size={8} wrap>
+                  <Checkbox
+                    checked={isAllAccountsSelected}
+                    indeterminate={isSomeAccountsSelected}
+                    disabled={isBatchRunning || accounts.length === 0}
+                    onChange={(event) => {
+                      handleToggleAllAccountsSelected(event.target.checked)
+                    }}>
+                    全选
+                  </Checkbox>
+                  <Button
+                    onClick={() => {
+                      handleMoveSelectedAccount(-1)
+                    }}
+                    disabled={isBatchRunning || selectedCount === 0}>
+                    上移
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      handleMoveSelectedAccount(1)
+                    }}
+                    disabled={isBatchRunning || selectedCount === 0}>
+                    下移
+                  </Button>
+                  <Dropdown.Button
+                    type="primary"
+                    trigger={["click"]}
+                    loading={isBatchRunning}
+                    disabled={
+                      !cpaUrl.trim() || selectedCount === 0 || isBatchRunning
                     }
-                  }}
-                  onClick={() => {
-                    void handleStartBatch("pending")
-                  }}>
-                  执行未完成
-                </Dropdown.Button>
+                    menu={{
+                      items: [
+                        {
+                          key: "all",
+                          label: "全部执行"
+                        }
+                      ],
+                      onClick: () => {
+                        void handleStartBatch("all")
+                      }
+                    }}
+                    onClick={() => {
+                      void handleStartBatch("pending")
+                    }}>
+                    执行未完成
+                  </Dropdown.Button>
+                </Space>
                 <Button
                   danger
                   onClick={handleStopBatch}
                   disabled={!isBatchRunning}>
-                  停止
+                  停止当前流程
                 </Button>
-              </Space>
+              </div>
             }>
             {accounts.length > 0 ? (
               <div className="account-list">

@@ -66,6 +66,14 @@ body {
   padding: 14px;
 }
 
+.account-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+}
+
 .account-list {
   max-height: 360px;
   overflow: auto;
