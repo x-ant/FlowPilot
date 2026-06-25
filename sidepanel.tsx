@@ -863,6 +863,53 @@ function SidePanel() {
   }
 
   /**
+   * 将当前选中的账号手动标记为已完成。
+   *
+   * @return 无。
+   */
+  const handleMarkSelectedAccountsDone = () => {
+    if (isBatchRunning) {
+      return
+    }
+
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要标记的账号")
+      log.warn("请先选择要标记的账号")
+      return
+    }
+
+    const selectedSet = new Set(
+      selectedEmails.map((email) => normalizeEmail(email))
+    )
+    let changedCount = 0
+    const now = Date.now()
+    const nextAccounts: ManagedAccount[] = accounts.map((account) => {
+      if (!selectedSet.has(normalizeEmail(account.email))) {
+        return account
+      }
+
+      changedCount += 1
+      return {
+        ...account,
+        progress: STEP_COUNT as ManagedAccountProgress,
+        status: "done" as const,
+        lastMessage: "已手动标为已完成",
+        updatedAt: now
+      }
+    })
+
+    if (changedCount === 0) {
+      setStatus("未找到选中的账号")
+      log.warn("未找到选中的账号，无法标记")
+      return
+    }
+
+    syncAccounts(nextAccounts)
+    setStatus(`已标记 ${changedCount} 个账号为已完成`)
+    log.info(`已标记 ${changedCount} 个账号为已完成`)
+  }
+
+  /**
    * 清空当前会话的日志列表。
    *
    * @return 无。
@@ -1514,9 +1561,21 @@ function SidePanel() {
                         {
                           key: "move-down",
                           label: "下移"
+                        },
+                        {
+                          type: "divider"
+                        },
+                        {
+                          key: "mark-done",
+                          label: "标为已完成"
                         }
                       ],
                       onClick: ({ key }) => {
+                        if (key === "mark-done") {
+                          handleMarkSelectedAccountsDone()
+                          return
+                        }
+
                         handleMoveSelectedAccount(key === "move-up" ? -1 : 1)
                       }
                     }}>
