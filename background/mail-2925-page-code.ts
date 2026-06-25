@@ -27,7 +27,9 @@ export const pollMail2925VerificationCodeInPage = async (
     payload?.mailboxUrl || "https://2925.com/#/mailList"
   )
   const timeoutMs = Math.max(30000, Number(payload?.timeoutMs) || 90000)
+  const refreshIntervalMs = 12000
   const startedAt = Date.now()
+  let lastRefreshAt = 0
   const targetEmail = String(payload?.targetEmail || "")
     .trim()
     .toLowerCase()
@@ -314,7 +316,10 @@ export const pollMail2925VerificationCodeInPage = async (
     }
   }
   const returnToInbox = async () => {
-    if (location.hash === "#/mailList") {
+    if (
+      location.hash === "#/mailList" ||
+      location.hash.startsWith("#/mailList?")
+    ) {
       return
     }
 
@@ -324,14 +329,19 @@ export const pollMail2925VerificationCodeInPage = async (
   const refreshInbox = async () => {
     await returnToInbox()
 
+    if (Date.now() - lastRefreshAt < refreshIntervalMs) {
+      return
+    }
+
     const refreshButton = findAction(
       ["[class*='refresh' i]", "[title*='刷新']", "[aria-label*='刷新']"],
       /刷新|refresh/i
     )
 
     if (refreshButton) {
+      lastRefreshAt = Date.now()
       refreshButton.click()
-      await wait(1000)
+      await wait(2000)
     }
   }
   const openMailAndRead = async (item: HTMLElement) => {
@@ -386,7 +396,7 @@ export const pollMail2925VerificationCodeInPage = async (
       }
     }
 
-    await wait(3000)
+    await wait(5000)
   }
 
   return {

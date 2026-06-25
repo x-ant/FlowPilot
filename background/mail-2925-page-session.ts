@@ -39,7 +39,10 @@ export const ensureMail2925SessionInPage = async (
       return "other"
     }
 
-    if (location.hash === "#/mailList") {
+    if (
+      location.hash === "#/mailList" ||
+      location.hash.startsWith("#/mailList?")
+    ) {
       return "mailbox"
     }
 
@@ -156,7 +159,7 @@ export const ensureMail2925SessionInPage = async (
           htmlElement.getAttribute("aria-label"),
           htmlElement.getAttribute("title"),
           htmlElement.closest("label")?.textContent,
-          htmlElement.parentElement?.textContent,
+          htmlElement.parentElement?.textContent
         ]
           .filter(Boolean)
           .join(" ")

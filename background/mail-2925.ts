@@ -1,8 +1,10 @@
-import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code";
-import { ensureMail2925SessionInPage, type EnsureMail2925SessionPayload } from "./mail-2925-page-session";
-import type { BrowserTabInfo } from "./types";
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils";
-
+import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
+import {
+  ensureMail2925SessionInPage,
+  type EnsureMail2925SessionPayload
+} from "./mail-2925-page-session"
+import type { BrowserTabInfo } from "./types"
+import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]
@@ -42,7 +44,12 @@ const getMail2925Url = (rawUrl?: string) => {
  * @param rawUrl
  */
 const isMail2925MailboxUrl = (rawUrl?: string) => {
-  return getMail2925Url(rawUrl)?.hash === "#/mailList"
+  const url = getMail2925Url(rawUrl)
+  if (!url) {
+    return false
+  }
+
+  return url.hash === "#/mailList" || url.hash.startsWith("#/mailList?")
 }
 
 /**
