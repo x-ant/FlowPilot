@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   confirmCodexOAuthConsent,
+  createCodexLoginRunner,
   fetchAndSubmitCodexVerificationCode,
   openCodexAuthLink,
   submitCodexLoginEmailAndWait,
@@ -77,11 +78,6 @@ type FlowRunContext = {
   authTabId?: number
   verificationRequestedAt?: number
   callbackUrl?: string
-}
-
-type ExecutionSettings = {
-  backgroundExecution: boolean
-  abortSignal?: AbortSignal
 }
 
 const STEP_COUNT = 6
@@ -425,20 +421,17 @@ const saveStoredState = (state: StoredState) => {
  *
  * @param cpaUrl CPA 地址。
  * @param account 当前账号。
+ * @param runner 包含上下文的执行器
  * @param onStage 完成每一步后的回调。
  * @return 流程结果。
  */
 const runManagedAccountFlow = async (
   cpaUrl: string,
   account: ManagedAccount,
-  onStage: (progress: DebugStep, message: string) => void,
-  settings: ExecutionSettings
+  runner: ReturnType<typeof createCodexLoginRunner>,
+  onStage: (progress: DebugStep, message: string) => void
 ): Promise<AccountRunResult> => {
-  const browserOptions = {
-    activateTabs: !settings.backgroundExecution,
-    abortSignal: settings.abortSignal
-  }
-  const step1Result = await openCodexAuthLink(cpaUrl, browserOptions)
+  const step1Result = await runner.openCodexAuthLink(cpaUrl)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
     return {
       ok: false,
@@ -449,10 +442,9 @@ const runManagedAccountFlow = async (
   onStage(1, step1Result.message)
 
   const authTabId = step1Result.targetTab.id
-  const step2Result = await submitCodexLoginEmailAndWait(
+  const step2Result = await runner.submitCodexLoginEmailAndWait(
     authTabId,
-    account.email,
-    browserOptions
+    account.email
   )
   if (!step2Result.ok) {
     return {
@@ -464,10 +456,9 @@ const runManagedAccountFlow = async (
   onStage(2, step2Result.message)
 
   let verificationRequestedAt = step2Result.verificationRequestedAt || 0
-  const step3Result = await submitCodexLoginPasswordAndWait(
+  const step3Result = await runner.submitCodexLoginPasswordAndWait(
     authTabId,
-    account.password,
-    browserOptions
+    account.password
   )
   if (!step3Result.ok) {
     return {
@@ -480,12 +471,11 @@ const runManagedAccountFlow = async (
 
   onStage(3, step3Result.message)
 
-  const step4Result = await fetchAndSubmitCodexVerificationCode(
+  const step4Result = await runner.fetchAndSubmitCodexVerificationCode(
     authTabId,
     account.email,
     account.password,
-    verificationRequestedAt,
-    browserOptions
+    verificationRequestedAt
   )
   if (!step4Result.ok) {
     return {
@@ -496,7 +486,7 @@ const runManagedAccountFlow = async (
 
   onStage(4, step4Result.message)
 
-  const step5Result = await confirmCodexOAuthConsent(authTabId, browserOptions)
+  const step5Result = await runner.confirmCodexOAuthConsent(authTabId)
   if (!step5Result.ok || !step5Result.callbackUrl) {
     return {
       ok: false,
@@ -506,11 +496,10 @@ const runManagedAccountFlow = async (
 
   onStage(5, step5Result.message)
 
-  const step6Result = await submitCodexOAuthCallbackToCpa(
+  const step6Result = await runner.submitCodexOAuthCallbackToCpa(
     cpaUrl,
     step5Result.callbackUrl,
-    authTabId,
-    browserOptions
+    authTabId
   )
   if (!step6Result.ok) {
     return {
@@ -1270,6 +1259,10 @@ function SidePanel() {
     batchCancelRef.current = false
     const batchAbortController = new AbortController()
     batchAbortControllerRef.current = batchAbortController
+    const codexLoginRunner = createCodexLoginRunner({
+      activateTabs: !backgroundExecution,
+      abortSignal: batchAbortController.signal
+    })
     setIsBatchRunning(true)
     setRunningEmail("")
 
@@ -1333,6 +1326,7 @@ function SidePanel() {
         runResult = await runManagedAccountFlow(
           normalizedCpaUrl,
           currentAccount,
+          codexLoginRunner,
           (progress, message) => {
             const nextStatus: ManagedAccountStatus =
               progress === STEP_COUNT ? "done" : "running"
@@ -1345,10 +1339,6 @@ function SidePanel() {
               `账号 ${currentAccount.email} 已完成「${getFlowStepLabel(progress)}」`
             )
             log.info(`[${currentAccount.email}] ${message}`)
-          },
-          {
-            backgroundExecution,
-            abortSignal: batchAbortController.signal
           }
         )
       } catch (error) {

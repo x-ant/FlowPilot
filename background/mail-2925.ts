@@ -4,11 +4,8 @@ import {
   type EnsureMail2925SessionPayload
 } from "./mail-2925-page-session"
 import type { BrowserTabInfo } from "./types"
-import {
-  raceWithAbort,
-  throwIfAborted,
-  type AbortableOptions
-} from "./utils/abort"
+import { raceWithAbort, throwIfAborted } from "./utils/abort"
+import { DEFAULT_RUN_CONTEXT, type RunContext } from "./utils/run-context"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
@@ -20,17 +17,11 @@ export type Mail2925VerificationCodeResult = {
   mailTab?: BrowserTabInfo
 }
 
-export type FetchMail2925VerificationCodeOptions = AbortableOptions & {
+export type FetchMail2925VerificationCodeOptions = {
   verificationRequestedAt?: number
   excludeCodes?: string[]
-  activateTabs?: boolean
 }
 
-/**
- * 是否是2925邮箱页面
- *
- * @param rawUrl
- */
 const getMail2925Url = (rawUrl?: string) => {
   try {
     const url = new URL(String(rawUrl || ""))
@@ -44,11 +35,6 @@ const getMail2925Url = (rawUrl?: string) => {
   }
 }
 
-/**
- * 是否是收件箱界面
- *
- * @param rawUrl
- */
 const isMail2925MailboxUrl = (rawUrl?: string) => {
   const url = getMail2925Url(rawUrl)
   if (!url) {
@@ -58,30 +44,24 @@ const isMail2925MailboxUrl = (rawUrl?: string) => {
   return url.hash === "#/mailList" || url.hash.startsWith("#/mailList?")
 }
 
-/**
- * 把指定 2925 标签页切到默认收件箱。
- *
- * 2925 的不同分类也会使用 mailList 路由，例如已删除是
- * #/mailList?type=已删除，所以这里必须精确跳到 #/mailList。
- *
- * @param tabId 2925 标签页 id。
- * @return 无。
- */
-const navigateMail2925TabToMailbox = async (
-  tabId: number,
-  options: { activateTabs?: boolean } = {}
+export const createMail2925Runner = (
+  context: RunContext = DEFAULT_RUN_CONTEXT
 ) => {
-  const tab = await chrome.tabs.get(tabId)
-  const shouldActivate = options.activateTabs ?? true
+  const getAbortSignal = () => context.abortSignal
 
-  if (isMail2925MailboxUrl(tab.url)) {
-    if (shouldActivate) {
-      await chrome.tabs.update(tabId, { active: true })
+  const navigateMail2925TabToMailbox = async (tabId: number) => {
+    const tab = await chrome.tabs.get(tabId)
+
+    if (isMail2925MailboxUrl(tab.url)) {
+      if (context.activateTabs) {
+        await chrome.tabs.update(tabId, { active: true })
+      }
+      return
     }
-  } else {
+
     await chrome.tabs.update(
       tabId,
-      shouldActivate
+      context.activateTabs
         ? {
             active: true,
             url: MAIL2925_MAILBOX_URL
@@ -91,102 +71,92 @@ const navigateMail2925TabToMailbox = async (
           }
     )
   }
-}
 
-/**
- * 读取 2925 邮箱验证码。
- *
- * 第一版只做单账号本地学习场景：打开/复用 2925 页，确认登录态，然后轮询收件箱。
- *
- * @param email 2925 邮箱地址。
- * @param password 2925 邮箱密码。
- * @param options 取验证码的条件
- * @return 读取结果。
- */
-export const fetchMail2925VerificationCode = async (
-  email: string,
-  password: string,
-  options: FetchMail2925VerificationCodeOptions = {}
-): Promise<Mail2925VerificationCodeResult> => {
-  throwIfAborted(options.abortSignal)
-  // region ========== 方法域 ==========
-  const createResult = async (
-    code: string,
-    message: string
+  const fetchMail2925VerificationCode = async (
+    email: string,
+    password: string,
+    options: FetchMail2925VerificationCodeOptions = {}
   ): Promise<Mail2925VerificationCodeResult> => {
-    const mailTab = await chrome.tabs.get(tabId)
-    return {
-      code,
-      message,
-      mailTab: {
-        id: tabId,
-        url: mailTab.url
+    throwIfAborted(getAbortSignal())
+
+    const tabId = await findOrOpenMatchedTab({
+      targetUrl: MAIL2925_MAILBOX_URL,
+      errorMessage: "无法打开 2925 邮箱页面",
+      activate: context.activateTabs,
+      matcher: (tab) => {
+        return Boolean(getMail2925Url(tab.url))
+      }
+    })
+    throwIfAborted(getAbortSignal())
+
+    const createResult = async (
+      code: string,
+      message: string
+    ): Promise<Mail2925VerificationCodeResult> => {
+      const mailTab = await chrome.tabs.get(tabId)
+      return {
+        code,
+        message,
+        mailTab: {
+          id: tabId,
+          url: mailTab.url
+        }
       }
     }
-  }
-  // endregion
 
-  // 找tab
-  const tabId = await findOrOpenMatchedTab({
-    targetUrl: MAIL2925_MAILBOX_URL,
-    errorMessage: "无法打开 2925 邮箱页面",
-    activate: options.activateTabs,
-    matcher: (tab) => {
-      return Boolean(getMail2925Url(tab.url))
-    }
-  })
-  throwIfAborted(options.abortSignal)
-
-  // region ========== 没登录就先登录 ==========
-  await waitForTabLoaded(tabId)
-  const [sessionInjectionResult] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: ensureMail2925SessionInPage,
-    args: [
-      {
-        email,
-        password
-      } satisfies EnsureMail2925SessionPayload
-    ]
-  })
-  const session = sessionInjectionResult?.result
-  throwIfAborted(options.abortSignal)
-  if (!session?.ok) {
-    return createResult("", session?.message || "2925 邮箱登录态确认失败")
-  }
-  // endregion
-
-  // region ========== 登录就转到收件箱页面 ==========
-  await navigateMail2925TabToMailbox(tabId, {
-    activateTabs: options.activateTabs
-  })
-  await waitForTabLoaded(tabId)
-  throwIfAborted(options.abortSignal)
-
-  const [codeInjectionResult] = await raceWithAbort(
-    chrome.scripting.executeScript({
+    await waitForTabLoaded(tabId)
+    const [sessionInjectionResult] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: pollMail2925VerificationCodeInPage,
+      func: ensureMail2925SessionInPage,
       args: [
         {
-          mailboxUrl: MAIL2925_MAILBOX_URL,
-          timeoutMs: 90000,
-          targetEmail: email,
-          verificationRequestedAt: Number(options.verificationRequestedAt || 0),
-          excludeCodes: options.excludeCodes || []
-        }
+          email,
+          password
+        } satisfies EnsureMail2925SessionPayload
       ]
-    }),
-    options.abortSignal,
-    () => {
-      void chrome.tabs.reload(tabId).catch(() => undefined)
+    })
+    const session = sessionInjectionResult?.result
+    throwIfAborted(getAbortSignal())
+    if (!session?.ok) {
+      return createResult("", session?.message || "2925 邮箱登录态确认失败")
     }
-  )
-  const result = codeInjectionResult?.result
-  if (!result?.ok || !result.code) {
-    return createResult("", result?.message || "未在 2925 邮箱中找到验证码")
-  }
-  // endregion
 
-  return createResult(result.code, result.message || "已读取 2925 邮箱验证码")
+    await navigateMail2925TabToMailbox(tabId)
+    await waitForTabLoaded(tabId)
+    throwIfAborted(getAbortSignal())
+
+    const [codeInjectionResult] = await raceWithAbort(
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: pollMail2925VerificationCodeInPage,
+        args: [
+          {
+            mailboxUrl: MAIL2925_MAILBOX_URL,
+            timeoutMs: 90000,
+            targetEmail: email,
+            verificationRequestedAt: Number(
+              options.verificationRequestedAt || 0
+            ),
+            excludeCodes: options.excludeCodes || []
+          }
+        ]
+      }),
+      getAbortSignal(),
+      () => {
+        void chrome.tabs.reload(tabId).catch(() => undefined)
+      }
+    )
+    const result = codeInjectionResult?.result
+    if (!result?.ok || !result.code) {
+      return createResult("", result?.message || "未在 2925 邮箱中找到验证码")
+    }
+
+    return createResult(result.code, result.message || "已读取 2925 邮箱验证码")
+  }
+
+  return {
+    fetchMail2925VerificationCode
+  }
 }
+
+export const { fetchMail2925VerificationCode } = createMail2925Runner()
