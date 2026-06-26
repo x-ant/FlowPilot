@@ -6,22 +6,24 @@ import {
 } from "./page-script"
 import type {
   CodexAuthProgressStepResponse,
-  CompleteCodexLoginEmailAuthFlowResponse,
-  ConfirmCodexOAuthCallbackResponse,
   ConfirmCodexOAuthConsentResponse,
   FetchAndSubmitCodexVerificationCodeResponse,
   OpenCodexAuthLinkResponse,
-  SubmitCodexLoginEmailResponse,
   SubmitCodexOAuthCallbackResponse
 } from "./types"
 import {
+  abortableSleep,
+  raceWithAbort,
+  throwIfAborted,
+  type AbortableOptions
+} from "./utils/abort"
+import {
   runAuthPageAction,
-  runPageActionInTargetUrl,
-  type PageActionRunResult
+  runPageActionInTargetUrl
 } from "./utils/page-action-runner"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 
-type CodexLoginExecutionOptions = {
+type CodexLoginExecutionOptions = AbortableOptions & {
   activateTabs?: boolean
 }
 
@@ -217,18 +219,6 @@ const activateBrowserTab = async (
   }
 
   return tab
-}
-
-/**
- * 等待一小段时间，用于页面生成授权链接等异步场景。
- *
- * @param milliseconds 等待毫秒数。
- * @return 等待完成后 resolve。
- */
-const sleep = (milliseconds: number) => {
-  return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, milliseconds)
-  })
 }
 
 type CodexAuthTabStateResult = {
@@ -527,7 +517,7 @@ const waitForCodexAuthorizeUrlInTab = async (tabId: number) => {
         error instanceof Error ? error.message : "读取授权链接时页面暂不可用"
     }
 
-    await sleep(intervalMs)
+    await abortableSleep(intervalMs)
   }
 
   const managementTab = await chrome.tabs.get(tabId).catch(() => undefined)
@@ -604,6 +594,7 @@ const waitForCodexAuthTabState = async (
     intervalMs?: number
     timeoutMessage: string
     stopStates?: Array<CodexAuthTabStateResult["state"]>
+    abortSignal?: AbortSignal
   }
 ): Promise<CodexAuthTabStateResult> => {
   const intervalMs = options.intervalMs || 500
@@ -616,6 +607,7 @@ const waitForCodexAuthTabState = async (
   }
 
   while (Date.now() - startedAt <= options.timeoutMs) {
+    throwIfAborted(options.abortSignal)
     lastState = await detectCodexAuthTabState(tabId)
 
     if (acceptedStates.includes(lastState.state)) {
@@ -629,7 +621,7 @@ const waitForCodexAuthTabState = async (
       return lastState
     }
 
-    await sleep(intervalMs)
+    await abortableSleep(intervalMs, options.abortSignal)
   }
 
   return {
@@ -645,7 +637,10 @@ const waitForCodexAuthTabState = async (
  * @param tabId 当前 OpenAI 授权页标签页 id。
  * @return 验证码提交后的状态。
  */
-const waitForCodexVerificationSubmitStateInTab = async (tabId: number) => {
+const waitForCodexVerificationSubmitStateInTab = async (
+  tabId: number,
+  options: CodexLoginExecutionOptions = {}
+) => {
   return waitForCodexAuthTabState(
     tabId,
     ["oauth_consent_ready", "callback", "verification_invalid_code"],
@@ -653,7 +648,8 @@ const waitForCodexVerificationSubmitStateInTab = async (tabId: number) => {
       timeoutMs: 45000,
       intervalMs: 500,
       timeoutMessage: "45 秒内未确认验证码提交后的页面状态",
-      stopStates: ["extra_verification"]
+      stopStates: ["extra_verification"],
+      abortSignal: options.abortSignal
     }
   )
 }
@@ -664,12 +660,16 @@ const waitForCodexVerificationSubmitStateInTab = async (tabId: number) => {
  * @param tabId 当前 OpenAI 授权页标签页 id。
  * @return 授权确认页是否已就绪。
  */
-const waitForCodexOAuthConsentReadyInTab = async (tabId: number) => {
+const waitForCodexOAuthConsentReadyInTab = async (
+  tabId: number,
+  options: CodexLoginExecutionOptions = {}
+) => {
   return waitForCodexAuthTabState(tabId, ["oauth_consent_ready", "callback"], {
     timeoutMs: 90000,
     intervalMs: 500,
     timeoutMessage: "90 秒内未进入可点击的 OAuth 授权确认页",
-    stopStates: ["verification_invalid_code", "extra_verification"]
+    stopStates: ["verification_invalid_code", "extra_verification"],
+    abortSignal: options.abortSignal
   })
 }
 
@@ -685,6 +685,7 @@ export const openCodexAuthLink = async (
   targetUrl: string,
   options: CodexLoginExecutionOptions = {}
 ): Promise<OpenCodexAuthLinkResponse> => {
+  throwIfAborted(options.abortSignal)
   const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
   const shouldActivateTabs = options.activateTabs ?? true
   // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
@@ -731,6 +732,7 @@ export const openCodexAuthLink = async (
 
   // region ========== 从cpa页面中获取codex的登录地址 ==========
   const extractResult = await waitForCodexAuthorizeUrlInTab(managementTabId)
+  throwIfAborted(options.abortSignal)
   if (!extractResult.ok || !extractResult.authUrl) {
     return {
       ok: false,
@@ -755,6 +757,7 @@ export const openCodexAuthLink = async (
   // endregion
 
   // 整理结果
+  throwIfAborted(options.abortSignal)
   return {
     ok: true,
     message: `${cleanupMessage}${runPageActionResult.message}；已读取授权链接并打开 OpenAI 授权页`,
@@ -772,10 +775,7 @@ export const openCodexAuthLink = async (
  * @param email 2925 邮箱地址。
  * @return 返回给侧边栏展示的执行结果。
  */
-export const submitCodexLoginEmail = async (
-  tabId: number,
-  email: string
-): Promise<SubmitCodexLoginEmailResponse> => {
+const submitCodexLoginEmail = async (tabId: number, email: string) => {
   const result = await runAuthPageAction(tabId, {
     fields: [
       {
@@ -819,12 +819,15 @@ export const submitCodexLoginEmail = async (
  */
 export const submitCodexLoginEmailAndWait = async (
   tabId: number,
-  email: string
+  email: string,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<CodexAuthProgressStepResponse> => {
+  throwIfAborted(options.abortSignal)
   await waitForTabLoaded(tabId)
 
   const verificationRequestedAt = Date.now()
   const emailResult = await submitCodexLoginEmail(tabId, email)
+  throwIfAborted(options.abortSignal)
   if (!emailResult.ok) {
     return emailResult
   }
@@ -836,7 +839,8 @@ export const submitCodexLoginEmailAndWait = async (
       timeoutMs: 60000,
       intervalMs: 500,
       timeoutMessage: "60 秒内未进入密码页、邮箱验证码页或 OAuth 授权确认页",
-      stopStates: ["extra_verification"]
+      stopStates: ["extra_verification"],
+      abortSignal: options.abortSignal
     }
   )
 
@@ -863,10 +867,7 @@ export const submitCodexLoginEmailAndWait = async (
  * @param password Codex/OpenAI 登录密码。
  * @return 返回给侧边栏展示的执行结果。
  */
-const submitCodexLoginPassword = async (
-  tabId: number,
-  password: string
-): Promise<PageActionRunResult> => {
+const submitCodexLoginPassword = async (tabId: number, password: string) => {
   const result = await runAuthPageAction(tabId, {
     fields: [
       {
@@ -905,8 +906,10 @@ const submitCodexLoginPassword = async (
  */
 export const submitCodexLoginPasswordAndWait = async (
   tabId: number,
-  password: string
+  password: string,
+  options: CodexLoginExecutionOptions = {}
 ): Promise<CodexAuthProgressStepResponse> => {
+  throwIfAborted(options.abortSignal)
   const currentState = await detectCodexAuthTabState(tabId)
   if (
     currentState.state === "verification_pending" ||
@@ -939,6 +942,7 @@ export const submitCodexLoginPasswordAndWait = async (
 
   const verificationRequestedAt = Date.now()
   const passwordResult = await submitCodexLoginPassword(tabId, password)
+  throwIfAborted(options.abortSignal)
   if (!passwordResult.ok) {
     return {
       ok: false,
@@ -955,7 +959,8 @@ export const submitCodexLoginPasswordAndWait = async (
       timeoutMs: 60000,
       intervalMs: 500,
       timeoutMessage: "60 秒内未进入邮箱验证码页或 OAuth 授权确认页",
-      stopStates: ["extra_verification"]
+      stopStates: ["extra_verification"],
+      abortSignal: options.abortSignal
     }
   )
 
@@ -990,6 +995,7 @@ export const fetchAndSubmitCodexVerificationCode = async (
   verificationRequestedAt = 0,
   options: CodexLoginExecutionOptions = {}
 ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
+  throwIfAborted(options.abortSignal)
   const currentState = await detectCodexAuthTabState(tabId)
   if (
     currentState.state === "oauth_consent_ready" ||
@@ -1022,13 +1028,16 @@ export const fetchAndSubmitCodexVerificationCode = async (
   let latestMailTab: FetchAndSubmitCodexVerificationCodeResponse["mailTab"]
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    throwIfAborted(options.abortSignal)
     // region ========== 去2925邮箱获取验证码 ==========
     const mailResult = await fetchMail2925VerificationCode(email, password, {
       verificationRequestedAt,
       excludeCodes: excludedCodes,
-      activateTabs: options.activateTabs
+      activateTabs: options.activateTabs,
+      abortSignal: options.abortSignal
     })
     latestMailTab = mailResult.mailTab
+    throwIfAborted(options.abortSignal)
 
     if (!mailResult.code) {
       return {
@@ -1073,7 +1082,10 @@ export const fetchAndSubmitCodexVerificationCode = async (
       }
     }
 
-    const submitState = await waitForCodexVerificationSubmitStateInTab(tabId)
+    const submitState = await waitForCodexVerificationSubmitStateInTab(
+      tabId,
+      options
+    )
     const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
 
     if (
@@ -1126,135 +1138,6 @@ export const fetchAndSubmitCodexVerificationCode = async (
 }
 
 /**
- * 等页面加载完成
- * 完成 OpenAI 邮箱登录认证流程。
- *
- * 流程可能是“邮箱 -> 验证码”，也可能是“邮箱 -> 密码 -> 验证码”。
- *
- * @param tabId 要操作的登录页标签页 id。
- * @param email 2925 邮箱地址。
- * @param password 2925 邮箱密码。
- * @return 返回给侧边栏展示的执行结果。
- */
-export const completeCodexLoginEmailAuthFlow = async (
-  tabId: number,
-  email: string,
-  password: string,
-  options: CodexLoginExecutionOptions = {}
-): Promise<CompleteCodexLoginEmailAuthFlowResponse> => {
-  // 先等页面已经好了再操作
-  await waitForTabLoaded(tabId)
-
-  // region ========== 邮箱登录，并正确进入下一个地址 ==========
-  let verificationRequestedAt = Date.now()
-  const emailResult = await submitCodexLoginEmail(tabId, email)
-  if (!emailResult.ok) {
-    return emailResult
-  }
-  const authStepState = await waitForCodexAuthTabState(
-    tabId,
-    ["verification_pending", "password", "oauth_consent_ready", "callback"],
-    {
-      timeoutMs: 60000,
-      intervalMs: 500,
-      timeoutMessage: "60 秒内未进入密码页、邮箱验证码页或 OAuth 授权确认页",
-      stopStates: ["extra_verification"]
-    }
-  )
-  if (!authStepState.ok) {
-    return {
-      ok: false,
-      message: `${emailResult.message}；${authStepState.message}`,
-      targetTab: {
-        id: tabId,
-        url: authStepState.url
-      }
-    }
-  }
-
-  if (
-    authStepState.state === "oauth_consent_ready" ||
-    authStepState.state === "callback"
-  ) {
-    return {
-      ok: true,
-      message: `${emailResult.message}；${authStepState.message}`,
-      targetTab: {
-        id: tabId,
-        url: authStepState.url
-      }
-    }
-  }
-  // endregion
-
-  // region ========== 有可能还需要输入登录密码 ==========
-  let passwordResult: PageActionRunResult | undefined
-  if (authStepState.state === "password") {
-    verificationRequestedAt = Date.now()
-    passwordResult = await submitCodexLoginPassword(tabId, password)
-    if (!passwordResult.ok) {
-      return {
-        ok: false,
-        message: `${emailResult.message}；${passwordResult.message}`,
-        targetTab: passwordResult.tab
-      }
-    }
-    const verificationState = await waitForCodexAuthTabState(
-      tabId,
-      ["verification_pending", "oauth_consent_ready", "callback"],
-      {
-        timeoutMs: 60000,
-        intervalMs: 500,
-        timeoutMessage: "60 秒内未进入邮箱验证码页或 OAuth 授权确认页",
-        stopStates: ["extra_verification"]
-      }
-    )
-    if (!verificationState.ok) {
-      return {
-        ok: false,
-        message: `${emailResult.message}；${passwordResult.message}；${verificationState.message}`,
-        targetTab: {
-          id: tabId,
-          url: verificationState.url
-        }
-      }
-    }
-
-    if (
-      verificationState.state === "oauth_consent_ready" ||
-      verificationState.state === "callback"
-    ) {
-      return {
-        ok: true,
-        message: `${emailResult.message}；${passwordResult.message}；${verificationState.message}`,
-        targetTab: {
-          id: tabId,
-          url: verificationState.url
-        }
-      }
-    }
-  }
-  // endregion
-
-  // region ========== 已经进入验证码页面，则获取验证码并输入提交 ==========
-  const codeResult = await fetchAndSubmitCodexVerificationCode(
-    tabId,
-    email,
-    password,
-    verificationRequestedAt,
-    options
-  )
-  // endregion
-
-  return {
-    ...codeResult,
-    message: [emailResult.message, passwordResult?.message, codeResult.message]
-      .filter(Boolean)
-      .join("；")
-  }
-}
-
-/**
  * 点击 Codex OAuth 授权确认页的“继续”，捕获回调地址。
  *
  * @param tabId 当前 OpenAI 授权页标签页 id。
@@ -1264,6 +1147,7 @@ const confirmOAuthConsentAndCaptureCallback = async (
   tabId: number,
   options: CodexLoginExecutionOptions = {}
 ) => {
+  throwIfAborted(options.abortSignal)
   await activateBrowserTab(tabId, options)
   await waitForTabLoaded(tabId)
 
@@ -1283,7 +1167,11 @@ const confirmOAuthConsentAndCaptureCallback = async (
   // endregion
 
   // region ========== 等待 OAuth 授权确认页真正就绪，避免过早点到验证码页按钮 ==========
-  const consentReadyResult = await waitForCodexOAuthConsentReadyInTab(tabId)
+  const consentReadyResult = await waitForCodexOAuthConsentReadyInTab(
+    tabId,
+    options
+  )
+  throwIfAborted(options.abortSignal)
   if (!consentReadyResult.ok) {
     return {
       ok: false,
@@ -1336,6 +1224,7 @@ const confirmOAuthConsentAndCaptureCallback = async (
     successMessage: CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE,
     failureMessage: CODEX_AUTH_CONFIRM_FAILURE_MESSAGE
   })
+  throwIfAborted(options.abortSignal)
   if (!confirmResult.ok) {
     abortController.abort()
     return {
@@ -1346,7 +1235,14 @@ const confirmOAuthConsentAndCaptureCallback = async (
     }
   }
 
-  const callbackUrl = await callbackUrlPromise
+  const callbackUrl = await raceWithAbort(
+    callbackUrlPromise,
+    options.abortSignal,
+    () => {
+      abortController.abort()
+    }
+  )
+  throwIfAborted(options.abortSignal)
   // 如果原tabId已经被关了，则处理异常，返回没关时候的地址
   const latestTab = await chrome.tabs.get(tabId).catch(() => currentTab)
   if (!callbackUrl) {
@@ -1399,6 +1295,7 @@ export const submitCodexOAuthCallbackToCpa = async (
   callbackTabId?: number,
   options: CodexLoginExecutionOptions = {}
 ): Promise<SubmitCodexOAuthCallbackResponse> => {
+  throwIfAborted(options.abortSignal)
   const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
   const submitResult = await runPageActionInTargetUrl(
     cpaOAuthUrl,
@@ -1421,6 +1318,7 @@ export const submitCodexOAuthCallbackToCpa = async (
       activateTabs: options.activateTabs
     }
   )
+  throwIfAborted(options.abortSignal)
   if (!submitResult.ok) {
     return {
       ok: false,
@@ -1444,46 +1342,5 @@ export const submitCodexOAuthCallbackToCpa = async (
     }`,
     managementTab: submitResult.tab,
     callbackUrl
-  }
-}
-
-/**
- * 执行第三步：确认 OAuth 授权，捕获回调 URL，并提交回管理页。
- *
- * @param tabId 当前 codex 授权页标签页 id。
- * @param targetUrl cpa页面的地址，用于回填回调地址数据
- * @return 返回给侧边栏展示的执行结果。
- */
-export const confirmCodexOAuthAndSubmitCallback = async (
-  tabId: number,
-  targetUrl: string
-): Promise<ConfirmCodexOAuthCallbackResponse> => {
-  // 拿到回调地址
-  const callbackResult = await confirmCodexOAuthConsent(tabId)
-  if (!callbackResult.ok || !callbackResult.callbackUrl) {
-    return callbackResult
-  }
-
-  // 提交给cpa页面的回调地址框
-  const submitResult = await submitCodexOAuthCallbackToCpa(
-    targetUrl,
-    callbackResult.callbackUrl,
-    tabId
-  )
-  if (!submitResult.ok) {
-    return {
-      ok: false,
-      message: `已捕获回调地址，但${submitResult.message}`,
-      targetTab: callbackResult.targetTab,
-      managementTab: submitResult.managementTab,
-      callbackUrl: callbackResult.callbackUrl
-    }
-  }
-
-  return {
-    ok: true,
-    message: `${callbackResult.message}；${submitResult.message}`,
-    managementTab: submitResult.managementTab,
-    callbackUrl: callbackResult.callbackUrl
   }
 }

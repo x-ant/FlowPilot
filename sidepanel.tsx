@@ -81,12 +81,12 @@ type FlowRunContext = {
 
 type ExecutionSettings = {
   backgroundExecution: boolean
+  abortSignal?: AbortSignal
 }
 
 const STEP_COUNT = 6
 
 const CPA_URL_STORAGE_KEY = "codex-login:cpa-url"
-const LEGACY_LOGIN_URL_STORAGE_KEY = "codex-login:login-url"
 const ACCOUNTS_STORAGE_KEY = "codex-login:accounts"
 const BACKGROUND_EXECUTION_STORAGE_KEY = "codex-login:background-execution"
 
@@ -364,35 +364,6 @@ const upsertManagedAccount = (
 }
 
 /**
- * 交换列表中的两个账号位置。
- *
- * @param accounts 当前账号列表。
- * @param fromIndex 起始位置。
- * @param toIndex 目标位置。
- * @return 调整后的账号列表。
- */
-const moveManagedAccount = (
-  accounts: ManagedAccount[],
-  fromIndex: number,
-  toIndex: number
-) => {
-  if (
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= accounts.length ||
-    toIndex >= accounts.length ||
-    fromIndex === toIndex
-  ) {
-    return accounts
-  }
-
-  const nextAccounts = [...accounts]
-  const [movedAccount] = nextAccounts.splice(fromIndex, 1)
-  nextAccounts.splice(toIndex, 0, movedAccount)
-  return nextAccounts
-}
-
-/**
  * 读取本地保存的账号状态。
  *
  * @return CPA 地址和账号列表。
@@ -411,16 +382,11 @@ const loadStoredState = async (): Promise<StoredState> => {
     storage.get(
       [
         CPA_URL_STORAGE_KEY,
-        LEGACY_LOGIN_URL_STORAGE_KEY,
         ACCOUNTS_STORAGE_KEY,
         BACKGROUND_EXECUTION_STORAGE_KEY
       ],
       (result) => {
-        const cpaUrl = String(
-          result?.[CPA_URL_STORAGE_KEY] ||
-            result?.[LEGACY_LOGIN_URL_STORAGE_KEY] ||
-            ""
-        ).trim()
+        const cpaUrl = String(result?.[CPA_URL_STORAGE_KEY] || "").trim()
         const rawAccounts = Array.isArray(result?.[ACCOUNTS_STORAGE_KEY])
           ? (result?.[ACCOUNTS_STORAGE_KEY] as unknown[])
           : []
@@ -469,7 +435,8 @@ const runManagedAccountFlow = async (
   settings: ExecutionSettings
 ): Promise<AccountRunResult> => {
   const browserOptions = {
-    activateTabs: !settings.backgroundExecution
+    activateTabs: !settings.backgroundExecution,
+    abortSignal: settings.abortSignal
   }
   const step1Result = await openCodexAuthLink(cpaUrl, browserOptions)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
@@ -484,7 +451,8 @@ const runManagedAccountFlow = async (
   const authTabId = step1Result.targetTab.id
   const step2Result = await submitCodexLoginEmailAndWait(
     authTabId,
-    account.email
+    account.email,
+    browserOptions
   )
   if (!step2Result.ok) {
     return {
@@ -498,7 +466,8 @@ const runManagedAccountFlow = async (
   let verificationRequestedAt = step2Result.verificationRequestedAt || 0
   const step3Result = await submitCodexLoginPasswordAndWait(
     authTabId,
-    account.password
+    account.password,
+    browserOptions
   )
   if (!step3Result.ok) {
     return {
@@ -592,9 +561,9 @@ function SidePanel() {
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const batchCancelRef = useRef(false)
+  const batchAbortControllerRef = useRef<AbortController | null>(null)
   const logListRef = useRef<HTMLDivElement | null>(null)
 
-  const storage = useMemo(getStorage, [])
   const log = useMemo(() => {
     return createUiLogger((level, message) => {
       setLogs((current) => {
@@ -616,14 +585,6 @@ function SidePanel() {
       cpaUrl: nextCpaUrl,
       accounts: nextAccounts,
       backgroundExecution
-    })
-  }
-
-  const persistExecutionSettings = (nextBackgroundExecution: boolean) => {
-    saveStoredState({
-      cpaUrl,
-      accounts,
-      backgroundExecution: nextBackgroundExecution
     })
   }
 
@@ -670,12 +631,8 @@ function SidePanel() {
       setBackgroundExecution(state.backgroundExecution)
       loginForm.setFieldsValue({ cpaUrl: state.cpaUrl })
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
-
-      if (state.accounts.length > 0 && storage) {
-        saveStoredState(state)
-      }
     })()
-  }, [loginForm, storage])
+  }, [loginForm])
 
   useEffect(() => {
     if (accounts.length === 0) {
@@ -727,7 +684,11 @@ function SidePanel() {
    */
   const handleBackgroundExecutionChange = (checked: boolean) => {
     setBackgroundExecution(checked)
-    persistExecutionSettings(checked)
+    saveStoredState({
+      cpaUrl,
+      accounts,
+      backgroundExecution: checked
+    })
     setStatus(checked ? "已开启后台执行" : "已关闭后台执行")
     log.info(checked ? "已开启后台执行" : "已关闭后台执行")
   }
@@ -817,27 +778,6 @@ function SidePanel() {
   }
 
   /**
-   * 调整账号顺序。
-   *
-   * @param index 当前索引。
-   * @param direction 调整方向，-1 表示上移，1 表示下移。
-   * @return 无。
-   */
-  const handleMoveAccount = (index: number, direction: -1 | 1) => {
-    if (isBatchRunning) {
-      return
-    }
-
-    const nextIndex = index + direction
-    const nextAccounts = moveManagedAccount(accounts, index, nextIndex)
-    if (nextAccounts === accounts) {
-      return
-    }
-
-    syncAccounts(nextAccounts)
-  }
-
-  /**
    * 切换单个账号的选中状态。
    *
    * @param email 账号邮箱。
@@ -905,7 +845,10 @@ function SidePanel() {
       return
     }
 
-    handleMoveAccount(selectedIndex, direction)
+    const nextAccounts = [...accounts]
+    const [movedAccount] = nextAccounts.splice(selectedIndex, 1)
+    nextAccounts.splice(nextIndex, 0, movedAccount)
+    syncAccounts(nextAccounts)
   }
 
   /**
@@ -1325,6 +1268,8 @@ function SidePanel() {
     }
 
     batchCancelRef.current = false
+    const batchAbortController = new AbortController()
+    batchAbortControllerRef.current = batchAbortController
     setIsBatchRunning(true)
     setRunningEmail("")
 
@@ -1402,7 +1347,8 @@ function SidePanel() {
             log.info(`[${currentAccount.email}] ${message}`)
           },
           {
-            backgroundExecution
+            backgroundExecution,
+            abortSignal: batchAbortController.signal
           }
         )
       } catch (error) {
@@ -1411,6 +1357,18 @@ function SidePanel() {
           message:
             error instanceof Error ? error.message : "账号自动执行时发生异常"
         }
+      }
+
+      if (batchCancelRef.current) {
+        updateCurrentAccount({
+          status: "failed",
+          lastMessage: runResult.message || "已停止当前流程"
+        })
+        setStatus("已停止当前流程")
+        log.warn(
+          `[${currentAccount.email}] ${runResult.message || "已停止当前流程"}`
+        )
+        break
       }
 
       if (runResult.ok) {
@@ -1435,9 +1393,10 @@ function SidePanel() {
 
     setRunningEmail("")
     setIsBatchRunning(false)
-    if (!batchCancelRef.current) {
-      setStatus(`${batchLabel}执行已结束`)
-    }
+    batchAbortControllerRef.current = null
+    setStatus(
+      batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
+    )
   }
 
   /**
@@ -1447,6 +1406,7 @@ function SidePanel() {
    */
   const handleStopBatch = () => {
     batchCancelRef.current = true
+    batchAbortControllerRef.current?.abort()
     setStatus("正在停止当前流程")
     log.warn("收到停止请求，等待当前步骤结束")
   }

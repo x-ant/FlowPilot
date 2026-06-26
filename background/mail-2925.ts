@@ -4,6 +4,11 @@ import {
   type EnsureMail2925SessionPayload
 } from "./mail-2925-page-session"
 import type { BrowserTabInfo } from "./types"
+import {
+  raceWithAbort,
+  throwIfAborted,
+  type AbortableOptions
+} from "./utils/abort"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
@@ -15,7 +20,7 @@ export type Mail2925VerificationCodeResult = {
   mailTab?: BrowserTabInfo
 }
 
-export type FetchMail2925VerificationCodeOptions = {
+export type FetchMail2925VerificationCodeOptions = AbortableOptions & {
   verificationRequestedAt?: number
   excludeCodes?: string[]
   activateTabs?: boolean
@@ -103,6 +108,7 @@ export const fetchMail2925VerificationCode = async (
   password: string,
   options: FetchMail2925VerificationCodeOptions = {}
 ): Promise<Mail2925VerificationCodeResult> => {
+  throwIfAborted(options.abortSignal)
   // region ========== 方法域 ==========
   const createResult = async (
     code: string,
@@ -129,6 +135,7 @@ export const fetchMail2925VerificationCode = async (
       return Boolean(getMail2925Url(tab.url))
     }
   })
+  throwIfAborted(options.abortSignal)
 
   // region ========== 没登录就先登录 ==========
   await waitForTabLoaded(tabId)
@@ -143,6 +150,7 @@ export const fetchMail2925VerificationCode = async (
     ]
   })
   const session = sessionInjectionResult?.result
+  throwIfAborted(options.abortSignal)
   if (!session?.ok) {
     return createResult("", session?.message || "2925 邮箱登录态确认失败")
   }
@@ -153,19 +161,27 @@ export const fetchMail2925VerificationCode = async (
     activateTabs: options.activateTabs
   })
   await waitForTabLoaded(tabId)
-  const [codeInjectionResult] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: pollMail2925VerificationCodeInPage,
-    args: [
-      {
-        mailboxUrl: MAIL2925_MAILBOX_URL,
-        timeoutMs: 90000,
-        targetEmail: email,
-        verificationRequestedAt: Number(options.verificationRequestedAt || 0),
-        excludeCodes: options.excludeCodes || []
-      }
-    ]
-  })
+  throwIfAborted(options.abortSignal)
+
+  const [codeInjectionResult] = await raceWithAbort(
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: pollMail2925VerificationCodeInPage,
+      args: [
+        {
+          mailboxUrl: MAIL2925_MAILBOX_URL,
+          timeoutMs: 90000,
+          targetEmail: email,
+          verificationRequestedAt: Number(options.verificationRequestedAt || 0),
+          excludeCodes: options.excludeCodes || []
+        }
+      ]
+    }),
+    options.abortSignal,
+    () => {
+      void chrome.tabs.reload(tabId).catch(() => undefined)
+    }
+  )
   const result = codeInjectionResult?.result
   if (!result?.ok || !result.code) {
     return createResult("", result?.message || "未在 2925 邮箱中找到验证码")
