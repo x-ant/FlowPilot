@@ -9,7 +9,6 @@ import {
   Input,
   Select,
   Space,
-  Switch,
   Tag,
   theme,
   Typography
@@ -62,7 +61,6 @@ type ManagedAccount = {
 type StoredState = {
   cpaUrl: string
   accounts: ManagedAccount[]
-  backgroundExecution: boolean
 }
 
 type AccountRunResult = {
@@ -84,7 +82,6 @@ const STEP_COUNT = 6
 
 const CPA_URL_STORAGE_KEY = "codex-login:cpa-url"
 const ACCOUNTS_STORAGE_KEY = "codex-login:accounts"
-const BACKGROUND_EXECUTION_STORAGE_KEY = "codex-login:background-execution"
 
 const EMPTY_ACCOUNT_FORM: AccountFormValues = {
   email: "",
@@ -369,35 +366,25 @@ const loadStoredState = async (): Promise<StoredState> => {
   if (!storage) {
     return {
       cpaUrl: "",
-      accounts: [],
-      backgroundExecution: false
+      accounts: []
     }
   }
 
   return new Promise<StoredState>((resolve) => {
-    storage.get(
-      [
-        CPA_URL_STORAGE_KEY,
-        ACCOUNTS_STORAGE_KEY,
-        BACKGROUND_EXECUTION_STORAGE_KEY
-      ],
-      (result) => {
-        const cpaUrl = String(result?.[CPA_URL_STORAGE_KEY] || "").trim()
-        const rawAccounts = Array.isArray(result?.[ACCOUNTS_STORAGE_KEY])
-          ? (result?.[ACCOUNTS_STORAGE_KEY] as unknown[])
-          : []
-        const accounts = rawAccounts
-          .map((account) => normalizeStoredAccount(account))
-          .filter((account): account is ManagedAccount => Boolean(account))
+    storage.get([CPA_URL_STORAGE_KEY, ACCOUNTS_STORAGE_KEY], (result) => {
+      const cpaUrl = String(result?.[CPA_URL_STORAGE_KEY] || "").trim()
+      const rawAccounts = Array.isArray(result?.[ACCOUNTS_STORAGE_KEY])
+        ? (result?.[ACCOUNTS_STORAGE_KEY] as unknown[])
+        : []
+      const accounts = rawAccounts
+        .map((account) => normalizeStoredAccount(account))
+        .filter((account): account is ManagedAccount => Boolean(account))
 
-        resolve({
-          cpaUrl,
-          accounts,
-          backgroundExecution:
-            result?.[BACKGROUND_EXECUTION_STORAGE_KEY] === true
-        })
-      }
-    )
+      resolve({
+        cpaUrl,
+        accounts
+      })
+    })
   })
 }
 
@@ -411,8 +398,7 @@ const saveStoredState = (state: StoredState) => {
   const storage = getStorage()
   storage?.set({
     [CPA_URL_STORAGE_KEY]: state.cpaUrl,
-    [ACCOUNTS_STORAGE_KEY]: state.accounts,
-    [BACKGROUND_EXECUTION_STORAGE_KEY]: state.backgroundExecution
+    [ACCOUNTS_STORAGE_KEY]: state.accounts
   })
 }
 
@@ -535,7 +521,6 @@ function SidePanel() {
   const [accountForm] = Form.useForm<AccountFormValues>()
   const [cpaUrl, setCpaUrl] = useState("")
   const [accounts, setAccounts] = useState<ManagedAccount[]>([])
-  const [backgroundExecution, setBackgroundExecution] = useState(false)
   const [editingEmail, setEditingEmail] = useState("")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
@@ -572,8 +557,7 @@ function SidePanel() {
   const persistState = (nextCpaUrl: string, nextAccounts: ManagedAccount[]) => {
     saveStoredState({
       cpaUrl: nextCpaUrl,
-      accounts: nextAccounts,
-      backgroundExecution
+      accounts: nextAccounts
     })
   }
 
@@ -617,7 +601,6 @@ function SidePanel() {
       const state = await loadStoredState()
       setCpaUrl(state.cpaUrl)
       setAccounts(state.accounts)
-      setBackgroundExecution(state.backgroundExecution)
       loginForm.setFieldsValue({ cpaUrl: state.cpaUrl })
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
     })()
@@ -663,23 +646,6 @@ function SidePanel() {
     const nextCpaUrl = String(values.cpaUrl || "")
     setCpaUrl(nextCpaUrl)
     persistState(nextCpaUrl, accounts)
-  }
-
-  /**
-   * 切换批量流程是否在后台标签页执行。
-   *
-   * @param checked 是否后台执行。
-   * @return 无。
-   */
-  const handleBackgroundExecutionChange = (checked: boolean) => {
-    setBackgroundExecution(checked)
-    saveStoredState({
-      cpaUrl,
-      accounts,
-      backgroundExecution: checked
-    })
-    setStatus(checked ? "已开启后台执行" : "已关闭后台执行")
-    log.info(checked ? "已开启后台执行" : "已关闭后台执行")
   }
 
   /**
@@ -1260,7 +1226,6 @@ function SidePanel() {
     const batchAbortController = new AbortController()
     batchAbortControllerRef.current = batchAbortController
     const codexLoginRunner = createCodexLoginRunner({
-      activateTabs: !backgroundExecution,
       abortSignal: batchAbortController.signal
     })
     setIsBatchRunning(true)
@@ -1448,19 +1413,6 @@ function SidePanel() {
                   allowClear
                   disabled={isBatchRunning}
                 />
-              </Form.Item>
-              <Form.Item label="执行设置">
-                <Space align="center" size={8} wrap>
-                  <Switch
-                    checked={backgroundExecution}
-                    disabled={isBatchRunning}
-                    onChange={handleBackgroundExecutionChange}
-                  />
-                  <span>后台执行</span>
-                  <Typography.Text type="secondary">
-                    批量执行时不主动激活标签页
-                  </Typography.Text>
-                </Space>
               </Form.Item>
             </Form>
           </Card>

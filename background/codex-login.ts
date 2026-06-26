@@ -16,12 +16,10 @@ import {
   runAuthPageAction,
   runPageActionInTargetUrl
 } from "./utils/page-action-runner"
-import { DEFAULT_RUN_CONTEXT, type RunContext } from "./utils/run-context"
+import type { RunContext } from "./utils/run-context"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 
-export const createCodexLoginRunner = (
-  context: RunContext = DEFAULT_RUN_CONTEXT
-) => {
+export const createCodexLoginRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
   const getAbortSignal = () => context.abortSignal
 
@@ -199,10 +197,6 @@ export const createCodexLoginRunner = (
    * @return 激活后的标签页信息。
    */
   const activateBrowserTab = async (tabId: number) => {
-    if (!context.activateTabs) {
-      return chrome.tabs.get(tabId)
-    }
-
     const tab = await chrome.tabs.update(tabId, { active: true })
 
     if (typeof tab.windowId === "number" && chrome.windows?.update) {
@@ -677,7 +671,6 @@ export const createCodexLoginRunner = (
   ): Promise<OpenCodexAuthLinkResponse> => {
     throwIfAborted(getAbortSignal())
     const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
-    const shouldActivateTabs = context.activateTabs
     // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
     const cleanupResult = await clearCodexSessionCookies()
     const storageResult = await clearCodexSessionStorage()
@@ -697,8 +690,7 @@ export const createCodexLoginRunner = (
           "刷新管理页后仍未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
       },
       {
-        reloadBeforeAction: true,
-        activateTabs: context.activateTabs
+        reloadBeforeAction: true
       }
     )
     // 处理失败
@@ -732,7 +724,7 @@ export const createCodexLoginRunner = (
     }
     // 不使用页面里的“打开链接”按钮，避免脚本点击触发 window.open 被浏览器拦截。
     const authTab = await chrome.tabs.create({
-      active: shouldActivateTabs,
+      active: true,
       url: extractResult.authUrl
     })
     if (authTab.id) {
@@ -1270,27 +1262,21 @@ export const createCodexLoginRunner = (
   ): Promise<SubmitCodexOAuthCallbackResponse> => {
     throwIfAborted(getAbortSignal())
     const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
-    const submitResult = await runPageActionInTargetUrl(
-      cpaOAuthUrl,
-      {
-        fields: [
-          {
-            selectors: CODEX_CALLBACK_INPUT_SELECTORS,
-            value: callbackUrl
-          }
-        ],
-        button: {
-          texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
-          triggerMode: "requestSubmit"
-        },
-        timeoutMs: 15000,
-        successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
-        failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
+    const submitResult = await runPageActionInTargetUrl(cpaOAuthUrl, {
+      fields: [
+        {
+          selectors: CODEX_CALLBACK_INPUT_SELECTORS,
+          value: callbackUrl
+        }
+      ],
+      button: {
+        texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
       },
-      {
-        activateTabs: context.activateTabs
-      }
-    )
+      timeoutMs: 15000,
+      successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
+      failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
+    })
     throwIfAborted(getAbortSignal())
     if (!submitResult.ok) {
       return {

@@ -5,7 +5,7 @@ import {
 } from "./mail-2925-page-session"
 import type { BrowserTabInfo } from "./types"
 import { raceWithAbort, throwIfAborted } from "./utils/abort"
-import { DEFAULT_RUN_CONTEXT, type RunContext } from "./utils/run-context"
+import type { RunContext } from "./utils/run-context"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
@@ -44,32 +44,21 @@ const isMail2925MailboxUrl = (rawUrl?: string) => {
   return url.hash === "#/mailList" || url.hash.startsWith("#/mailList?")
 }
 
-export const createMail2925Runner = (
-  context: RunContext = DEFAULT_RUN_CONTEXT
-) => {
+export const createMail2925Runner = (context: RunContext = {}) => {
   const getAbortSignal = () => context.abortSignal
 
   const navigateMail2925TabToMailbox = async (tabId: number) => {
     const tab = await chrome.tabs.get(tabId)
 
     if (isMail2925MailboxUrl(tab.url)) {
-      if (context.activateTabs) {
-        await chrome.tabs.update(tabId, { active: true })
-      }
+      await chrome.tabs.update(tabId, { active: true })
       return
     }
 
-    await chrome.tabs.update(
-      tabId,
-      context.activateTabs
-        ? {
-            active: true,
-            url: MAIL2925_MAILBOX_URL
-          }
-        : {
-            url: MAIL2925_MAILBOX_URL
-          }
-    )
+    await chrome.tabs.update(tabId, {
+      active: true,
+      url: MAIL2925_MAILBOX_URL
+    })
   }
 
   const fetchMail2925VerificationCode = async (
@@ -82,7 +71,6 @@ export const createMail2925Runner = (
     const tabId = await findOrOpenMatchedTab({
       targetUrl: MAIL2925_MAILBOX_URL,
       errorMessage: "无法打开 2925 邮箱页面",
-      activate: context.activateTabs,
       matcher: (tab) => {
         return Boolean(getMail2925Url(tab.url))
       }

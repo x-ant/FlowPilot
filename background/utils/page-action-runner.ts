@@ -4,7 +4,6 @@ import { findOrOpenTab, waitForTabLoaded } from "./tab-utils"
 
 type RunPageActionInTabOptions = {
   reloadBeforeAction?: boolean
-  activateTabs?: boolean
 }
 
 export type PageActionRunResult = {
@@ -72,9 +71,7 @@ export const runPageActionInTargetUrl = async (
   action: PageActionConfig,
   tabOptions: RunPageActionInTabOptions = {}
 ): Promise<PageActionRunResult> => {
-  const tabId = await findOrOpenTab(targetUrl, {
-    activate: tabOptions.activateTabs
-  })
+  const tabId = await findOrOpenTab(targetUrl)
 
   if (tabOptions.reloadBeforeAction) {
     await chrome.tabs.reload(tabId)
