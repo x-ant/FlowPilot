@@ -352,6 +352,7 @@ export const findOrOpenMatchedTab = async (
  * chrome.scripting.executeScript 用来指定脚本注入目标。
  *
  * @param loginUrl 侧边栏里填写的 Codex 登录地址
+ * @param options 页面操作参数
  * @return 可以注入脚本的 Chrome 标签页 id。
  */
 export const findOrOpenTab = async (

@@ -1,6 +1,10 @@
 import { performPageActionInPage, type PageActionConfig } from "../page-script"
 import type { BrowserTabInfo } from "../types"
-import { findOrOpenTab, waitForTabLoaded } from "./tab-utils"
+import {
+  findOrOpenTab,
+  waitForTabLoaded,
+  waitForTabMatchingUrl
+} from "./tab-utils"
 
 type RunPageActionInTabOptions = {
   reloadBeforeAction?: boolean
@@ -10,6 +14,14 @@ export type PageActionRunResult = {
   ok: boolean
   message: string
   tab?: BrowserTabInfo
+}
+
+const isSameTargetUrl = (currentUrl: string, targetUrl: string) => {
+  try {
+    return new URL(currentUrl).href === new URL(targetUrl).href
+  } catch {
+    return currentUrl === targetUrl
+  }
 }
 
 /**
@@ -72,9 +84,31 @@ export const runPageActionInTargetUrl = async (
   tabOptions: RunPageActionInTabOptions = {}
 ): Promise<PageActionRunResult> => {
   const tabId = await findOrOpenTab(targetUrl)
+  // 等页面完成跳转
+  const targetUrlReady = await waitForTabMatchingUrl(
+    tabId,
+    (url) => isSameTargetUrl(url, targetUrl),
+    {
+      timeoutMs: 5000,
+      intervalMs: 100
+    }
+  )
+
+  if (!targetUrlReady) {
+    const currentTab = await chrome.tabs.get(tabId)
+    return {
+      ok: false,
+      message: `目标页面未切换到指定地址：${targetUrl}`,
+      tab: {
+        id: tabId,
+        url: currentTab.url
+      }
+    }
+  }
 
   if (tabOptions.reloadBeforeAction) {
     await chrome.tabs.reload(tabId)
+    await waitForTabLoaded(tabId, (url) => isSameTargetUrl(url, targetUrl))
   }
 
   return runPageActionInTab(tabId, action)
