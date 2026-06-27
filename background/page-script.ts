@@ -6,6 +6,24 @@ export type ExtractCodexOAuthUrlResult = {
   authUrl?: string
 }
 
+export type DetectCpaOAuthReadyResult = {
+  ok: boolean
+  message: string
+  buttonText?: string
+  url: string
+}
+
+export type DetectCpaOAuthStartState = "ready" | "started" | "unknown"
+
+export type DetectCpaOAuthStartStateResult = {
+  ok: boolean
+  state: DetectCpaOAuthStartState
+  message: string
+  buttonText?: string
+  authUrl?: string
+  url: string
+}
+
 export type DetectCodexAuthPageState =
   | "oauth_consent_ready"
   | "verification_invalid_code"
@@ -122,6 +140,230 @@ export const extractCodexOAuthUrlInPage = (): ExtractCodexOAuthUrlResult => {
     message: "未找到授权链接，请确认页面已经生成 OpenAI 授权链接"
   }
 }
+
+/**
+ * 判断 CPA OAuth 页面是否已经回到可以开始下一轮登录的状态。
+ *
+ * 第六步提交 callback 后，CPA 前端会先展示认证成功，再异步恢复出
+ * “登录另一个账号”或“开始 Codex 登录”。批量流程必须等到这个状态，
+ * 否则下一轮会抢在上一轮前端状态更新前启动。
+ *
+ * @return 页面是否已经可继续下一轮。
+ */
+export const detectCpaOAuthReadyInPage = (): DetectCpaOAuthReadyResult => {
+  const normalizeText = (value: string) => {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+
+  const isVisible = (element: Element | null) => {
+    if (!element) {
+      return false
+    }
+
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    )
+  }
+
+  const isEnabled = (element: Element | null) => {
+    const htmlElement = element as HTMLElement | null
+    return Boolean(
+      htmlElement &&
+        isVisible(htmlElement) &&
+        !(htmlElement as HTMLButtonElement).disabled &&
+        htmlElement.getAttribute("aria-disabled") !== "true"
+    )
+  }
+
+  const getActionText = (element: Element | null) => {
+    const htmlElement = element as HTMLElement | null
+    return normalizeText(
+      [
+        htmlElement?.textContent,
+        (htmlElement as HTMLInputElement | null)?.value,
+        htmlElement?.getAttribute?.("aria-label"),
+        htmlElement?.getAttribute?.("title")
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+  }
+
+  const readyButton = Array.from(
+    document.querySelectorAll(
+      "button, a, [role='button'], input[type='button'], input[type='submit']"
+    )
+  ).find((element) => {
+    if (!isEnabled(element)) {
+      return false
+    }
+
+    return /登录另一个账号|开始\s*codex\s*登录/i.test(getActionText(element))
+  })
+
+  if (readyButton) {
+    return {
+      ok: true,
+      message: "CPA OAuth 页面已恢复到可开始下一轮的状态",
+      buttonText: getActionText(readyButton),
+      url: location.href
+    }
+  }
+
+  return {
+    ok: false,
+    message: "CPA OAuth 页面尚未恢复到可开始下一轮的状态",
+    url: location.href
+  }
+}
+
+/**
+ * 判断 CPA OAuth 页面在 Step 1 开始前是否处于可点击或已点击后的状态。
+ *
+ * ready：页面上能看到“登录另一个账号”或“开始 Codex 登录”；
+ * started：已经生成 OpenAI 授权链接，说明“开始 Codex 登录”已经被点过。
+ *
+ * @return CPA OAuth 页面当前状态。
+ */
+export const detectCpaOAuthStartStateInPage =
+  (): DetectCpaOAuthStartStateResult => {
+    const authUrlPrefix = "https://auth.openai.com/oauth/authorize"
+    const normalizeText = (value: string) => {
+      return String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+    }
+
+    const normalizeAuthUrl = (value?: string) => {
+      try {
+        const parsed = new URL(String(value || "").trim())
+        if (
+          parsed.origin !== "https://auth.openai.com" ||
+          parsed.pathname !== "/oauth/authorize"
+        ) {
+          return undefined
+        }
+
+        return parsed.href
+      } catch {
+        return undefined
+      }
+    }
+
+    const isVisible = (element: Element | null) => {
+      if (!element) {
+        return false
+      }
+
+      const htmlElement = element as HTMLElement
+      const rect = htmlElement.getBoundingClientRect()
+      const style = window.getComputedStyle(htmlElement)
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== "none" &&
+        style.visibility !== "hidden"
+      )
+    }
+
+    const isEnabled = (element: Element | null) => {
+      const htmlElement = element as HTMLElement | null
+      return Boolean(
+        htmlElement &&
+          isVisible(htmlElement) &&
+          !(htmlElement as HTMLButtonElement).disabled &&
+          htmlElement.getAttribute("aria-disabled") !== "true"
+      )
+    }
+
+    const getActionText = (element: Element | null) => {
+      const htmlElement = element as HTMLElement | null
+      return normalizeText(
+        [
+          htmlElement?.textContent,
+          (htmlElement as HTMLInputElement | null)?.value,
+          htmlElement?.getAttribute?.("aria-label"),
+          htmlElement?.getAttribute?.("title")
+        ]
+          .filter(Boolean)
+          .join(" ")
+      )
+    }
+
+    const readyButton = Array.from(
+      document.querySelectorAll(
+        "button, a, [role='button'], input[type='button'], input[type='submit']"
+      )
+    ).find((element) => {
+      return (
+        isEnabled(element) &&
+        /登录另一个账号|开始\s*codex\s*登录/i.test(getActionText(element))
+      )
+    })
+
+    if (readyButton) {
+      return {
+        ok: true,
+        state: "ready",
+        message: "CPA OAuth 页面可开始新的 Codex 登录",
+        buttonText: getActionText(readyButton),
+        url: location.href
+      }
+    }
+
+    const link = document.querySelector(
+      `a[href^="${authUrlPrefix}"]`
+    ) as HTMLAnchorElement | null
+    const hrefAuthUrl = normalizeAuthUrl(link?.href)
+    if (hrefAuthUrl) {
+      return {
+        ok: true,
+        state: "started",
+        message: "CPA OAuth 页面已经生成授权链接，需要刷新后重新开始",
+        authUrl: hrefAuthUrl,
+        url: location.href
+      }
+    }
+
+    const walker = document.createTreeWalker(
+      document.body || document.documentElement,
+      NodeFilter.SHOW_TEXT
+    )
+    let current = walker.nextNode()
+    while (current) {
+      const text = String(current.textContent || "").trim()
+      const match = text.match(
+        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
+      )
+      const textAuthUrl = normalizeAuthUrl(match?.[0])
+      if (textAuthUrl) {
+        return {
+          ok: true,
+          state: "started",
+          message: "CPA OAuth 页面已经生成授权链接，需要刷新后重新开始",
+          authUrl: textAuthUrl,
+          url: location.href
+        }
+      }
+
+      current = walker.nextNode()
+    }
+
+    return {
+      ok: false,
+      state: "unknown",
+      message: "未确认 CPA OAuth 页面是否可开始新的 Codex 登录",
+      url: location.href
+    }
+  }
 
 /**
  * 判断当前 OpenAI 授权页所处的认证状态。

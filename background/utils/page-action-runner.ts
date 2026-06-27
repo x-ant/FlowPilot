@@ -7,7 +7,7 @@ import {
 } from "./tab-utils"
 
 type RunPageActionInTabOptions = {
-  reloadBeforeAction?: boolean
+  targetUrlMatcher?: (url: string) => boolean
 }
 
 export type PageActionRunResult = {
@@ -75,7 +75,7 @@ export const runPageActionInTab = async (
  *
  * @param targetUrl 要打开或复用的页面地址。
  * @param action 注入到页面里执行的动作配置。
- * @param tabOptions 执行动作前的标签页级选项，例如是否先刷新页面。
+ * @param tabOptions 执行动作前的标签页级选项。
  * @return 页面动作执行结果。
  */
 export const runPageActionInTargetUrl = async (
@@ -84,15 +84,14 @@ export const runPageActionInTargetUrl = async (
   tabOptions: RunPageActionInTabOptions = {}
 ): Promise<PageActionRunResult> => {
   const tabId = await findOrOpenTab(targetUrl)
+  const targetUrlMatcher =
+    tabOptions.targetUrlMatcher ||
+    ((url: string) => isSameTargetUrl(url, targetUrl))
   // 等页面完成跳转
-  const targetUrlReady = await waitForTabMatchingUrl(
-    tabId,
-    (url) => isSameTargetUrl(url, targetUrl),
-    {
-      timeoutMs: 5000,
-      intervalMs: 100
-    }
-  )
+  const targetUrlReady = await waitForTabMatchingUrl(tabId, targetUrlMatcher, {
+    timeoutMs: 5000,
+    intervalMs: 100
+  })
 
   if (!targetUrlReady) {
     const currentTab = await chrome.tabs.get(tabId)
@@ -104,11 +103,6 @@ export const runPageActionInTargetUrl = async (
         url: currentTab.url
       }
     }
-  }
-
-  if (tabOptions.reloadBeforeAction) {
-    await chrome.tabs.reload(tabId)
-    await waitForTabLoaded(tabId, (url) => isSameTargetUrl(url, targetUrl))
   }
 
   return runPageActionInTab(tabId, action)

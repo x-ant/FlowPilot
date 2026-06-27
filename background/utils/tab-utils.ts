@@ -28,6 +28,14 @@ const waitForDelay = (timeoutMs: number) => {
   })
 }
 
+const isSameFullUrl = (currentUrl: string | undefined, targetUrl: string) => {
+  try {
+    return new URL(String(currentUrl || "")).href === new URL(targetUrl).href
+  } catch {
+    return currentUrl === targetUrl
+  }
+}
+
 /**
  * 等待指定标签页加载完成。
  *
@@ -318,17 +326,20 @@ export const findOrOpenMatchedTab = async (
 
   // region ========== 已经存在 ==========
   if (matchedTab?.id) {
-    await chrome.tabs.update(
-      matchedTab.id,
-      shouldActivate
-        ? {
-            active: true,
-            url: options.targetUrl
-          }
-        : {
-            url: options.targetUrl
-          }
-    )
+    const updateProperties: chrome.tabs.UpdateProperties = {}
+
+    if (shouldActivate) {
+      updateProperties.active = true
+    }
+
+    if (!isSameFullUrl(matchedTab.url, options.targetUrl)) {
+      updateProperties.url = options.targetUrl
+    }
+
+    if (Object.keys(updateProperties).length > 0) {
+      await chrome.tabs.update(matchedTab.id, updateProperties)
+    }
+
     return matchedTab.id
   }
   // endregion
