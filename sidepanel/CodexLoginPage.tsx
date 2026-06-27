@@ -659,26 +659,37 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
             停止当前流程
           </Button>
         ) : (
-          <Dropdown.Button
-            type="primary"
-            trigger={["click"]}
-            disabled={!cpaUrl.trim() || selectedCount === 0}
-            menu={{
-              items: [
-                {
-                  key: "all",
-                  label: "全部执行"
+          <Space.Compact>
+            <Button
+              type="primary"
+              disabled={!cpaUrl.trim() || selectedCount === 0}
+              onClick={() => {
+                void handleStartBatch("pending")
+              }}>
+              执行未完成
+            </Button>
+            <Dropdown
+              trigger={["click"]}
+              disabled={!cpaUrl.trim() || selectedCount === 0}
+              menu={{
+                items: [
+                  {
+                    key: "all",
+                    label: "全部执行"
+                  }
+                ],
+                onClick: () => {
+                  void handleStartBatch("all")
                 }
-              ],
-              onClick: () => {
-                void handleStartBatch("all")
-              }
-            }}
-            onClick={() => {
-              void handleStartBatch("pending")
-            }}>
-            执行未完成
-          </Dropdown.Button>
+              }}>
+              <Button
+                type="primary"
+                disabled={!cpaUrl.trim() || selectedCount === 0}
+                aria-label="执行选项">
+                ▾
+              </Button>
+            </Dropdown>
+          </Space.Compact>
         )
       }
       debugTitleExtra={

@@ -1,7 +1,6 @@
 import { createMail2925Runner } from "./mail-2925"
 import {
   detectCodexAuthPageStateInPage,
-  detectCpaOAuthReadyInPage,
   detectCpaOAuthStartStateInPage,
   extractCodexOAuthUrlInPage,
   type DetectCodexAuthPageState
@@ -146,8 +145,8 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   /**
    * 把 CPA 管理页地址统一指向 OAuth 页面。
    *
-   * Step 1 和 Step 6 都依赖 OAuth 页上的控件。标签页复用逻辑会忽略 hash，
-   * 所以如果当前停在 #/quota，必须在执行页面动作前显式切到 #/oauth。
+   * 这里只负责生成目标地址，不执行刷新。Step 1 会先切到这个路由，
+   * 只有检测到页面处于“已点击开始”的中间态时才真正 reload。
    *
    * @param rawUrl 侧边栏保存的 CPA 地址。
    * @return 指向 #/oauth 的 CPA 地址；URL 无法解析时返回原值。
@@ -693,15 +692,15 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         await waitForTabLoaded(tabId)
         const [detectInjectionResult] = await chrome.scripting.executeScript({
           target: { tabId },
-          func: detectCpaOAuthReadyInPage
+          func: detectCpaOAuthStartStateInPage
         })
         const detectValue = detectInjectionResult?.result
         const managementTab = await chrome.tabs.get(tabId)
 
-        if (detectValue?.ok) {
+        if (detectValue?.state === "ready") {
           return {
             ok: true,
-            message: detectValue.message,
+            message: "CPA OAuth 页面已恢复到可开始下一轮的状态",
             targetTab: {
               id: tabId,
               url: managementTab.url
@@ -763,7 +762,9 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 打开或复用 CPA OAuth 页，并在必要时恢复异常的“已点击开始”状态。
+   * 打开或复用 CPA OAuth 页，并在必要时恢复异常状态。
+   *
+   * 只有页面已经生成旧授权链接，也就是“开始 Codex 登录”已被点过，才会 reload。
    *
    * @param cpaOAuthUrl CPA OAuth 页地址。
    * @return 可继续点击“开始 Codex 登录”的标签页。
@@ -781,13 +782,13 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     )
 
     if (!targetUrlReady) {
-      const currentTab = await chrome.tabs.get(tabId)
+      const latestTab = await chrome.tabs.get(tabId)
       return {
         ok: false,
         message: `目标页面未切换到 OAuth 地址：${cpaOAuthUrl}`,
         tab: {
           id: tabId,
-          url: currentTab.url
+          url: latestTab.url
         }
       }
     }
@@ -900,8 +901,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     if (authTab.id) {
       try {
         await clearSessionStorageInTab(authTab.id)
-        // 即便数据已经清理但是页面仍已经加载好了
-        await chrome.tabs.reload(authTab.id)
       } catch {
         // Best effort only.
       }

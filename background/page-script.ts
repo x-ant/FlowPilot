@@ -6,13 +6,6 @@ export type ExtractCodexOAuthUrlResult = {
   authUrl?: string
 }
 
-export type DetectCpaOAuthReadyResult = {
-  ok: boolean
-  message: string
-  buttonText?: string
-  url: string
-}
-
 export type DetectCpaOAuthStartState = "ready" | "started" | "unknown"
 
 export type DetectCpaOAuthStartStateResult = {
@@ -138,90 +131,6 @@ export const extractCodexOAuthUrlInPage = (): ExtractCodexOAuthUrlResult => {
   return {
     ok: false,
     message: "未找到授权链接，请确认页面已经生成 OpenAI 授权链接"
-  }
-}
-
-/**
- * 判断 CPA OAuth 页面是否已经回到可以开始下一轮登录的状态。
- *
- * 第六步提交 callback 后，CPA 前端会先展示认证成功，再异步恢复出
- * “登录另一个账号”或“开始 Codex 登录”。批量流程必须等到这个状态，
- * 否则下一轮会抢在上一轮前端状态更新前启动。
- *
- * @return 页面是否已经可继续下一轮。
- */
-export const detectCpaOAuthReadyInPage = (): DetectCpaOAuthReadyResult => {
-  const normalizeText = (value: string) => {
-    return String(value || "")
-      .replace(/\s+/g, " ")
-      .trim()
-  }
-
-  const isVisible = (element: Element | null) => {
-    if (!element) {
-      return false
-    }
-
-    const htmlElement = element as HTMLElement
-    const rect = htmlElement.getBoundingClientRect()
-    const style = window.getComputedStyle(htmlElement)
-    return (
-      rect.width > 0 &&
-      rect.height > 0 &&
-      style.display !== "none" &&
-      style.visibility !== "hidden"
-    )
-  }
-
-  const isEnabled = (element: Element | null) => {
-    const htmlElement = element as HTMLElement | null
-    return Boolean(
-      htmlElement &&
-        isVisible(htmlElement) &&
-        !(htmlElement as HTMLButtonElement).disabled &&
-        htmlElement.getAttribute("aria-disabled") !== "true"
-    )
-  }
-
-  const getActionText = (element: Element | null) => {
-    const htmlElement = element as HTMLElement | null
-    return normalizeText(
-      [
-        htmlElement?.textContent,
-        (htmlElement as HTMLInputElement | null)?.value,
-        htmlElement?.getAttribute?.("aria-label"),
-        htmlElement?.getAttribute?.("title")
-      ]
-        .filter(Boolean)
-        .join(" ")
-    )
-  }
-
-  const readyButton = Array.from(
-    document.querySelectorAll(
-      "button, a, [role='button'], input[type='button'], input[type='submit']"
-    )
-  ).find((element) => {
-    if (!isEnabled(element)) {
-      return false
-    }
-
-    return /登录另一个账号|开始\s*codex\s*登录/i.test(getActionText(element))
-  })
-
-  if (readyButton) {
-    return {
-      ok: true,
-      message: "CPA OAuth 页面已恢复到可开始下一轮的状态",
-      buttonText: getActionText(readyButton),
-      url: location.href
-    }
-  }
-
-  return {
-    ok: false,
-    message: "CPA OAuth 页面尚未恢复到可开始下一轮的状态",
-    url: location.href
   }
 }
 
