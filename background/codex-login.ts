@@ -29,7 +29,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
   const getAbortSignal = () => context.abortSignal
 
-  const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录"]
+  const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录", "登录另一个账号"]
 
   const OPENAI_LOGIN_BUTTON_TEXTS = [
     "continue",

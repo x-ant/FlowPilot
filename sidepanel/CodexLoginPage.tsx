@@ -153,6 +153,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [isBatchRunning, setIsBatchRunning] = useState(false)
+  const [isBatchStopping, setIsBatchStopping] = useState(false)
   const batchCancelRef = useRef(false)
   const batchAbortControllerRef = useRef<AbortController | null>(null)
 
@@ -504,6 +505,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     batchCancelRef.current = false
+    setIsBatchStopping(false)
     const batchAbortController = new AbortController()
     batchAbortControllerRef.current = batchAbortController
     const codexLoginRunner = createCodexLoginRunner({
@@ -625,6 +627,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
 
     setRunningEmail("")
     setIsBatchRunning(false)
+    setIsBatchStopping(false)
     batchAbortControllerRef.current = null
     setStatus(
       batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
@@ -632,6 +635,11 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleStopBatch = () => {
+    if (isBatchStopping) {
+      return
+    }
+
+    setIsBatchStopping(true)
     batchCancelRef.current = true
     batchAbortControllerRef.current?.abort()
     setStatus("正在停止当前流程")
@@ -655,8 +663,12 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       onMarkSelectedAccountsDone={accountPage.handleMarkSelectedAccountsDone}
       accountToolbarActions={
         isBatchRunning ? (
-          <Button danger onClick={handleStopBatch}>
-            停止当前流程
+          <Button
+            danger
+            disabled={isBatchStopping}
+            loading={isBatchStopping}
+            onClick={handleStopBatch}>
+            {isBatchStopping ? "正在停止" : "停止当前流程"}
           </Button>
         ) : (
           <Space.Compact>

@@ -167,6 +167,36 @@ export const detectCpaOAuthStartStateInPage =
       }
     }
 
+    const findAuthUrl = () => {
+      const link = document.querySelector(
+        `a[href^="${authUrlPrefix}"]`
+      ) as HTMLAnchorElement | null
+      const hrefAuthUrl = normalizeAuthUrl(link?.href)
+      if (hrefAuthUrl) {
+        return hrefAuthUrl
+      }
+
+      const walker = document.createTreeWalker(
+        document.body || document.documentElement,
+        NodeFilter.SHOW_TEXT
+      )
+      let current = walker.nextNode()
+      while (current) {
+        const text = String(current.textContent || "").trim()
+        const match = text.match(
+          /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
+        )
+        const textAuthUrl = normalizeAuthUrl(match?.[0])
+        if (textAuthUrl) {
+          return textAuthUrl
+        }
+
+        current = walker.nextNode()
+      }
+
+      return undefined
+    }
+
     const isVisible = (element: Element | null) => {
       if (!element) {
         return false
@@ -228,42 +258,15 @@ export const detectCpaOAuthStartStateInPage =
       }
     }
 
-    const link = document.querySelector(
-      `a[href^="${authUrlPrefix}"]`
-    ) as HTMLAnchorElement | null
-    const hrefAuthUrl = normalizeAuthUrl(link?.href)
-    if (hrefAuthUrl) {
+    const authUrl = findAuthUrl()
+    if (authUrl) {
       return {
         ok: true,
         state: "started",
         message: "CPA OAuth 页面已经生成授权链接，需要刷新后重新开始",
-        authUrl: hrefAuthUrl,
+        authUrl,
         url: location.href
       }
-    }
-
-    const walker = document.createTreeWalker(
-      document.body || document.documentElement,
-      NodeFilter.SHOW_TEXT
-    )
-    let current = walker.nextNode()
-    while (current) {
-      const text = String(current.textContent || "").trim()
-      const match = text.match(
-        /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/
-      )
-      const textAuthUrl = normalizeAuthUrl(match?.[0])
-      if (textAuthUrl) {
-        return {
-          ok: true,
-          state: "started",
-          message: "CPA OAuth 页面已经生成授权链接，需要刷新后重新开始",
-          authUrl: textAuthUrl,
-          url: location.href
-        }
-      }
-
-      current = walker.nextNode()
     }
 
     return {
