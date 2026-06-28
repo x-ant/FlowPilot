@@ -381,6 +381,9 @@ export const pollMail2925VerificationCodeInPage = async (
     await refreshInbox()
 
     for (let itemIndex = 0; itemIndex < 8; itemIndex += 1) {
+      // 打开邮件再返回列表时，2925 可能重新加载列表；如果新邮件插入顶部，
+      // itemIndex 会有漂移风险。页面没有稳定邮件 id，弱文本去重可能误跳新验证码，
+      // 所以这里保持按当前列表扫描，最终正确性依赖详情页的收件人和时间校验。
       const item = findMailItems().slice(0, 8)[itemIndex]
       if (!item) {
         break
