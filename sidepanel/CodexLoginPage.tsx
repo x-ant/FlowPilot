@@ -1,4 +1,4 @@
-import { Button, Dropdown, Input, Select, Space, Tag } from "antd"
+import { Button, Dropdown, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -26,6 +26,7 @@ import {
   type ManagedAccountStatus,
   type PageProps
 } from "./shared"
+import { DebugTabControl } from "./DebugTabControl"
 import { useAccountPageState } from "./useAccountPageState"
 
 const runManagedAccountFlow = async (
@@ -209,6 +210,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     log.debug(
       `调试 auth tab 已设置为 ${activeTab.id}（${activeTab.url || "unknown"}）`
     )
+  }
+
+  const handleClearDebugState = () => {
+    setDebugAuthTabId("")
+    setDebugProgress(0)
+    setDebugVerificationRequestedAt(0)
+    setDebugCallbackUrl("")
+    setStatus("调试状态已清空")
   }
 
   const handleRunDebugStep = async (step: DebugStep) => {
@@ -706,44 +715,39 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       }
       debugTitleExtra={
         <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
-      }
-      debugContent={
-        <div className="debug-panel">
-          <div className="debug-row">
-            <div className="debug-field">
-              <span className="debug-label">账号</span>
-              <Select
-                value={debugEmail || undefined}
-                placeholder="选择账号"
-                options={accounts.map((account) => {
-                  return {
-                    label: account.email,
-                    value: account.email
-                  }
-                })}
-                onChange={(value) => {
-                  setDebugEmail(value)
-                  setDebugProgress(0)
-                  setDebugVerificationRequestedAt(0)
-                  setDebugCallbackUrl("")
-                }}
-                disabled={disabled || accounts.length === 0}
-              />
-            </div>
-
-            <div className="debug-field">
-              <span className="debug-label">Auth tab</span>
-              <Input
-                value={debugAuthTabId}
-                placeholder="tabId"
-                inputMode="numeric"
-                onChange={(event) => {
-                  setDebugAuthTabId(event.target.value.replace(/[^\d]/g, ""))
-                }}
-                disabled={disabled}
-              />
-            </div>
-          </div>
+        }
+        debugContent={
+          <div className="debug-panel">
+          <DebugTabControl
+            disabled={disabled}
+            label="Auth tab"
+            leadingContent={
+              <div className="debug-field">
+                <span className="debug-label">账号</span>
+                <Select
+                  value={debugEmail || undefined}
+                  placeholder="选择账号"
+                  options={accounts.map((account) => {
+                    return {
+                      label: account.email,
+                      value: account.email
+                    }
+                  })}
+                  onChange={(value) => {
+                    setDebugEmail(value)
+                    setDebugProgress(0)
+                    setDebugVerificationRequestedAt(0)
+                    setDebugCallbackUrl("")
+                  }}
+                  disabled={disabled || accounts.length === 0}
+                />
+              </div>
+            }
+            value={debugAuthTabId}
+            onChange={setDebugAuthTabId}
+            onUseActiveTab={handleUseActiveTabAsDebugAuthTab}
+            onClear={handleClearDebugState}
+          />
 
           <Space size={8} wrap>
             <Button
@@ -752,24 +756,6 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
               loading={isDebugRunning}
               disabled={disabled || !selectedDebugAccount}>
               下一步
-            </Button>
-            <Button
-              onClick={() => {
-                void handleUseActiveTabAsDebugAuthTab()
-              }}
-              disabled={disabled}>
-              使用当前标签页
-            </Button>
-            <Button
-              onClick={() => {
-                setDebugAuthTabId("")
-                setDebugProgress(0)
-                setDebugVerificationRequestedAt(0)
-                setDebugCallbackUrl("")
-                setStatus("调试状态已清空")
-              }}
-              disabled={disabled}>
-              清空调试状态
             </Button>
           </Space>
 

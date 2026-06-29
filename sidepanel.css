@@ -255,6 +255,10 @@ body {
   gap: 10px;
 }
 
+.debug-row--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .debug-field {
   min-width: 0;
   display: flex;

@@ -43,6 +43,11 @@ export type PageActionField = {
 export type PageActionButton = {
   texts?: string[]
   selectors?: string[]
+  /**
+   * 触发按钮的方式；不传时默认使用普通 click。
+   *
+   * @default "click"
+   */
   triggerMode?: "auto" | "click" | "requestSubmit"
 }
 
@@ -557,6 +562,7 @@ export const performPageActionInPage = (
             ]
       ).join(",")
 
+      // 取第一个符合条件的按钮
       return Array.from(document.querySelectorAll(buttonSelector)).find(
         (element) => {
           if (isUnavailable(element)) {
