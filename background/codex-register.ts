@@ -4,6 +4,8 @@ import type { RunContext } from "./utils/run-context"
 import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
+const DEFAULT_REGISTER_FULL_NAME = "drizzle"
+const DEFAULT_REGISTER_AGE = 20
 
 type CodexRegisterStepResponse = {
   ok: boolean
@@ -69,6 +71,410 @@ const OPENAI_VERIFICATION_INPUT_SELECTORS = [
   "input[placeholder*='验证码']",
   "input[inputmode='numeric']"
 ]
+
+const submitRegisterProfileInPage = (
+  fullName: string,
+  age: number
+): Promise<{ ok: boolean; message: string }> => {
+  const waitForDelay = (timeoutMs: number) => {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, timeoutMs)
+    })
+  }
+
+  function normalizeText(value: string) {
+    return String(value || "")
+      .replace(/\s+/g, "")
+      .toLowerCase()
+  }
+
+  const getElementText = (element: Element) => {
+    const inputValue =
+      element instanceof HTMLInputElement ? element.value : ""
+
+    return normalizeText(
+      [
+        inputValue,
+        element.textContent,
+        element.getAttribute("aria-label"),
+        element.getAttribute("title")
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+  }
+
+  const isUnavailable = (element: Element) => {
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+
+    return (
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      Boolean((element as HTMLButtonElement).disabled) ||
+      htmlElement.getAttribute("aria-disabled") === "true"
+    )
+  }
+
+  const waitFor = async <T>(
+    getter: () => T | undefined | Promise<T | undefined>,
+    timeoutMs: number
+  ) => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const value = await getter()
+      if (value) {
+        return value
+      }
+
+      await waitForDelay(200)
+    }
+
+    return undefined
+  }
+
+  const findInput = (selectors: string[]) => {
+    for (const selector of selectors) {
+      const matched = Array.from(document.querySelectorAll(selector)).find(
+        (element) => {
+          return !isUnavailable(element)
+        }
+      ) as HTMLElement | undefined
+
+      if (matched) {
+        return matched
+      }
+    }
+
+    return undefined
+  }
+
+  const setInputValue = (
+    input: HTMLInputElement | HTMLSelectElement,
+    value: string
+  ) => {
+    if (input instanceof HTMLSelectElement) {
+      const optionValues = [value, String(Number(value)), value.padStart(2, "0")]
+      const option = Array.from(input.options).find((item) => {
+        return (
+          optionValues.includes(item.value) ||
+          optionValues.includes(normalizeText(item.textContent || ""))
+        )
+      })
+
+      input.value = option?.value || value
+      if (option) {
+        option.selected = true
+      }
+    } else {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set
+
+      if (valueSetter) {
+        valueSetter.call(input, value)
+      } else {
+        input.value = value
+      }
+    }
+
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  }
+
+  const fillField = async (element: HTMLElement, value: string) => {
+    if (
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLSelectElement
+    ) {
+      setInputValue(element, value)
+      element.focus()
+      return
+    }
+
+    element.focus()
+    document.execCommand("selectAll", false)
+
+    for (const character of value) {
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: character,
+          bubbles: true
+        })
+      )
+      element.dispatchEvent(
+        new InputEvent("beforeinput", {
+          inputType: "insertText",
+          data: character,
+          bubbles: true
+        })
+      )
+      element.dispatchEvent(
+        new InputEvent("input", {
+          inputType: "insertText",
+          data: character,
+          bubbles: true
+        })
+      )
+      element.dispatchEvent(
+        new KeyboardEvent("keyup", {
+          key: character,
+          bubbles: true
+        })
+      )
+      await waitForDelay(30)
+    }
+
+    element.textContent = value
+    element.blur()
+  }
+
+  const findBirthdaySelect = (labels: string[]) => {
+    const normalizedLabels = labels.map(normalizeText)
+
+    return Array.from(document.querySelectorAll(".react-aria-Select"))
+      .map((root) => {
+        const hasLabel = Array.from(root.querySelectorAll("span")).some(
+          (span) => {
+            return normalizedLabels.includes(
+              normalizeText(span.textContent || "")
+            )
+          }
+        )
+        const item = root.closest("[class*='selectItem']") || root.parentElement
+
+        return hasLabel
+          ? (item?.querySelector(
+              '[data-testid="hidden-select-container"] select'
+            ) as HTMLSelectElement | null)
+          : null
+      })
+      .find(Boolean) as HTMLSelectElement | undefined
+  }
+
+  const getBirthdayFromAge = () => {
+    const year = String(new Date().getFullYear() - Math.floor(Number(age) || 20))
+
+    return {
+      year,
+      month: "01",
+      day: "01",
+      value: `${year}-01-01`
+    }
+  }
+
+  const fillBirthdayField = async () => {
+    const birthday = getBirthdayFromAge()
+    const hidden = document.querySelector(
+      "input[name='birthday']"
+    ) as HTMLInputElement | null
+    const yearSelect = findBirthdaySelect(["年", "Year"])
+    const monthSelect = findBirthdaySelect(["月", "Month"])
+    const daySelect = findBirthdaySelect(["日", "天", "Day"])
+
+    if (yearSelect && monthSelect && daySelect) {
+      setInputValue(yearSelect, birthday.year)
+      setInputValue(monthSelect, "1")
+      setInputValue(daySelect, "1")
+      return "生日下拉字段"
+    }
+
+    const year = findInput([
+      "[role='spinbutton'][data-type='year']",
+      "[role='spinbutton'][aria-label*='year' i]",
+      "[role='spinbutton'][aria-label*='年']",
+      "input[name='year']",
+      "input[placeholder*='year' i]",
+      "input[placeholder*='年']",
+      "input[aria-label*='year' i]",
+      "input[aria-label*='年']"
+    ])
+    const month = findInput([
+      "[role='spinbutton'][data-type='month']",
+      "[role='spinbutton'][aria-label*='month' i]",
+      "[role='spinbutton'][aria-label*='月']",
+      "input[name='month']",
+      "input[placeholder*='month' i]",
+      "input[placeholder*='月']",
+      "input[aria-label*='month' i]",
+      "input[aria-label*='月']"
+    ])
+    const day = findInput([
+      "[role='spinbutton'][data-type='day']",
+      "[role='spinbutton'][aria-label*='day' i]",
+      "[role='spinbutton'][aria-label*='日']",
+      "[role='spinbutton'][aria-label*='天']",
+      "input[name='day']",
+      "input[placeholder*='day' i]",
+      "input[placeholder*='日']",
+      "input[placeholder*='天']",
+      "input[aria-label*='day' i]",
+      "input[aria-label*='日']",
+      "input[aria-label*='天']"
+    ])
+
+    if (year && month && day) {
+      await fillField(year, birthday.year)
+      await fillField(month, birthday.month)
+      await fillField(day, birthday.day)
+      if (hidden) {
+        setInputValue(hidden, birthday.value)
+      }
+      return "生日输入字段"
+    }
+
+    if (hidden) {
+      setInputValue(hidden, birthday.value)
+      return "隐藏生日字段"
+    }
+
+    return undefined
+  }
+
+  const findButton = () =>
+    Array.from(
+      document.querySelectorAll(
+        "button,[role='button'],input[type='button'],input[type='submit']"
+      )
+    ).find((element) => {
+      const currentElementText = getElementText(element)
+      return (
+        !isUnavailable(element) &&
+        /完成账户创建|完成帐户创建|创建账户|createaccount|createanaccount|finish|done|continue|继续/.test(
+          currentElementText
+        )
+      )
+    }) as HTMLElement | undefined
+
+  const getButtonActionContext = () => {
+    const button = findButton()
+    const buttonForm =
+      button instanceof HTMLButtonElement ||
+      button instanceof HTMLInputElement
+        ? button.form
+        : null
+    const form: HTMLFormElement | null =
+      buttonForm || (button?.closest("form") as HTMLFormElement | null) || null
+
+    return {
+      button,
+      buttonForm,
+      form
+    }
+  }
+
+  const performButtonAction = (
+    button: HTMLElement | undefined,
+    buttonForm: HTMLFormElement | null,
+    form: HTMLFormElement | null
+  ) => {
+    const clickButton = () => {
+      if (!button || typeof button.click !== "function") {
+        return false
+      }
+
+      button.click()
+      return true
+    }
+
+    const requestSubmit = () => {
+      if (!form || typeof form.requestSubmit !== "function") {
+        return false
+      }
+
+      if (buttonForm === form && button) {
+        form.requestSubmit(button)
+      } else {
+        form.requestSubmit()
+      }
+
+      return true
+    }
+
+    return clickButton() || requestSubmit()
+  }
+
+  return (async () => {
+    const nameInput = await waitFor(() => {
+      return findInput([
+        "input[name='name']",
+        "input[autocomplete='name']",
+        "input[placeholder*='全名']",
+        "input[placeholder*='姓名']",
+        "input[placeholder*='name' i]",
+        "input[aria-label*='全名']",
+        "input[aria-label*='姓名']",
+        "input[aria-label*='name' i]"
+      ])
+    }, 10000)
+
+    if (!nameInput) {
+      return {
+        ok: false,
+        message: "未找到名称输入框"
+      }
+    }
+
+    await fillField(nameInput, fullName)
+
+    const profileMode = await waitFor(async () => {
+      const ageInput = findInput([
+        "input[name='age']",
+        "input[type='number']",
+        "input[placeholder*='年龄']",
+        "input[placeholder*='age' i]",
+        "input[aria-label*='年龄']",
+        "input[aria-label*='age' i]"
+      ])
+      if (ageInput) {
+        await fillField(ageInput, String(age))
+        return "年龄字段"
+      }
+
+      return fillBirthdayField()
+    }, 10000)
+
+    if (!profileMode) {
+      return {
+        ok: false,
+        message: "未找到年龄或生日输入项"
+      }
+    }
+
+    const buttonActionContext = await waitFor(() => {
+      const context = getButtonActionContext()
+      return context.button ? context : undefined
+    }, 5000)
+    if (!buttonActionContext) {
+      return {
+        ok: false,
+        message: "未找到完成账户创建按钮"
+      }
+    }
+
+    if (
+      !performButtonAction(
+        buttonActionContext.button,
+        buttonActionContext.buttonForm,
+        buttonActionContext.form
+      )
+    ) {
+      return {
+        ok: false,
+        message: "未能触发完成账户创建按钮"
+      }
+    }
+
+    return {
+      ok: true,
+      message: `已填写 ${fullName} 和${profileMode}并点击完成账户创建`
+    }
+  })()
+}
 
 const detectRegisterEmailSubmittedInPage = () => {
   const normalizeText = (value: string) => {
@@ -274,15 +680,50 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const submitRegisterProfile = async (
+    tabId: number
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    try {
+      await chrome.tabs.get(tabId)
+    } catch {
+      return {
+        ok: false,
+        message: "未找到注册页面 tab，请先执行 Step 1 或使用当前标签页"
+      }
+    }
+
+    await waitForTabLoaded(tabId)
+    const [profileResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: submitRegisterProfileInPage,
+      args: [DEFAULT_REGISTER_FULL_NAME, DEFAULT_REGISTER_AGE]
+    })
+    const currentTab = await chrome.tabs.get(tabId)
+    const result = profileResult?.result
+
+    return {
+      ok: Boolean(result?.ok),
+      message: result?.message || "填写名称、年龄或生日失败",
+      targetTab: {
+        id: tabId,
+        url: currentTab.url
+      }
+    }
+  }
+
   return {
     openChatGptRegisterEntry,
     clickRegisterAndSubmitEmail,
-    fetchAndSubmitRegisterVerificationCode
+    fetchAndSubmitRegisterVerificationCode,
+    submitRegisterProfile
   }
 }
 
 export const {
   openChatGptRegisterEntry,
   clickRegisterAndSubmitEmail,
-  fetchAndSubmitRegisterVerificationCode
+  fetchAndSubmitRegisterVerificationCode,
+  submitRegisterProfile
 } = createCodexRegisterRunner()

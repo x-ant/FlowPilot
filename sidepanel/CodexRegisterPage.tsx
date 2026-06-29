@@ -4,14 +4,15 @@ import { useEffect, useMemo, useState } from "react"
 import {
   clickRegisterAndSubmitEmail,
   fetchAndSubmitRegisterVerificationCode,
-  openChatGptRegisterEntry
+  openChatGptRegisterEntry,
+  submitRegisterProfile
 } from "../background/codex-register"
 import { AccountWorkspace } from "./AccountWorkspace"
 import { DebugTabControl } from "./DebugTabControl"
 import { normalizeEmail, REGISTER_STORAGE_KEYS, type PageProps } from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 3
+const REGISTER_STEP_COUNT = 4
 
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
@@ -229,10 +230,73 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       setDebugRegisterTabId(String(result.targetTab?.id || parsedTabId))
-      setDebugProgress(REGISTER_STEP_COUNT)
+      setDebugProgress(3)
       setStatus("已提交注册验证码")
       log.info(
         `[注册调试][${selectedDebugAccount.email}] Step 3 ${result.message}；tab=${
+          result.targetTab?.id || "unknown"
+        }；url=${result.targetTab?.url || "unknown"}`
+      )
+      patchAccountState(selectedDebugAccount.email, {
+        progress: 3,
+        status: "running",
+        lastMessage: result.message
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "提交注册验证码异常"
+      setStatus("提交注册验证码异常")
+      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+      patchAccountState(selectedDebugAccount.email, {
+        status: "failed",
+        lastMessage: message
+      })
+    } finally {
+      setIsDebugRunning(false)
+      setRunningEmail("")
+    }
+  }
+
+  const handleSubmitRegisterProfile = async () => {
+    if (isDebugRunning || !selectedDebugAccount) {
+      return
+    }
+
+    const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
+    if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
+      setStatus("请先执行 Step 1 打开 GPT 页面")
+      log.warn("[注册调试] Step 4 缺少注册 tabId，请先执行 Step 1")
+      return
+    }
+
+    setIsDebugRunning(true)
+    setRunningEmail(selectedDebugAccount.email)
+    setStatus("正在完成账户创建")
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 4 开始`)
+    patchAccountState(selectedDebugAccount.email, {
+      progress: 3,
+      status: "running",
+      lastMessage: "正在填写名称和年龄/生日"
+    })
+
+    try {
+      const result = await submitRegisterProfile(parsedTabId)
+
+      if (!result.ok) {
+        setStatus("完成账户创建失败")
+        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
+        patchAccountState(selectedDebugAccount.email, {
+          status: "failed",
+          lastMessage: result.message
+        })
+        return
+      }
+
+      setDebugRegisterTabId(String(result.targetTab?.id || parsedTabId))
+      setDebugProgress(REGISTER_STEP_COUNT)
+      setStatus("已完成账户创建")
+      log.info(
+        `[注册调试][${selectedDebugAccount.email}] Step 4 ${result.message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
@@ -243,8 +307,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "提交注册验证码异常"
-      setStatus("提交注册验证码异常")
+        error instanceof Error ? error.message : "完成账户创建异常"
+      setStatus("完成账户创建异常")
       log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
       patchAccountState(selectedDebugAccount.email, {
         status: "failed",
@@ -271,9 +335,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onMarkSelectedAccountsDone={accountPage.handleMarkSelectedAccountsDone}
       debugTitleExtra={
         <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
-        }
-        debugContent={
-          <div className="debug-panel">
+      }
+      debugContent={
+        <div className="debug-panel">
           <DebugTabControl
             disabled={isDebugRunning}
             label="注册 tab"
@@ -329,6 +393,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
               3 提交验证码
+            </Button>
+            <Button
+              onClick={() => {
+                void handleSubmitRegisterProfile()
+              }}
+              loading={isDebugRunning}
+              disabled={isDebugRunning || !selectedDebugAccount}>
+              4 完成账户创建
             </Button>
           </Space>
         </div>
