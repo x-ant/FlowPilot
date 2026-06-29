@@ -33,11 +33,14 @@ export const pollMail2925VerificationCodeInPage = async (
   const targetEmail = String(payload?.targetEmail || "")
     .trim()
     .toLowerCase()
+  // 最小就是0
   const requestTimestamp = Math.max(
     0,
     Number(payload?.verificationRequestedAt || 0)
   )
+  // 允许60秒误差，实际可能还剩59秒，但是已经是下一分钟了
   const staleToleranceMs = 60 * 1000
+  // 如果是不是0，就取传入的时间往前一分钟，如果是0，就当前时间往前找10分钟
   const filterAfter = requestTimestamp
     ? Math.max(0, requestTimestamp - staleToleranceMs)
     : startedAt - 10 * 60 * 1000

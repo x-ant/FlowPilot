@@ -1,3 +1,4 @@
+import { createMail2925Runner } from "./mail-2925"
 import { runPageActionInTab } from "./utils/page-action-runner"
 import type { RunContext } from "./utils/run-context"
 import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
@@ -56,6 +57,19 @@ const OPENAI_CONTINUE_BUTTON_TEXTS = [
   "提交"
 ]
 
+const OPENAI_VERIFICATION_INPUT_SELECTORS = [
+  "input[name='code']",
+  "input[name='otp']",
+  "input[autocomplete='one-time-code']",
+  "input[type='text'][maxlength='6']",
+  "input[type='tel'][maxlength='6']",
+  "input[aria-label*='code' i]",
+  "input[aria-label*='验证码']",
+  "input[placeholder*='code' i]",
+  "input[placeholder*='验证码']",
+  "input[inputmode='numeric']"
+]
+
 const detectRegisterEmailSubmittedInPage = () => {
   const normalizeText = (value: string) => {
     return String(value || "")
@@ -89,6 +103,7 @@ const detectRegisterEmailSubmittedInPage = () => {
 }
 
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
+  const { fetchMail2925VerificationCode } = createMail2925Runner(context)
   const getAbortSignal = () => context.abortSignal
 
   const throwIfRunAborted = () => {
@@ -197,11 +212,77 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const fetchAndSubmitRegisterVerificationCode = async (
+    tabId: number,
+    email: string,
+    password: string,
+    verificationRequestedAt = 0
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    try {
+      await chrome.tabs.get(tabId)
+    } catch {
+      return {
+        ok: false,
+        message: "未找到注册页面 tab，请先执行 Step 1 或使用当前标签页"
+      }
+    }
+
+    const mailResult = await fetchMail2925VerificationCode(email, password, {
+      verificationRequestedAt
+    })
+    throwIfRunAborted()
+    if (!mailResult.code) {
+      return {
+        ok: false,
+        message: mailResult.message,
+        targetTab: mailResult.mailTab
+      }
+    }
+
+    await chrome.tabs.update(tabId, { active: true })
+    const submitResult = await runPageActionInTab(tabId, {
+      fields: [
+        {
+          selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+          value: mailResult.code,
+          allowSplitInput: true
+        }
+      ],
+      button: {
+        texts: OPENAI_CONTINUE_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
+      },
+      timeoutMs: 15000,
+      successMessage: "已填写注册验证码并点击继续",
+      failureMessage: "未找到验证码输入框或继续按钮"
+    })
+
+    if (!submitResult.ok) {
+      return {
+        ok: false,
+        message: `${mailResult.message}；${submitResult.message}`,
+        targetTab: submitResult.tab
+      }
+    }
+
+    return {
+      ok: true,
+      message: `${mailResult.message}；${submitResult.message}`,
+      targetTab: submitResult.tab
+    }
+  }
+
   return {
     openChatGptRegisterEntry,
-    clickRegisterAndSubmitEmail
+    clickRegisterAndSubmitEmail,
+    fetchAndSubmitRegisterVerificationCode
   }
 }
 
-export const { openChatGptRegisterEntry, clickRegisterAndSubmitEmail } =
-  createCodexRegisterRunner()
+export const {
+  openChatGptRegisterEntry,
+  clickRegisterAndSubmitEmail,
+  fetchAndSubmitRegisterVerificationCode
+} = createCodexRegisterRunner()
