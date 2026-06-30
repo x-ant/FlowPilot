@@ -1,12 +1,13 @@
+import { createCodexLoginRunner } from "./codex-login"
 import { createMail2925Runner } from "./mail-2925"
-import { runPageActionInTab } from "./utils/page-action-runner"
-import type { RunContext } from "./utils/run-context"
-import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
 import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
 } from "./utils/browser-session-cleanup"
+import { runPageActionInTab } from "./utils/page-action-runner"
+import type { RunContext } from "./utils/run-context"
+import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [
@@ -87,10 +88,7 @@ const OPENAI_VERIFICATION_INPUT_SELECTORS = [
   "input[inputmode='numeric']"
 ]
 
-const OPENAI_READY_CONTINUE_BUTTON_TEXTS = [
-  "继续",
-  "continue"
-]
+const OPENAI_READY_CONTINUE_BUTTON_TEXTS = ["继续", "continue"]
 
 const submitRegisterProfileInPage = (
   fullName: string,
@@ -109,8 +107,7 @@ const submitRegisterProfileInPage = (
   }
 
   const getElementText = (element: Element) => {
-    const inputValue =
-      element instanceof HTMLInputElement ? element.value : ""
+    const inputValue = element instanceof HTMLInputElement ? element.value : ""
 
     return normalizeText(
       [
@@ -177,7 +174,11 @@ const submitRegisterProfileInPage = (
     value: string
   ) => {
     if (input instanceof HTMLSelectElement) {
-      const optionValues = [value, String(Number(value)), value.padStart(2, "0")]
+      const optionValues = [
+        value,
+        String(Number(value)),
+        value.padStart(2, "0")
+      ]
       const option = Array.from(input.options).find((item) => {
         return (
           optionValues.includes(item.value) ||
@@ -277,7 +278,9 @@ const submitRegisterProfileInPage = (
   }
 
   const getBirthdayFromAge = () => {
-    const year = String(new Date().getFullYear() - Math.floor(Number(age) || 20))
+    const year = String(
+      new Date().getFullYear() - Math.floor(Number(age) || 20)
+    )
 
     return {
       year,
@@ -373,8 +376,7 @@ const submitRegisterProfileInPage = (
   const getButtonActionContext = () => {
     const button = findButton()
     const buttonForm =
-      button instanceof HTMLButtonElement ||
-      button instanceof HTMLInputElement
+      button instanceof HTMLButtonElement || button instanceof HTMLInputElement
         ? button.form
         : null
     const form: HTMLFormElement | null =
@@ -530,6 +532,7 @@ const detectRegisterEmailSubmittedInPage = () => {
 
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
+  const { openCodexAuthLink } = createCodexLoginRunner(context)
   const getAbortSignal = () => context.abortSignal
 
   const throwIfRunAborted = () => {
@@ -557,7 +560,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         const currentTabStorageResult = await clearSiteStorageInTab(tabId)
         currentTabStorageMessage = `；当前注册页已清理 ${currentTabStorageResult.localCount}/${currentTabStorageResult.sessionCount}/${currentTabStorageResult.indexedDbCount}/${currentTabStorageResult.cacheCount} 个 local/session/indexedDB/cache 项`
       } catch {
-        currentTabStorageMessage = "；当前注册页站点存储清理失败，已继续打开页面"
+        currentTabStorageMessage =
+          "；当前注册页站点存储清理失败，已继续打开页面"
       }
 
       // 再刷新一下
@@ -785,12 +789,41 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const refreshRegisterOAuthAndLogin = async (
+    targetUrl: string,
+    managementKey: string
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    const normalizedTargetUrl = String(targetUrl || "").trim()
+    if (!normalizedTargetUrl) {
+      return {
+        ok: false,
+        message: "缺少 CPA OAuth 页面地址"
+      }
+    }
+
+    const result = await openCodexAuthLink(normalizedTargetUrl, {
+      cleanupSession: false,
+      managementKey
+    })
+
+    return {
+      ok: result.ok,
+      message: result.ok
+        ? `${result.message}；已刷新 OAuth 并进入登录授权流程`
+        : result.message,
+      targetTab: result.targetTab
+    }
+  }
+
   return {
     openChatGptRegisterEntry,
     clickRegisterAndSubmitEmail,
     fetchAndSubmitRegisterVerificationCode,
     submitRegisterProfile,
-    clickRegisterReadyContinue
+    clickRegisterReadyContinue,
+    refreshRegisterOAuthAndLogin
   }
 }
 
@@ -799,5 +832,6 @@ export const {
   clickRegisterAndSubmitEmail,
   fetchAndSubmitRegisterVerificationCode,
   submitRegisterProfile,
-  clickRegisterReadyContinue
+  clickRegisterReadyContinue,
+  refreshRegisterOAuthAndLogin
 } = createCodexRegisterRunner()

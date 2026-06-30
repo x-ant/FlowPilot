@@ -1,40 +1,37 @@
+import {
+  requestCpaOAuthUrl,
+  submitCpaOAuthCallback
+} from "./cpa-management-api"
 import { createMail2925Runner } from "./mail-2925"
 import {
   detectCodexAuthPageStateInPage,
-  detectCpaOAuthStartStateInPage,
-  extractCodexOAuthUrlInPage,
   type DetectCodexAuthPageState
 } from "./page-script"
 import type {
   CodexAuthProgressStepResponse,
   ConfirmCodexOAuthConsentResponse,
   FetchAndSubmitCodexVerificationCodeResponse,
-  OpenCodexAuthLinkResponse,
+  OpenCodexAuthLinkApiResponse,
   SubmitCodexOAuthCallbackResponse
 } from "./types"
 import { abortableSleep, raceWithAbort, throwIfAborted } from "./utils/abort"
-import {
-  runAuthPageAction,
-  runPageActionInTab,
-  runPageActionInTargetUrl
-} from "./utils/page-action-runner"
-import type { RunContext } from "./utils/run-context"
-import {
-  findOrOpenTab,
-  waitForTabLoaded,
-  waitForTabMatchingUrl
-} from "./utils/tab-utils"
 import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
 } from "./utils/browser-session-cleanup"
+import { runAuthPageAction } from "./utils/page-action-runner"
+import type { RunContext } from "./utils/run-context"
+import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
+
+type OpenCodexAuthLinkOptions = {
+  cleanupSession?: boolean
+  managementKey?: string
+}
 
 export const createCodexLoginRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
   const getAbortSignal = () => context.abortSignal
-
-  const CODEX_LOGIN_BUTTON_TEXTS = ["开始 Codex 登录", "登录另一个账号"]
 
   const OPENAI_LOGIN_BUTTON_TEXTS = [
     "continue",
@@ -107,19 +104,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     "提交"
   ]
   const OPENAI_OAUTH_CONSENT_CONTINUE_BUTTON_TEXTS = ["continue", "继续"]
-  const CODEX_CALLBACK_INPUT_SELECTORS = [
-    "input[placeholder*='localhost' i]",
-    "input[placeholder*='auth/callback' i]",
-    "input[aria-label*='回调']",
-    "input[aria-label*='callback' i]",
-    "input[name*='callback' i]",
-    "input[id*='callback' i]"
-  ]
-  const CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS = [
-    "提交回调 URL",
-    "提交回调URL",
-    "Submit Callback URL"
-  ]
   const CODEX_AUTH_CONTINUE_SUCCESS_MESSAGE = "已填写邮箱并点击“继续”按钮"
   const CODEX_AUTH_CONTINUE_FAILURE_MESSAGE =
     "未找到邮箱输入框或“继续”按钮，请确认页面已打开到 OpenAI 登录页"
@@ -132,9 +116,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   const CODEX_AUTH_CONFIRM_SUCCESS_MESSAGE = "已点击授权确认页“继续”按钮"
   const CODEX_AUTH_CONFIRM_FAILURE_MESSAGE =
     "未找到授权确认页的“继续”按钮，请确认页面已停留在 Codex 授权确认页"
-  const CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE = "已填写并提交回调 URL"
-  const CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE =
-    "未找到回调 URL 输入框或“提交回调 URL”按钮，请确认管理页已停留在 OAuth 页面"
   const OPENAI_SESSION_CLEANUP_URLS = [
     "https://auth.openai.com/",
     "https://auth0.openai.com/",
@@ -145,33 +126,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     "https://chatgpt.com/",
     "https://www.chatgpt.com/"
   ]
-  /**
-   * 把 CPA 管理页地址统一指向 OAuth 页面。
-   *
-   * 这里只负责生成目标地址，不执行刷新。Step 1 会先切到这个路由，
-   * 只有检测到页面处于“已点击开始”的中间态时才真正 reload。
-   *
-   * @param rawUrl 侧边栏保存的 CPA 地址。
-   * @return 指向 #/oauth 的 CPA 地址；URL 无法解析时返回原值。
-   */
-  const buildCpaOAuthUrl = (rawUrl: string) => {
-    try {
-      const parsed = new URL(String(rawUrl || "").trim())
-      parsed.hash = "#/oauth"
-      return parsed.href
-    } catch {
-      return rawUrl
-    }
-  }
-
-  const isSameFullUrl = (currentUrl: string | undefined, targetUrl: string) => {
-    try {
-      return new URL(String(currentUrl || "")).href === new URL(targetUrl).href
-    } catch {
-      return currentUrl === targetUrl
-    }
-  }
-
   /**
    * 判断是否是 Codex OAuth 完成后跳转出的本机回调地址。
    *
@@ -237,60 +191,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       return true
     } catch {
       return false
-    }
-  }
-
-  /**
-   * 等待管理页生成 OpenAI OAuth 授权链接。
-   *
-   * @param tabId Codex 管理页标签页 id。
-   * @return 读取到的授权链接和管理页信息。
-   */
-  const waitForCodexAuthorizeUrlInTab = async (tabId: number) => {
-    const timeoutMs = 15000
-    const intervalMs = 500
-    const startedAt = Date.now()
-    let lastMessage = "未找到授权链接"
-
-    while (Date.now() - startedAt <= timeoutMs) {
-      try {
-        const [extractInjectionResult] = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: extractCodexOAuthUrlInPage
-        })
-        const extractValue = extractInjectionResult?.result
-        const managementTab = await chrome.tabs.get(tabId)
-
-        if (extractValue?.ok && extractValue.authUrl) {
-          return {
-            ok: true,
-            message: extractValue.message,
-            authUrl: extractValue.authUrl,
-            targetTab: {
-              id: tabId,
-              url: managementTab.url
-            }
-          }
-        }
-
-        lastMessage = extractValue?.message || lastMessage
-      } catch (error) {
-        lastMessage =
-          error instanceof Error ? error.message : "读取授权链接时页面暂不可用"
-      }
-
-      await abortableSleep(intervalMs)
-    }
-
-    const managementTab = await chrome.tabs.get(tabId).catch(() => undefined)
-    return {
-      ok: false,
-      message: lastMessage,
-      authUrl: "",
-      targetTab: {
-        id: tabId,
-        url: managementTab?.url
-      }
     }
   }
 
@@ -432,236 +332,48 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 等待 CPA OAuth 页面回到可开始下一轮的状态。
-   *
-   * @param tabId CPA OAuth 页标签页 id。
-   * @return 页面恢复结果。
-   */
-  const waitForCpaOAuthReadyInTab = async (tabId: number) => {
-    const timeoutMs = 30000
-    const intervalMs = 500
-    const startedAt = Date.now()
-    const abortSignal = getAbortSignal()
-    let lastMessage = "CPA OAuth 页面尚未恢复到可开始下一轮的状态"
-
-    while (Date.now() - startedAt <= timeoutMs) {
-      throwIfAborted(abortSignal)
-
-      try {
-        await waitForTabLoaded(tabId)
-        const [detectInjectionResult] = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: detectCpaOAuthStartStateInPage
-        })
-        const detectValue = detectInjectionResult?.result
-        const managementTab = await chrome.tabs.get(tabId)
-
-        if (detectValue?.state === "ready") {
-          return {
-            ok: true,
-            message: "CPA OAuth 页面已恢复到可开始下一轮的状态",
-            targetTab: {
-              id: tabId,
-              url: managementTab.url
-            }
-          }
-        }
-
-        lastMessage = detectValue?.message || lastMessage
-      } catch (error) {
-        lastMessage =
-          error instanceof Error
-            ? error.message
-            : "检测 CPA OAuth 页面状态时页面暂不可用"
-      }
-
-      await abortableSleep(intervalMs, abortSignal)
-    }
-
-    const managementTab = await chrome.tabs.get(tabId).catch(() => undefined)
-    return {
-      ok: false,
-      message: `${lastMessage}；30 秒内未看到“登录另一个账号”或“开始 Codex 登录”`,
-      targetTab: {
-        id: tabId,
-        url: managementTab?.url
-      }
-    }
-  }
-
-  /**
-   * Step 1 开始前检查 CPA OAuth 页是否落在上一轮已点击后的中间态。
-   *
-   * 正常情况下第六步已经保证页面恢复 ready；如果这里还能看到旧授权链接，
-   * 说明页面状态不对，需要显式刷新一次再重新开始。
-   *
-   * @param tabId CPA OAuth 页标签页 id。
-   * @return 当前页面状态和标签页信息。
-   */
-  const detectCpaOAuthStartStateInTab = async (tabId: number) => {
-    await waitForTabLoaded(tabId)
-    const [detectInjectionResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: detectCpaOAuthStartStateInPage
-    })
-    const detectValue = detectInjectionResult?.result
-    const managementTab = await chrome.tabs.get(tabId)
-
-    return {
-      ok: Boolean(detectValue?.ok),
-      state: detectValue?.state || "unknown",
-      message:
-        detectValue?.message ||
-        "未确认 CPA OAuth 页面是否可开始新的 Codex 登录",
-      targetTab: {
-        id: tabId,
-        url: managementTab.url
-      }
-    }
-  }
-
-  /**
-   * 打开或复用 CPA OAuth 页，并在必要时恢复异常状态。
-   *
-   * 只有页面已经生成旧授权链接，也就是“开始 Codex 登录”已被点过，才会 reload。
-   *
-   * @param cpaOAuthUrl CPA OAuth 页地址。
-   * @return 可继续点击“开始 Codex 登录”的标签页。
-   */
-  const prepareCpaOAuthTabForOpenAuthLink = async (cpaOAuthUrl: string) => {
-    const tabId = await findOrOpenTab(cpaOAuthUrl)
-    const targetUrlReady = await waitForTabMatchingUrl(
-      tabId,
-      (url) => isSameFullUrl(url, cpaOAuthUrl),
-      {
-        timeoutMs: 5000,
-        intervalMs: 100,
-        signal: getAbortSignal()
-      }
-    )
-
-    if (!targetUrlReady) {
-      const latestTab = await chrome.tabs.get(tabId)
-      return {
-        ok: false,
-        message: `目标页面未切换到 OAuth 地址：${cpaOAuthUrl}`,
-        tab: {
-          id: tabId,
-          url: latestTab.url
-        }
-      }
-    }
-
-    const stateResult = await detectCpaOAuthStartStateInTab(tabId)
-    if (stateResult.state !== "started") {
-      return {
-        ok: true,
-        message:
-          stateResult.state === "ready"
-            ? ""
-            : "未确认 CPA OAuth 页面状态，继续尝试点击“开始 Codex 登录”",
-        tab: stateResult.targetTab
-      }
-    }
-
-    await chrome.tabs.reload(tabId)
-    await waitForTabLoaded(tabId)
-    const readyResult = await waitForCpaOAuthReadyInTab(tabId)
-    if (!readyResult.ok) {
-      return {
-        ok: false,
-        message: `检测到 CPA OAuth 页面停在旧授权链接状态，刷新后仍未恢复：${readyResult.message}`,
-        tab: readyResult.targetTab
-      }
-    }
-
-    return {
-      ok: true,
-      message: "检测到 CPA OAuth 页面停在旧授权链接状态，已刷新恢复",
-      tab: readyResult.targetTab
-    }
-  }
-
-  /**
    * 点击管理页入口，读取授权链接，打开 OpenAI 登录页，并清理旧会话。
    *
    * 这个步骤只负责把页面打开到 OpenAI 登录页，不再自动填写邮箱。
    *
    * @param targetUrl 侧边栏里填写的 Codex 登录地址。
+   * @param options 打开授权链接前的会话处理选项。
    * @return 返回给侧边栏展示的执行结果。
    */
   const openCodexAuthLink = async (
-    targetUrl: string
-  ): Promise<OpenCodexAuthLinkResponse> => {
+    targetUrl: string,
+    options: OpenCodexAuthLinkOptions = {}
+  ): Promise<OpenCodexAuthLinkApiResponse> => {
     throwIfAborted(getAbortSignal())
-    const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
+    const shouldCleanupSession = options.cleanupSession ?? true
+    const managementKey = String(options.managementKey || "").trim()
+    if (!managementKey) {
+      return {
+        ok: false,
+        message: "缺少 CPA 管理密钥，请先在侧边栏填写"
+      }
+    }
+
     // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
-    const cleanupResult = await clearSessionCookiesForUrls(
-      OPENAI_SESSION_CLEANUP_URLS
-    )
-    const storageResult = await clearOpenTabSiteStorageForUrls(
-      OPENAI_SESSION_CLEANUP_URLS
-    )
-    const cleanupMessage = `${cleanupResult.message}；${storageResult.message}，`
+    const cleanupMessage = shouldCleanupSession
+      ? `${
+          (await clearSessionCookiesForUrls(OPENAI_SESSION_CLEANUP_URLS))
+            .message
+        }；${
+          (await clearOpenTabSiteStorageForUrls(OPENAI_SESSION_CLEANUP_URLS))
+            .message
+        }，`
+      : "已保留当前 OpenAI 会话，"
     // endregion。
 
-    // region ========== 到cpa点击开始Codex登录 ==========
-    const prepareResult = await prepareCpaOAuthTabForOpenAuthLink(cpaOAuthUrl)
-    const prepareMessage = prepareResult.message
-      ? `${prepareResult.message}；`
-      : ""
-    if (!prepareResult.ok || typeof prepareResult.tab?.id !== "number") {
-      return {
-        ok: false,
-        message: `${cleanupMessage}${prepareResult.message}`,
-        targetTab: prepareResult.tab
-      }
-    }
-
-    const runPageActionResult = await runPageActionInTab(prepareResult.tab.id, {
-      button: {
-        texts: CODEX_LOGIN_BUTTON_TEXTS
-      },
-      timeoutMs: 15000,
-      successMessage: "已点击“开始codex登录”按钮",
-      failureMessage:
-        "未找到“开始codex登录”按钮，请确认管理页已登录并停留在 OAuth 页面"
-    })
-    // 处理失败
-    if (!runPageActionResult.ok) {
-      return {
-        ok: false,
-        message: `${cleanupMessage}${prepareMessage}${runPageActionResult.message}`,
-        targetTab: runPageActionResult.tab
-      }
-    }
-    // 拿到cpa页面得tabId
-    const managementTabId = runPageActionResult.tab?.id
-    if (typeof managementTabId !== "number") {
-      return {
-        ok: false,
-        message: `${cleanupMessage}${prepareMessage}已点击“开始codex登录”，但未拿到管理页标签页`,
-        targetTab: runPageActionResult.tab
-      }
-    }
-    // endregion
-
-    // region ========== 从cpa页面中获取codex的登录地址 ==========
-    const extractResult = await waitForCodexAuthorizeUrlInTab(managementTabId)
+    // region ========== 直接通过 CPA 管理接口获取最新 OAuth 授权链接 ==========
+    const apiResult = await requestCpaOAuthUrl(targetUrl, managementKey)
     throwIfAborted(getAbortSignal())
-    if (!extractResult.ok || !extractResult.authUrl) {
-      return {
-        ok: false,
-        message: `${cleanupMessage}${prepareMessage}${extractResult.message}`,
-        targetTab: extractResult.targetTab
-      }
-    }
-    // 不使用页面里的“打开链接”按钮，避免脚本点击触发 window.open 被浏览器拦截。
     const authTab = await chrome.tabs.create({
       active: true,
-      url: extractResult.authUrl
+      url: apiResult.oauthUrl
     })
-    if (authTab.id) {
+    if (shouldCleanupSession && authTab.id) {
       try {
         await clearSiteStorageInTab(authTab.id)
       } catch {
@@ -674,10 +386,11 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     throwIfAborted(getAbortSignal())
     return {
       ok: true,
-      message: `${cleanupMessage}${prepareMessage}${runPageActionResult.message}；已读取授权链接并打开 OpenAI 授权页`,
+      message: `${cleanupMessage}已通过 CPA 管理接口获取 OAuth 链接并打开 OpenAI 授权页`,
+      cpaOAuthState: apiResult.oauthState,
       targetTab: {
         id: authTab.id,
-        url: extractResult.authUrl
+        url: apiResult.oauthUrl
       }
     }
   }
@@ -1182,65 +895,28 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   /**
    * 执行第六步：把 OAuth 回调 URL 提交回 CPA 管理页。
    *
-   * @param targetUrl cpa 页面的地址，用于回填回调地址。
+   * @param targetUrl CPA 地址。
+   * @param managementKey CPA 管理密钥。
    * @param callbackUrl 第五步捕获到的 localhost 回调地址。
    * @param callbackTabId 可选，提交成功后关闭这个授权标签页。
+   * @param cpaOAuthState 可选，用于校验回调 state 是否匹配当前授权会话。
    * @return 回填结果。
    */
   const submitCodexOAuthCallbackToCpa = async (
     targetUrl: string,
+    managementKey: string,
     callbackUrl: string,
-    callbackTabId?: number
+    callbackTabId?: number,
+    cpaOAuthState = ""
   ): Promise<SubmitCodexOAuthCallbackResponse> => {
     throwIfAborted(getAbortSignal())
-    const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
-    const submitResult = await runPageActionInTargetUrl(cpaOAuthUrl, {
-      fields: [
-        {
-          selectors: CODEX_CALLBACK_INPUT_SELECTORS,
-          value: callbackUrl
-        }
-      ],
-      button: {
-        texts: CODEX_CALLBACK_SUBMIT_BUTTON_TEXTS,
-        triggerMode: "requestSubmit"
-      },
-      timeoutMs: 15000,
-      successMessage: CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE,
-      failureMessage: CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE
-    })
+    const submitResult = await submitCpaOAuthCallback(
+      targetUrl,
+      managementKey,
+      callbackUrl,
+      cpaOAuthState
+    )
     throwIfAborted(getAbortSignal())
-    if (!submitResult.ok) {
-      return {
-        ok: false,
-        message: `提交回调地址到管理页失败：${submitResult.message}`,
-        managementTab: submitResult.tab,
-        callbackUrl
-      }
-    }
-
-    const managementTabId = submitResult.tab?.id
-    if (typeof managementTabId !== "number") {
-      return {
-        ok: false,
-        message:
-          "已提交回调地址，但未拿到管理页标签页，无法确认是否可开始下一轮",
-        managementTab: submitResult.tab,
-        callbackUrl
-      }
-    }
-
-    const cpaReadyResult = await waitForCpaOAuthReadyInTab(managementTabId)
-    throwIfAborted(getAbortSignal())
-    if (!cpaReadyResult.ok) {
-      return {
-        ok: false,
-        message: `${submitResult.message}；${cpaReadyResult.message}`,
-        managementTab: cpaReadyResult.targetTab,
-        callbackUrl
-      }
-    }
-
     const closedCallbackTab =
       typeof callbackTabId === "number"
         ? await closeBrowserTab(callbackTabId)
@@ -1248,13 +924,14 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
 
     return {
       ok: true,
-      message: `${submitResult.message}；${cpaReadyResult.message}；${
+      message: `${submitResult.verifiedStatus}；${
         closedCallbackTab
           ? "已关闭回调地址标签页"
           : "回调地址标签页未关闭或不需要关闭"
       }`,
-      managementTab: cpaReadyResult.targetTab,
-      callbackUrl
+      callbackUrl: submitResult.localhostUrl,
+      cpaOAuthState,
+      verifiedStatus: submitResult.verifiedStatus
     }
   }
 

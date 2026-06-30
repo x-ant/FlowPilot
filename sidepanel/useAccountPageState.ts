@@ -29,29 +29,41 @@ export const useAccountPageState = ({
   setStatus
 }: UseAccountPageStateOptions) => {
   const [cpaUrl, setCpaUrlState] = useState("")
+  const [cpaManagementKey, setCpaManagementKeyState] = useState("")
   const [accounts, setAccountsState] = useState<ManagedAccount[]>([])
   const [editingEmail, setEditingEmail] = useState("")
   const [runningEmail, setRunningEmail] = useState("")
   const [selectedEmails, setSelectedEmails] = useState<string[]>([])
 
-  const persistState = (nextCpaUrl = cpaUrl, nextAccounts = accounts) => {
+  const persistState = (
+    nextCpaUrl = cpaUrl,
+    nextAccounts = accounts,
+    nextCpaManagementKey = cpaManagementKey
+  ) => {
     saveAccountPageState(storageKeys, {
       cpaUrl: nextCpaUrl,
+      cpaManagementKey: nextCpaManagementKey,
       accounts: nextAccounts
     })
   }
 
   const syncAccounts = (
     nextAccounts: ManagedAccount[],
-    nextCpaUrl = cpaUrl
+    nextCpaUrl = cpaUrl,
+    nextCpaManagementKey = cpaManagementKey
   ) => {
     setAccountsState(nextAccounts)
-    persistState(nextCpaUrl, nextAccounts)
+    persistState(nextCpaUrl, nextAccounts, nextCpaManagementKey)
   }
 
   const setCpaUrl = (nextCpaUrl: string) => {
     setCpaUrlState(nextCpaUrl)
-    persistState(nextCpaUrl, accounts)
+    persistState(nextCpaUrl, accounts, cpaManagementKey)
+  }
+
+  const setCpaManagementKey = (nextCpaManagementKey: string) => {
+    setCpaManagementKeyState(nextCpaManagementKey)
+    persistState(cpaUrl, accounts, nextCpaManagementKey)
   }
 
   const setAccounts = (
@@ -62,7 +74,7 @@ export const useAccountPageState = ({
     setAccountsState((currentAccounts) => {
       const nextAccounts =
         typeof nextValue === "function" ? nextValue(currentAccounts) : nextValue
-      persistState(cpaUrl, nextAccounts)
+      persistState(cpaUrl, nextAccounts, cpaManagementKey)
       return nextAccounts
     })
   }
@@ -94,6 +106,7 @@ export const useAccountPageState = ({
     void (async () => {
       const state = await loadAccountPageState(storageKeys)
       setCpaUrlState(state.cpaUrl)
+      setCpaManagementKeyState(state.cpaManagementKey)
       setAccountsState(state.accounts)
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
     })()
@@ -112,6 +125,10 @@ export const useAccountPageState = ({
 
   const handleCpaUrlChange = (nextCpaUrl: string) => {
     setCpaUrl(nextCpaUrl)
+  }
+
+  const handleCpaManagementKeyChange = (nextCpaManagementKey: string) => {
+    setCpaManagementKey(nextCpaManagementKey)
   }
 
   const handleSubmitAccount = (values: AccountFormValues) => {
@@ -274,6 +291,7 @@ export const useAccountPageState = ({
 
   return {
     cpaUrl,
+    cpaManagementKey,
     accounts,
     editingEmail,
     editingAccount,
@@ -287,6 +305,7 @@ export const useAccountPageState = ({
     runningCount,
     failedCount,
     setCpaUrl,
+    setCpaManagementKey,
     setAccounts,
     syncAccounts,
     setRunningEmail,
@@ -295,6 +314,7 @@ export const useAccountPageState = ({
     resetManagedAccountState,
     isManagedAccountDone,
     handleCpaUrlChange,
+    handleCpaManagementKeyChange,
     handleSubmitAccount,
     handleEditAccount,
     handleCancelEdit,
@@ -306,6 +326,7 @@ export const useAccountPageState = ({
     patchAccountState,
     resetState: () => {
       setCpaUrlState(EMPTY_PAGE_STATE.cpaUrl)
+      setCpaManagementKeyState(EMPTY_PAGE_STATE.cpaManagementKey)
       setAccountsState(EMPTY_PAGE_STATE.accounts)
     }
   }

@@ -2,6 +2,7 @@ import type { UiLogger } from "../shared/logging"
 
 export type LoginFormValues = {
   cpaUrl?: string
+  cpaManagementKey?: string
 }
 
 export type AccountFormValues = {
@@ -24,11 +25,13 @@ export type ManagedAccount = {
 
 export type AccountPageState = {
   cpaUrl: string
+  cpaManagementKey: string
   accounts: ManagedAccount[]
 }
 
 export type AccountPageStorageKeys = {
   cpaUrl: string
+  cpaManagementKey: string
   accounts: string
 }
 
@@ -54,10 +57,12 @@ export const STEP_COUNT = 6
 export const ACTIVE_PAGE_STORAGE_KEY = "codex-login:active-page"
 export const LOGIN_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaUrl: "codex-login:cpa-url",
+  cpaManagementKey: "codex-login:cpa-management-key",
   accounts: "codex-login:accounts"
 }
 export const REGISTER_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaUrl: "codex-register:cpa-url",
+  cpaManagementKey: "codex-register:cpa-management-key",
   accounts: "codex-register:accounts"
 }
 
@@ -79,6 +84,7 @@ export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
 
 export const EMPTY_PAGE_STATE: AccountPageState = {
   cpaUrl: "",
+  cpaManagementKey: "",
   accounts: []
 }
 
@@ -292,19 +298,25 @@ export const loadAccountPageState = async (
   }
 
   return new Promise<AccountPageState>((resolve) => {
-    storage.get([keys.cpaUrl, keys.accounts], (result) => {
-      const rawAccounts = Array.isArray(result?.[keys.accounts])
-        ? (result?.[keys.accounts] as unknown[])
-        : []
-      const accounts = rawAccounts
-        .map((account) => normalizeStoredAccount(account))
-        .filter((account): account is ManagedAccount => Boolean(account))
+    storage.get(
+      [keys.cpaUrl, keys.cpaManagementKey, keys.accounts],
+      (result) => {
+        const rawAccounts = Array.isArray(result?.[keys.accounts])
+          ? (result?.[keys.accounts] as unknown[])
+          : []
+        const accounts = rawAccounts
+          .map((account) => normalizeStoredAccount(account))
+          .filter((account): account is ManagedAccount => Boolean(account))
 
-      resolve({
-        cpaUrl: String(result?.[keys.cpaUrl] || "").trim(),
-        accounts
-      })
-    })
+        resolve({
+          cpaUrl: String(result?.[keys.cpaUrl] || "").trim(),
+          cpaManagementKey: String(
+            result?.[keys.cpaManagementKey] || ""
+          ).trim(),
+          accounts
+        })
+      }
+    )
   })
 }
 
@@ -315,6 +327,7 @@ export const saveAccountPageState = (
   const storage = getStorage()
   storage?.set({
     [keys.cpaUrl]: state.cpaUrl,
+    [keys.cpaManagementKey]: state.cpaManagementKey,
     [keys.accounts]: state.accounts
   })
 }

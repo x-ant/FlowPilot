@@ -6,6 +6,7 @@ import {
   clickRegisterReadyContinue,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
+  refreshRegisterOAuthAndLogin,
   submitRegisterProfile
 } from "../background/codex-register"
 import { AccountWorkspace } from "./AccountWorkspace"
@@ -19,7 +20,7 @@ import {
 } from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 5
+const REGISTER_STEP_COUNT = 6
 
 type RegisterStepResult = {
   ok: boolean
@@ -51,7 +52,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     log,
     setStatus
   })
-  const { accounts, patchAccountState, setRunningEmail } = accountPage
+  const {
+    accounts,
+    cpaManagementKey,
+    cpaUrl,
+    patchAccountState,
+    setRunningEmail
+  } = accountPage
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [debugEmail, setDebugEmail] = useState("")
   const [debugRegisterTabId, setDebugRegisterTabId] = useState("")
@@ -293,11 +300,65 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       action: clickRegisterReadyContinue,
       failureStatus: "点击继续失败",
       successStatus: "已点击继续",
-      successProgress: REGISTER_STEP_COUNT as ManagedAccountProgress,
-      successAccountStatus: "done",
+      successProgress: 5,
+      successAccountStatus: "running",
       exceptionStatus: "点击继续异常",
       exceptionMessage: "点击继续异常"
     })
+  }
+
+  const handleRefreshRegisterOAuthAndLogin = async () => {
+    const normalizedCpaUrl = String(cpaUrl || "").trim()
+    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
+
+    if (isDebugRunning) {
+      return
+    }
+
+    if (!normalizedCpaUrl) {
+      setStatus("请先填写 CPA 地址")
+      log.warn("[注册调试] Step 6 缺少 CPA 地址")
+      return
+    }
+
+    if (!normalizedCpaManagementKey) {
+      setStatus("请先填写 CPA 管理密钥")
+      log.warn("[注册调试] Step 6 缺少 CPA 管理密钥")
+      return
+    }
+
+    setIsDebugRunning(true)
+    setStatus("正在刷新 OAuth 并登录")
+    log.info("[注册调试] Step 6 开始刷新 OAuth 并登录")
+
+    try {
+      const result = await refreshRegisterOAuthAndLogin(
+        normalizedCpaUrl,
+        normalizedCpaManagementKey
+      )
+
+      if (!result.ok) {
+        setStatus("刷新 OAuth 并登录失败")
+        log.warn(`[注册调试] Step 6 ${result.message}`)
+        return
+      }
+
+      setDebugRegisterTabId(String(result.targetTab?.id || ""))
+      setDebugProgress(REGISTER_STEP_COUNT)
+      setStatus("已刷新 OAuth 并进入登录授权流程")
+      log.info(
+        `[注册调试] Step 6 ${result.message}；tab=${
+          result.targetTab?.id || "unknown"
+        }；url=${result.targetTab?.url || "unknown"}`
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "刷新 OAuth 并登录异常"
+      setStatus("刷新 OAuth 并登录异常")
+      log.warn(`[注册调试] Step 6 ${message}`)
+    } finally {
+      setIsDebugRunning(false)
+    }
   }
 
   return (
@@ -305,6 +366,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       {...accountPage}
       disabled={isDebugRunning}
       onCpaUrlChange={accountPage.handleCpaUrlChange}
+      onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
       onSubmitAccount={accountPage.handleSubmitAccount}
       onCancelEdit={accountPage.handleCancelEdit}
       onEditAccount={accountPage.handleEditAccount}
@@ -389,6 +451,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
               5 点击继续
+            </Button>
+            <Button
+              onClick={() => {
+                void handleRefreshRegisterOAuthAndLogin()
+              }}
+              loading={isDebugRunning}
+              disabled={
+                isDebugRunning || !cpaUrl.trim() || !cpaManagementKey.trim()
+              }>
+              6 刷新 OAuth 并登录
             </Button>
           </Space>
         </div>

@@ -25,6 +25,7 @@ import {
 
 type AccountWorkspaceProps = {
   cpaUrl: string
+  cpaManagementKey: string
   accounts: ManagedAccount[]
   editingAccount: ManagedAccount | null
   editingEmail: string
@@ -41,6 +42,7 @@ type AccountWorkspaceProps = {
   debugTitleExtra: ReactNode
   debugContent: ReactNode
   onCpaUrlChange: (cpaUrl: string) => void
+  onCpaManagementKeyChange: (cpaManagementKey: string) => void
   onSubmitAccount: (values: AccountFormValues) => void
   onCancelEdit: () => void
   onEditAccount: (account: ManagedAccount) => void
@@ -53,6 +55,7 @@ type AccountWorkspaceProps = {
 
 export function AccountWorkspace({
   cpaUrl,
+  cpaManagementKey,
   accounts,
   editingAccount,
   editingEmail,
@@ -69,6 +72,7 @@ export function AccountWorkspace({
   debugTitleExtra,
   debugContent,
   onCpaUrlChange,
+  onCpaManagementKeyChange,
   onSubmitAccount,
   onCancelEdit,
   onEditAccount,
@@ -82,8 +86,8 @@ export function AccountWorkspace({
   const [accountForm] = Form.useForm<AccountFormValues>()
 
   useEffect(() => {
-    loginForm.setFieldsValue({ cpaUrl })
-  }, [cpaUrl, loginForm])
+    loginForm.setFieldsValue({ cpaUrl, cpaManagementKey })
+  }, [cpaManagementKey, cpaUrl, loginForm])
 
   useEffect(() => {
     if (!editingAccount) {
@@ -111,12 +115,23 @@ export function AccountWorkspace({
           requiredMark={false}
           onValuesChange={(_, values) => {
             onCpaUrlChange(String(values.cpaUrl || ""))
+            onCpaManagementKeyChange(String(values.cpaManagementKey || ""))
           }}>
           <Form.Item
             label="CPA 地址"
             name="cpaUrl"
             rules={[{ required: true, message: "请输入 CPA 地址" }]}>
             <Input placeholder="https://..." allowClear disabled={disabled} />
+          </Form.Item>
+          <Form.Item
+            label="CPA 管理密钥"
+            name="cpaManagementKey"
+            rules={[{ required: true, message: "请输入 CPA 管理密钥" }]}>
+            <Input.Password
+              placeholder="用于 CPA 管理接口"
+              allowClear
+              disabled={disabled}
+            />
           </Form.Item>
         </Form>
       </Card>

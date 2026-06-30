@@ -11,6 +11,7 @@ import {
   submitCodexOAuthCallbackToCpa
 } from "../background/codex-login"
 import { AccountWorkspace } from "./AccountWorkspace"
+import { DebugTabControl } from "./DebugTabControl"
 import {
   getFlowStepLabel,
   getFlowStepName,
@@ -26,16 +27,18 @@ import {
   type ManagedAccountStatus,
   type PageProps
 } from "./shared"
-import { DebugTabControl } from "./DebugTabControl"
 import { useAccountPageState } from "./useAccountPageState"
 
 const runManagedAccountFlow = async (
   cpaUrl: string,
+  cpaManagementKey: string,
   account: ManagedAccount,
   runner: ReturnType<typeof createCodexLoginRunner>,
   onStage: (progress: DebugStep, message: string) => void
 ): Promise<AccountRunResult> => {
-  const step1Result = await runner.openCodexAuthLink(cpaUrl)
+  const step1Result = await runner.openCodexAuthLink(cpaUrl, {
+    managementKey: cpaManagementKey
+  })
   if (!step1Result.ok || !step1Result.targetTab?.id) {
     return {
       ok: false,
@@ -102,8 +105,10 @@ const runManagedAccountFlow = async (
 
   const step6Result = await runner.submitCodexOAuthCallbackToCpa(
     cpaUrl,
+    cpaManagementKey,
     step5Result.callbackUrl,
-    authTabId
+    authTabId,
+    step1Result.cpaOAuthState
   )
   if (!step6Result.ok) {
     return {
@@ -137,6 +142,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   })
   const {
     cpaUrl,
+    cpaManagementKey,
     accounts,
     selectedEmails,
     selectedEmailSet,
@@ -152,6 +158,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
+  const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [isBatchStopping, setIsBatchStopping] = useState(false)
@@ -217,6 +224,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugProgress(0)
     setDebugVerificationRequestedAt(0)
     setDebugCallbackUrl("")
+    setDebugCpaOAuthState("")
     setStatus("调试状态已清空")
   }
 
@@ -227,6 +235,12 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     if (!normalizedCpaUrl) {
       setStatus("请先填写 CPA 地址")
       log.warn("调试步骤无法执行：未填写 CPA 地址")
+      return
+    }
+
+    if (!cpaManagementKey.trim()) {
+      setStatus("请先填写 CPA 管理密钥")
+      log.warn("调试步骤无法执行：未填写 CPA 管理密钥")
       return
     }
 
@@ -257,13 +271,16 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       if (step === 1) {
         setDebugVerificationRequestedAt(0)
         setDebugCallbackUrl("")
+        setDebugCpaOAuthState("")
         patchAccountState(account.email, {
           progress: 0,
           status: "running",
           lastMessage: getFlowStepLabel(step)
         })
 
-        const result = await openCodexAuthLink(normalizedCpaUrl)
+        const result = await openCodexAuthLink(normalizedCpaUrl, {
+          managementKey: cpaManagementKey
+        })
         if (!result.ok || !result.targetTab?.id) {
           patchAccountState(account.email, {
             status: "failed",
@@ -277,6 +294,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         setDebugAuthTabId(String(result.targetTab.id))
+        setDebugCpaOAuthState(result.cpaOAuthState || "")
         setDebugProgress(1)
         patchAccountState(account.email, {
           progress: 1,
@@ -422,8 +440,10 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
 
       const result = await submitCodexOAuthCallbackToCpa(
         normalizedCpaUrl,
+        cpaManagementKey,
         debugCallbackUrl,
-        parsedDebugAuthTabId
+        parsedDebugAuthTabId,
+        debugCpaOAuthState
       )
       if (!result.ok) {
         patchAccountState(account.email, {
@@ -475,6 +495,12 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     if (!normalizedCpaUrl) {
       setStatus("请先填写 CPA 地址")
       log.warn("未填写 CPA 地址")
+      return
+    }
+
+    if (!cpaManagementKey.trim()) {
+      setStatus("请先填写 CPA 管理密钥")
+      log.warn("未填写 CPA 管理密钥")
       return
     }
 
@@ -578,6 +604,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       try {
         runResult = await runManagedAccountFlow(
           normalizedCpaUrl,
+          cpaManagementKey,
           currentAccount,
           codexLoginRunner,
           (progress, message) => {
@@ -656,12 +683,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const disabled = isBatchRunning || isDebugRunning
+  const hasCpaApiConfig = Boolean(cpaUrl.trim() && cpaManagementKey.trim())
 
   return (
     <AccountWorkspace
       {...accountPage}
       disabled={disabled}
       onCpaUrlChange={accountPage.handleCpaUrlChange}
+      onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
       onSubmitAccount={accountPage.handleSubmitAccount}
       onCancelEdit={accountPage.handleCancelEdit}
       onEditAccount={accountPage.handleEditAccount}
@@ -683,7 +712,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           <Space.Compact>
             <Button
               type="primary"
-              disabled={!cpaUrl.trim() || selectedCount === 0}
+              disabled={!hasCpaApiConfig || selectedCount === 0}
               onClick={() => {
                 void handleStartBatch("pending")
               }}>
@@ -691,7 +720,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
             </Button>
             <Dropdown
               trigger={["click"]}
-              disabled={!cpaUrl.trim() || selectedCount === 0}
+              disabled={!hasCpaApiConfig || selectedCount === 0}
               menu={{
                 items: [
                   {
@@ -705,7 +734,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
               }}>
               <Button
                 type="primary"
-                disabled={!cpaUrl.trim() || selectedCount === 0}
+                disabled={!hasCpaApiConfig || selectedCount === 0}
                 aria-label="执行选项">
                 ▾
               </Button>
@@ -715,9 +744,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       }
       debugTitleExtra={
         <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
-        }
-        debugContent={
-          <div className="debug-panel">
+      }
+      debugContent={
+        <div className="debug-panel">
           <DebugTabControl
             disabled={disabled}
             label="Auth tab"
@@ -738,6 +767,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                     setDebugProgress(0)
                     setDebugVerificationRequestedAt(0)
                     setDebugCallbackUrl("")
+                    setDebugCpaOAuthState("")
                   }}
                   disabled={disabled || accounts.length === 0}
                 />
@@ -754,7 +784,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
               type="primary"
               onClick={handleRunNextDebugStep}
               loading={isDebugRunning}
-              disabled={disabled || !selectedDebugAccount}>
+              disabled={disabled || !selectedDebugAccount || !hasCpaApiConfig}>
               下一步
             </Button>
           </Space>
@@ -766,7 +796,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                 void handleRunDebugStep(1)
               }}
               loading={isDebugRunning && debugProgress === 0}
-              disabled={disabled || !selectedDebugAccount}>
+              disabled={disabled || !selectedDebugAccount || !hasCpaApiConfig}>
               {getFlowStepLabel(1)}
             </Button>
             <Button
@@ -813,7 +843,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                 disabled ||
                 !selectedDebugAccount ||
                 !hasDebugAuthTabId ||
-                !debugCallbackUrl
+                !debugCallbackUrl ||
+                !hasCpaApiConfig
               }>
               {getFlowStepLabel(6)}
             </Button>

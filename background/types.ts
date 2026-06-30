@@ -22,6 +22,9 @@ export type CodexLoginStepResponseBase = {
  * 步骤 1：点击目标页面里的“开始codex登录”按钮，并打开 OpenAI 登录页。
  */
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
+export type OpenCodexAuthLinkApiResponse = OpenCodexAuthLinkResponse & {
+  cpaOAuthState?: string
+}
 
 export type CodexAuthFlowState =
   | "oauth_consent_ready"
@@ -63,6 +66,8 @@ export type ConfirmCodexOAuthConsentResponse = CodexLoginStepResponseBase & {
  */
 export type SubmitCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
   callbackUrl?: string
+  cpaOAuthState?: string
+  verifiedStatus?: string
   managementTab?: BrowserTabInfo
 }
 
