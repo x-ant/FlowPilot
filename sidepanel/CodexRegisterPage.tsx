@@ -3,16 +3,47 @@ import { useEffect, useMemo, useState } from "react"
 
 import {
   clickRegisterAndSubmitEmail,
+  clickRegisterReadyContinue,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   submitRegisterProfile
 } from "../background/codex-register"
 import { AccountWorkspace } from "./AccountWorkspace"
 import { DebugTabControl } from "./DebugTabControl"
-import { normalizeEmail, REGISTER_STORAGE_KEYS, type PageProps } from "./shared"
+import {
+  normalizeEmail,
+  REGISTER_STORAGE_KEYS,
+  type ManagedAccountProgress,
+  type ManagedAccountStatus,
+  type PageProps
+} from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 4
+const REGISTER_STEP_COUNT = 5
+
+type RegisterStepResult = {
+  ok: boolean
+  message: string
+  targetTab?: {
+    id?: number
+    url?: string
+  }
+}
+
+type RegisterDebugStepOptions = {
+  step: number
+  runningStatus: string
+  runningMessage: string
+  runningProgress: ManagedAccountProgress
+  action: (tabId: number) => Promise<RegisterStepResult>
+  failureStatus: string
+  successStatus: string
+  successProgress: ManagedAccountProgress
+  successAccountStatus: ManagedAccountStatus
+  exceptionStatus: string
+  exceptionMessage: string
+  beforeRun?: () => void
+}
 
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
@@ -121,7 +152,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setStatus("注册调试状态已清空")
   }
 
-  const handleSubmitRegisterEmail = async () => {
+  const runRegisterDebugStep = async (options: RegisterDebugStepOptions) => {
     if (isDebugRunning || !selectedDebugAccount) {
       return
     }
@@ -129,30 +160,30 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
     if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
       setStatus("请先执行 Step 1 打开 GPT 页面")
-      log.warn("[注册调试] Step 2 缺少 GPT 页面 tabId，请先执行 Step 1")
+      log.warn(
+        `[注册调试] Step ${options.step} 缺少注册 tabId，请先执行 Step 1`
+      )
       return
     }
 
     setIsDebugRunning(true)
     setRunningEmail(selectedDebugAccount.email)
-    setStatus(`正在提交注册邮箱 ${selectedDebugAccount.email}`)
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 2 开始`)
-    const verificationRequestedAt = Date.now()
-    setDebugVerificationRequestedAt(verificationRequestedAt)
+    setStatus(options.runningStatus)
+    log.info(
+      `[注册调试][${selectedDebugAccount.email}] Step ${options.step} 开始`
+    )
+    options.beforeRun?.()
     patchAccountState(selectedDebugAccount.email, {
-      progress: 1,
+      progress: options.runningProgress,
       status: "running",
-      lastMessage: "正在点击注册并提交邮箱"
+      lastMessage: options.runningMessage
     })
 
     try {
-      const result = await clickRegisterAndSubmitEmail(
-        selectedDebugAccount.email,
-        parsedTabId
-      )
+      const result = await options.action(parsedTabId)
 
       if (!result.ok) {
-        setStatus("提交注册邮箱失败")
+        setStatus(options.failureStatus)
         log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
         patchAccountState(selectedDebugAccount.email, {
           status: "failed",
@@ -161,23 +192,23 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         return
       }
 
-      setDebugRegisterTabId(String(result.targetTab?.id || ""))
-      setDebugProgress(2)
-      setStatus("已提交注册邮箱")
+      setDebugRegisterTabId(String(result.targetTab?.id || parsedTabId))
+      setDebugProgress(options.successProgress)
+      setStatus(options.successStatus)
       log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 2 ${result.message}；tab=${
+        `[注册调试][${selectedDebugAccount.email}] Step ${options.step} ${result.message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
       patchAccountState(selectedDebugAccount.email, {
-        progress: 2,
-        status: "running",
+        progress: options.successProgress,
+        status: options.successAccountStatus,
         lastMessage: result.message
       })
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "提交注册邮箱异常"
-      setStatus("提交注册邮箱异常")
+        error instanceof Error ? error.message : options.exceptionMessage
+      setStatus(options.exceptionStatus)
       log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
       patchAccountState(selectedDebugAccount.email, {
         status: "failed",
@@ -187,137 +218,86 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setIsDebugRunning(false)
       setRunningEmail("")
     }
+  }
+
+  const handleSubmitRegisterEmail = async () => {
+    const verificationRequestedAt = Date.now()
+    await runRegisterDebugStep({
+      step: 2,
+      runningStatus: `正在提交注册邮箱 ${selectedDebugAccount?.email || ""}`,
+      runningMessage: "正在点击注册并提交邮箱",
+      runningProgress: 1,
+      beforeRun: () => {
+        setDebugVerificationRequestedAt(verificationRequestedAt)
+      },
+      action: (tabId) => {
+        return clickRegisterAndSubmitEmail(
+          selectedDebugAccount?.email || "",
+          tabId
+        )
+      },
+      failureStatus: "提交注册邮箱失败",
+      successStatus: "已提交注册邮箱",
+      successProgress: 2,
+      successAccountStatus: "running",
+      exceptionStatus: "提交注册邮箱异常",
+      exceptionMessage: "提交注册邮箱异常"
+    })
   }
 
   const handleSubmitRegisterVerificationCode = async () => {
-    if (isDebugRunning || !selectedDebugAccount) {
-      return
-    }
-
-    const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
-    if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
-      setStatus("请先执行 Step 1 打开 GPT 页面")
-      log.warn("[注册调试] Step 3 缺少注册 tabId，请先执行 Step 1")
-      return
-    }
-
-    setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
-    setStatus(`正在读取并提交验证码 ${selectedDebugAccount.email}`)
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 3 开始`)
-    patchAccountState(selectedDebugAccount.email, {
-      progress: 2,
-      status: "running",
-      lastMessage: "正在读取并提交验证码"
+    await runRegisterDebugStep({
+      step: 3,
+      runningStatus: `正在读取并提交验证码 ${selectedDebugAccount?.email || ""}`,
+      runningMessage: "正在读取并提交验证码",
+      runningProgress: 2,
+      action: (tabId) => {
+        return fetchAndSubmitRegisterVerificationCode(
+          tabId,
+          selectedDebugAccount?.email || "",
+          selectedDebugAccount?.password || "",
+          debugVerificationRequestedAt
+        )
+      },
+      failureStatus: "提交注册验证码失败",
+      successStatus: "已提交注册验证码",
+      successProgress: 3,
+      successAccountStatus: "running",
+      exceptionStatus: "提交注册验证码异常",
+      exceptionMessage: "提交注册验证码异常"
     })
-
-    try {
-      const result = await fetchAndSubmitRegisterVerificationCode(
-        parsedTabId,
-        selectedDebugAccount.email,
-        selectedDebugAccount.password,
-        debugVerificationRequestedAt
-      )
-
-      if (!result.ok) {
-        setStatus("提交注册验证码失败")
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
-        patchAccountState(selectedDebugAccount.email, {
-          status: "failed",
-          lastMessage: result.message
-        })
-        return
-      }
-
-      setDebugRegisterTabId(String(result.targetTab?.id || parsedTabId))
-      setDebugProgress(3)
-      setStatus("已提交注册验证码")
-      log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 3 ${result.message}；tab=${
-          result.targetTab?.id || "unknown"
-        }；url=${result.targetTab?.url || "unknown"}`
-      )
-      patchAccountState(selectedDebugAccount.email, {
-        progress: 3,
-        status: "running",
-        lastMessage: result.message
-      })
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "提交注册验证码异常"
-      setStatus("提交注册验证码异常")
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
-        status: "failed",
-        lastMessage: message
-      })
-    } finally {
-      setIsDebugRunning(false)
-      setRunningEmail("")
-    }
   }
 
   const handleSubmitRegisterProfile = async () => {
-    if (isDebugRunning || !selectedDebugAccount) {
-      return
-    }
-
-    const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
-    if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
-      setStatus("请先执行 Step 1 打开 GPT 页面")
-      log.warn("[注册调试] Step 4 缺少注册 tabId，请先执行 Step 1")
-      return
-    }
-
-    setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
-    setStatus("正在完成账户创建")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 4 开始`)
-    patchAccountState(selectedDebugAccount.email, {
-      progress: 3,
-      status: "running",
-      lastMessage: "正在填写名称和年龄/生日"
+    await runRegisterDebugStep({
+      step: 4,
+      runningStatus: "正在完成账户创建",
+      runningMessage: "正在填写名称和年龄/生日",
+      runningProgress: 3,
+      action: submitRegisterProfile,
+      failureStatus: "完成账户创建失败",
+      successStatus: "已完成账户创建",
+      successProgress: 4,
+      successAccountStatus: "running",
+      exceptionStatus: "完成账户创建异常",
+      exceptionMessage: "完成账户创建异常"
     })
+  }
 
-    try {
-      const result = await submitRegisterProfile(parsedTabId)
-
-      if (!result.ok) {
-        setStatus("完成账户创建失败")
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
-        patchAccountState(selectedDebugAccount.email, {
-          status: "failed",
-          lastMessage: result.message
-        })
-        return
-      }
-
-      setDebugRegisterTabId(String(result.targetTab?.id || parsedTabId))
-      setDebugProgress(REGISTER_STEP_COUNT)
-      setStatus("已完成账户创建")
-      log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 4 ${result.message}；tab=${
-          result.targetTab?.id || "unknown"
-        }；url=${result.targetTab?.url || "unknown"}`
-      )
-      patchAccountState(selectedDebugAccount.email, {
-        progress: REGISTER_STEP_COUNT,
-        status: "done",
-        lastMessage: result.message
-      })
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "完成账户创建异常"
-      setStatus("完成账户创建异常")
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
-        status: "failed",
-        lastMessage: message
-      })
-    } finally {
-      setIsDebugRunning(false)
-      setRunningEmail("")
-    }
+  const handleClickRegisterReadyContinue = async () => {
+    await runRegisterDebugStep({
+      step: 5,
+      runningStatus: "正在点击继续",
+      runningMessage: "正在点击继续",
+      runningProgress: 4,
+      action: clickRegisterReadyContinue,
+      failureStatus: "点击继续失败",
+      successStatus: "已点击继续",
+      successProgress: REGISTER_STEP_COUNT as ManagedAccountProgress,
+      successAccountStatus: "done",
+      exceptionStatus: "点击继续异常",
+      exceptionMessage: "点击继续异常"
+    })
   }
 
   return (
@@ -401,6 +381,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
               4 完成账户创建
+            </Button>
+            <Button
+              onClick={() => {
+                void handleClickRegisterReadyContinue()
+              }}
+              loading={isDebugRunning}
+              disabled={isDebugRunning || !selectedDebugAccount}>
+              5 点击继续
             </Button>
           </Space>
         </div>

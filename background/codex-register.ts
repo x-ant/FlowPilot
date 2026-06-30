@@ -2,8 +2,23 @@ import { createMail2925Runner } from "./mail-2925"
 import { runPageActionInTab } from "./utils/page-action-runner"
 import type { RunContext } from "./utils/run-context"
 import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
+import {
+  clearOpenTabSiteStorageForUrls,
+  clearSessionCookiesForUrls,
+  clearSiteStorageInTab
+} from "./utils/browser-session-cleanup"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
+const OPENAI_SESSION_CLEANUP_URLS = [
+  "https://auth.openai.com/",
+  "https://auth0.openai.com/",
+  "https://accounts.openai.com/",
+  "https://openai.com/",
+  "https://www.openai.com/",
+  "https://chat.openai.com/",
+  "https://chatgpt.com/",
+  "https://www.chatgpt.com/"
+]
 const DEFAULT_REGISTER_FULL_NAME = "drizzle"
 const DEFAULT_REGISTER_AGE = 20
 
@@ -70,6 +85,11 @@ const OPENAI_VERIFICATION_INPUT_SELECTORS = [
   "input[placeholder*='code' i]",
   "input[placeholder*='验证码']",
   "input[inputmode='numeric']"
+]
+
+const OPENAI_READY_CONTINUE_BUTTON_TEXTS = [
+  "继续",
+  "continue"
 ]
 
 const submitRegisterProfileInPage = (
@@ -522,12 +542,34 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     async (): Promise<CodexRegisterStepResponse> => {
       throwIfRunAborted()
 
+      const cookieResult = await clearSessionCookiesForUrls(
+        OPENAI_SESSION_CLEANUP_URLS
+      )
+      const storageResult = await clearOpenTabSiteStorageForUrls(
+        OPENAI_SESSION_CLEANUP_URLS
+      )
+      // 打开
       const tabId = await findOrOpenTab(CHATGPT_SIGNUP_ENTRY_URL)
+      let currentTabStorageMessage = ""
+
+      try {
+        // 页面站点存储必须打开界面后注入清理，所以这里清理当前注册页 origin。
+        const currentTabStorageResult = await clearSiteStorageInTab(tabId)
+        currentTabStorageMessage = `；当前注册页已清理 ${currentTabStorageResult.localCount}/${currentTabStorageResult.sessionCount}/${currentTabStorageResult.indexedDbCount}/${currentTabStorageResult.cacheCount} 个 local/session/indexedDB/cache 项`
+      } catch {
+        currentTabStorageMessage = "；当前注册页站点存储清理失败，已继续打开页面"
+      }
+
+      // 再刷新一下
+      await chrome.tabs.update(tabId, {
+        active: true,
+        url: CHATGPT_SIGNUP_ENTRY_URL
+      })
       const tab = await chrome.tabs.get(tabId)
 
       return {
         ok: true,
-        message: "已打开 GPT 页面",
+        message: `${cookieResult.message}；${storageResult.message}${currentTabStorageMessage}；已打开 GPT 页面`,
         targetTab: {
           id: tab.id,
           url: tab.url
@@ -713,11 +755,42 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const clickRegisterReadyContinue = async (
+    tabId: number
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    try {
+      await chrome.tabs.get(tabId)
+    } catch {
+      return {
+        ok: false,
+        message: "未找到注册页面 tab，请先执行 Step 1 或使用当前标签页"
+      }
+    }
+
+    const submitResult = await runPageActionInTab(tabId, {
+      button: {
+        texts: OPENAI_READY_CONTINUE_BUTTON_TEXTS
+      },
+      timeoutMs: 15000,
+      successMessage: "已点击准备就绪页继续按钮",
+      failureMessage: "未找到准备就绪页继续按钮"
+    })
+
+    return {
+      ok: submitResult.ok,
+      message: submitResult.message,
+      targetTab: submitResult.tab
+    }
+  }
+
   return {
     openChatGptRegisterEntry,
     clickRegisterAndSubmitEmail,
     fetchAndSubmitRegisterVerificationCode,
-    submitRegisterProfile
+    submitRegisterProfile,
+    clickRegisterReadyContinue
   }
 }
 
@@ -725,5 +798,6 @@ export const {
   openChatGptRegisterEntry,
   clickRegisterAndSubmitEmail,
   fetchAndSubmitRegisterVerificationCode,
-  submitRegisterProfile
+  submitRegisterProfile,
+  clickRegisterReadyContinue
 } = createCodexRegisterRunner()

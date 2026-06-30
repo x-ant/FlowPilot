@@ -24,6 +24,11 @@ import {
   waitForTabLoaded,
   waitForTabMatchingUrl
 } from "./utils/tab-utils"
+import {
+  clearOpenTabSiteStorageForUrls,
+  clearSessionCookiesForUrls,
+  clearSiteStorageInTab
+} from "./utils/browser-session-cleanup"
 
 export const createCodexLoginRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
@@ -130,18 +135,16 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   const CODEX_CALLBACK_SUBMIT_SUCCESS_MESSAGE = "已填写并提交回调 URL"
   const CODEX_CALLBACK_SUBMIT_FAILURE_MESSAGE =
     "未找到回调 URL 输入框或“提交回调 URL”按钮，请确认管理页已停留在 OAuth 页面"
-  const CODEX_SESSION_COOKIE_DOMAINS = ["openai.com", "chatgpt.com"]
-  const CODEX_SESSION_STORAGE_HOSTNAMES = [
-    "auth.openai.com",
-    "auth0.openai.com",
-    "accounts.openai.com",
-    "openai.com",
-    "www.openai.com",
-    "chat.openai.com",
-    "chatgpt.com",
-    "www.chatgpt.com"
+  const OPENAI_SESSION_CLEANUP_URLS = [
+    "https://auth.openai.com/",
+    "https://auth0.openai.com/",
+    "https://accounts.openai.com/",
+    "https://openai.com/",
+    "https://www.openai.com/",
+    "https://chat.openai.com/",
+    "https://chatgpt.com/",
+    "https://www.chatgpt.com/"
   ]
-
   /**
    * 把 CPA 管理页地址统一指向 OAuth 页面。
    *
@@ -166,15 +169,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       return new URL(String(currentUrl || "")).href === new URL(targetUrl).href
     } catch {
       return currentUrl === targetUrl
-    }
-  }
-
-  const isCodexSessionStorageUrl = (rawUrl?: string) => {
-    try {
-      const hostname = new URL(String(rawUrl || "")).hostname.toLowerCase()
-      return CODEX_SESSION_STORAGE_HOSTNAMES.includes(hostname)
-    } catch {
-      return false
     }
   }
 
@@ -243,241 +237,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       return true
     } catch {
       return false
-    }
-  }
-
-  /**
-   * 规范化 cookie 域名，统一去掉前导点并转成小写，便于比较。
-   *
-   * @param domain 原始 cookie 域名。
-   * @return 规范化后的域名。
-   */
-  const normalizeCookieDomainForMatch = (domain?: string) => {
-    return String(domain || "")
-      .trim()
-      .replace(/^\.+/, "")
-      .toLowerCase()
-  }
-
-  /**
-   * 判断一个 cookie 是否属于需要清理的 Codex/OpenAI 会话域名。
-   *
-   * @param cookie Chrome cookie 对象。
-   * @return 如果属于需要清理的域名则返回 true。
-   */
-  const shouldClearCodexCookie = (cookie: chrome.cookies.Cookie) => {
-    const domain = normalizeCookieDomainForMatch(cookie?.domain)
-
-    if (!domain) {
-      return false
-    }
-
-    return CODEX_SESSION_COOKIE_DOMAINS.some((targetDomain) => {
-      return domain === targetDomain || domain.endsWith(`.${targetDomain}`)
-    })
-  }
-
-  /**
-   * 根据 cookie 生成删除时需要的 URL。
-   *
-   * Chrome cookies.remove 需要一个可访问该 cookie 的 URL，所以这里把 domain 和 path 拼出来。
-   *
-   * @param cookie Chrome cookie 对象。
-   * @return 删除 cookie 时需要使用的 URL。
-   */
-  const buildCookieRemovalUrl = (cookie: chrome.cookies.Cookie) => {
-    const host = normalizeCookieDomainForMatch(cookie?.domain)
-    const path = String(cookie?.path || "/").startsWith("/")
-      ? String(cookie?.path || "/")
-      : `/${String(cookie?.path || "")}`
-
-    return `https://${host}${path}`
-  }
-
-  /**
-   * 收集当前浏览器里所有需要清理的 Codex/OpenAI 会话 cookie。
-   *
-   * @return 所有需要清理的 cookie 列表。
-   */
-  const collectCodexSessionCookies = async () => {
-    if (!chrome.cookies?.getAll) {
-      return []
-    }
-
-    const stores = chrome.cookies.getAllCookieStores
-      ? await chrome.cookies.getAllCookieStores()
-      : [{ id: undefined }]
-    const cookies: chrome.cookies.Cookie[] = []
-    const seen = new Set<string>()
-
-    for (const store of stores) {
-      const storeId = store?.id
-      const batch = await chrome.cookies.getAll(storeId ? { storeId } : {})
-
-      for (const cookie of batch || []) {
-        if (!shouldClearCodexCookie(cookie)) {
-          continue
-        }
-
-        const key = [
-          cookie.storeId || storeId || "",
-          cookie.domain || "",
-          cookie.path || "",
-          cookie.name || ""
-        ].join("|")
-
-        if (seen.has(key)) {
-          continue
-        }
-
-        seen.add(key)
-        cookies.push(cookie)
-      }
-    }
-
-    return cookies
-  }
-
-  /**
-   * 删除单个会话 cookie。
-   *
-   * @param cookie 需要删除的 cookie。
-   * @return 删除成功返回 true，否则返回 false。
-   */
-  const removeCodexSessionCookie = async (cookie: chrome.cookies.Cookie) => {
-    if (!chrome.cookies?.remove) {
-      return false
-    }
-
-    const details: chrome.cookies.Details = {
-      url: buildCookieRemovalUrl(cookie),
-      name: cookie.name
-    }
-
-    if (cookie.storeId) {
-      details.storeId = cookie.storeId
-    }
-
-    try {
-      return Boolean(await chrome.cookies.remove(details))
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * 清理浏览器里和 Codex/OpenAI 登录相关的旧 cookie。
-   *
-   * @return 清理结果，包含是否支持 cookies API、删除数量和提示信息。
-   */
-  const clearCodexSessionCookies = async () => {
-    if (!chrome.cookies?.getAll || !chrome.cookies?.remove) {
-      return {
-        ok: false,
-        removedCount: 0,
-        message: "当前浏览器不支持 cookies API，已跳过旧登录信息清理"
-      }
-    }
-
-    const cookies = await collectCodexSessionCookies()
-    let removedCount = 0
-
-    for (const cookie of cookies) {
-      if (await removeCodexSessionCookie(cookie)) {
-        removedCount += 1
-      }
-    }
-
-    return {
-      ok: true,
-      removedCount,
-      message:
-        removedCount > 0
-          ? `已清理 ${removedCount} 个旧登录 cookie`
-          : "未发现可清理的旧登录 cookie"
-    }
-  }
-
-  /**
-   * 等页面加载完成后调用脚本
-   *
-   * @param tabId 目标tabId
-   */
-  const clearSessionStorageInTab = async (tabId: number) => {
-    // 很奇怪，虽然跟页面元素无关，但是 chrome.scripting.executeScript 必须要页面加载完成才能正常执行
-    await waitForTabLoaded(tabId)
-    // 清理数据
-    const [storageInjectionResult] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const localCount = window.localStorage?.length || 0
-        const sessionCount = window.sessionStorage?.length || 0
-
-        try {
-          window.localStorage?.clear()
-        } catch {
-          // Best effort only.
-        }
-
-        try {
-          window.sessionStorage?.clear()
-        } catch {
-          // Best effort only.
-        }
-
-        return {
-          localCount,
-          sessionCount
-        }
-      }
-    })
-
-    const value = storageInjectionResult?.result as
-      | {
-          localCount?: number
-          sessionCount?: number
-        }
-      | undefined
-
-    return {
-      localCount: Number(value?.localCount || 0),
-      sessionCount: Number(value?.sessionCount || 0)
-    }
-  }
-
-  const clearCodexSessionStorage = async () => {
-    const tabs = await chrome.tabs.query({})
-    const targetTabs = tabs.filter((tab) => {
-      return Boolean(tab.id) && isCodexSessionStorageUrl(tab.url)
-    })
-
-    let clearedTabCount = 0
-    let localCount = 0
-    let sessionCount = 0
-
-    for (const tab of targetTabs) {
-      if (!tab.id) {
-        continue
-      }
-
-      try {
-        const result = await clearSessionStorageInTab(tab.id)
-        localCount += result.localCount
-        sessionCount += result.sessionCount
-        clearedTabCount += 1
-      } catch {
-        // Best effort only.
-      }
-    }
-
-    return {
-      clearedTabCount,
-      localCount,
-      sessionCount,
-      message:
-        clearedTabCount > 0
-          ? `已清理 ${clearedTabCount} 个页面的 localStorage/sessionStorage`
-          : "未发现可清理的 localStorage/sessionStorage"
     }
   }
 
@@ -837,8 +596,12 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     throwIfAborted(getAbortSignal())
     const cpaOAuthUrl = buildCpaOAuthUrl(targetUrl)
     // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
-    const cleanupResult = await clearCodexSessionCookies()
-    const storageResult = await clearCodexSessionStorage()
+    const cleanupResult = await clearSessionCookiesForUrls(
+      OPENAI_SESSION_CLEANUP_URLS
+    )
+    const storageResult = await clearOpenTabSiteStorageForUrls(
+      OPENAI_SESSION_CLEANUP_URLS
+    )
     const cleanupMessage = `${cleanupResult.message}；${storageResult.message}，`
     // endregion。
 
@@ -900,7 +663,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     })
     if (authTab.id) {
       try {
-        await clearSessionStorageInTab(authTab.id)
+        await clearSiteStorageInTab(authTab.id)
       } catch {
         // Best effort only.
       }

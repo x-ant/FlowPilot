@@ -51,6 +51,14 @@ export const pollMail2925VerificationCodeInPage = async (
   )
   const seenCodes = new Set<string>()
   let lastSkipMessage = ""
+  const debugLog = (message: string, extra?: unknown) => {
+    console.info(`[codex-login][2925验证码] ${message}`, extra || "")
+  }
+  const formatDebugTime = (timestamp: number) => {
+    return timestamp
+      ? new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
+      : "无"
+  }
   const wait = (timeout: number) => {
     return new Promise<void>((resolve) => {
       setTimeout(resolve, timeout)
@@ -188,7 +196,30 @@ export const pollMail2925VerificationCodeInPage = async (
       ).getTime()
     }
 
-    match = normalized.match(/(?:今天\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+    match = normalized.match(/昨天\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+    if (match) {
+      date.setDate(now.getDate() - 1)
+      date.setHours(
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3] || 0),
+        0
+      )
+      return date.getTime()
+    }
+
+    match = normalized.match(/今天\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+    if (match) {
+      date.setHours(
+        Number(match[1]),
+        Number(match[2]),
+        Number(match[3] || 0),
+        0
+      )
+      return date.getTime()
+    }
+
+    match = normalized.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/)
     if (match) {
       date.setHours(
         Number(match[1]),
@@ -380,6 +411,14 @@ export const pollMail2925VerificationCodeInPage = async (
     return text
   }
 
+  debugLog("开始轮询", {
+    requestTimestamp,
+    requestTime: formatDebugTime(requestTimestamp),
+    filterAfter,
+    filterAfterTime: formatDebugTime(filterAfter),
+    targetEmail
+  })
+
   while (Date.now() - startedAt < timeoutMs) {
     await refreshInbox()
 
@@ -393,34 +432,79 @@ export const pollMail2925VerificationCodeInPage = async (
       }
 
       const timestamp = parseMailItemTimestamp(item)
-      if (timestamp > 0 && timestamp < filterAfter) {
-        continue
-      }
-
       const previewText = getText(item)
-      if (
-        !/openai|chatgpt|login|verification|code|验证码|登录|認証|確認/i.test(
+      const matchedPreview =
+        /openai|chatgpt|login|verification|code|验证码|登录|認証|確認/i.test(
           previewText
         )
-      ) {
+
+      debugLog("检查列表邮件", {
+        itemIndex,
+        timestamp,
+        time: formatDebugTime(timestamp),
+        filterAfter,
+        filterAfterTime: formatDebugTime(filterAfter),
+        matchedPreview,
+        previewText
+      })
+
+      if (timestamp > 0 && timestamp < filterAfter) {
+        lastSkipMessage = `列表时间早于过滤时间（列表时间 ${formatDebugTime(timestamp)}，过滤时间 ${formatDebugTime(filterAfter)}）`
+        debugLog("跳过列表旧邮件", {
+          itemIndex,
+          timestamp,
+          time: formatDebugTime(timestamp),
+          filterAfter,
+          filterAfterTime: formatDebugTime(filterAfter),
+          previewText
+        })
         continue
       }
 
+      if (
+        !matchedPreview
+      ) {
+        debugLog("跳过非验证码候选邮件", {
+          itemIndex,
+          previewText
+        })
+        continue
+      }
+
+      debugLog("打开验证码候选邮件", {
+        itemIndex,
+        timestamp,
+        time: formatDebugTime(timestamp),
+        previewText
+      })
       const bodyText = await openMailAndRead(item)
       const validation = validateMailDetail(bodyText, timestamp)
       if (!validation.ok) {
         lastSkipMessage = validation.message
+        debugLog("详情校验失败", {
+          itemIndex,
+          message: validation.message
+        })
         continue
       }
 
       const bodyCode = extractVerificationCode(bodyText)
       if (bodyCode && excludedCodes.has(bodyCode)) {
         lastSkipMessage = `跳过已失败的验证码 ${bodyCode}`
+        debugLog("跳过已失败验证码", {
+          itemIndex,
+          bodyCode
+        })
         continue
       }
 
       if (bodyCode && !seenCodes.has(bodyCode)) {
         seenCodes.add(bodyCode)
+        debugLog("读取到验证码", {
+          itemIndex,
+          bodyCode,
+          message: validation.message
+        })
         return {
           ok: true,
           code: bodyCode,
