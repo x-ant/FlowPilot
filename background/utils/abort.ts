@@ -15,11 +15,11 @@ export const abortableSleep = (
   abortSignal?: AbortSignal
 ) => {
   return new Promise<void>((resolve, reject) => {
-    let timeoutId: ReturnType<typeof globalThis.setTimeout> | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
 
     const cleanup = () => {
       if (timeoutId) {
-        globalThis.clearTimeout(timeoutId)
+        clearTimeout(timeoutId)
       }
       abortSignal?.removeEventListener("abort", onAbort)
     }
@@ -34,7 +34,7 @@ export const abortableSleep = (
       return
     }
 
-    timeoutId = globalThis.setTimeout(() => {
+    timeoutId = setTimeout(() => {
       cleanup()
       resolve()
     }, milliseconds)

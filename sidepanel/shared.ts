@@ -12,7 +12,7 @@ export type AccountFormValues = {
 
 export type ManagedAccountStatus = "idle" | "running" | "done" | "failed"
 
-export type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6
+export type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 export type ManagedAccount = {
   email: string
@@ -204,7 +204,7 @@ export const normalizeStoredAccount = (
       ? record.status
       : "idle"
 
-  const progress = [0, 1, 2, 3, 4, 5, 6].includes(Number(record.progress))
+  const progress = [0, 1, 2, 3, 4, 5, 6, 7].includes(Number(record.progress))
     ? (Number(record.progress) as ManagedAccountProgress)
     : 0
 

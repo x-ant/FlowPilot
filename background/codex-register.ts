@@ -1,5 +1,6 @@
 import { createCodexLoginRunner } from "./codex-login"
 import { createMail2925Runner } from "./mail-2925"
+import { abortableSleep } from "./utils/abort"
 import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
@@ -43,6 +44,16 @@ const SIGNUP_ENTRY_BUTTON_TEXTS = [
   "アカウントを作成",
   "サインアップ",
   "新規登録"
+]
+
+const LOGIN_ENTRY_BUTTON_TEXTS = [
+  "登录",
+  "登入",
+  "log in",
+  "login",
+  "sign in",
+  "サインイン",
+  "ログイン"
 ]
 
 const OPENAI_EMAIL_INPUT_SELECTORS = [
@@ -89,6 +100,17 @@ const OPENAI_VERIFICATION_INPUT_SELECTORS = [
 ]
 
 const OPENAI_READY_CONTINUE_BUTTON_TEXTS = ["继续", "continue"]
+
+const OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS = [
+  "continue",
+  "next",
+  "submit",
+  "sign in",
+  "log in",
+  "登录",
+  "继续",
+  "下一步"
+]
 
 const submitRegisterProfileInPage = (
   fullName: string,
@@ -541,45 +563,52 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
-  const openChatGptRegisterEntry =
-    async (): Promise<CodexRegisterStepResponse> => {
-      throwIfRunAborted()
+  const openChatGptRegisterEntry = async (
+    reuseTabId?: number
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
 
-      const cookieResult = await clearSessionCookiesForUrls(
-        OPENAI_SESSION_CLEANUP_URLS
-      )
-      const storageResult = await clearOpenTabSiteStorageForUrls(
-        OPENAI_SESSION_CLEANUP_URLS
-      )
-      // 打开
-      const tabId = await findOrOpenTab(CHATGPT_SIGNUP_ENTRY_URL)
-      let currentTabStorageMessage = ""
+    const cookieResult = await clearSessionCookiesForUrls(
+      OPENAI_SESSION_CLEANUP_URLS
+    )
+    const storageResult = await clearOpenTabSiteStorageForUrls(
+      OPENAI_SESSION_CLEANUP_URLS
+    )
+    // 打开；第 7 步 fallback 会传入当前 OAuth tab 复用 reuse 复用，其它入口保持原来的查找/打开行为。
+    const tabId =
+      typeof reuseTabId === "number"
+        ? reuseTabId
+        : await findOrOpenTab(CHATGPT_SIGNUP_ENTRY_URL)
+    let currentTabStorageMessage = ""
 
-      try {
-        // 页面站点存储必须打开界面后注入清理，所以这里清理当前注册页 origin。
-        const currentTabStorageResult = await clearSiteStorageInTab(tabId)
-        currentTabStorageMessage = `；当前注册页已清理 ${currentTabStorageResult.localCount}/${currentTabStorageResult.sessionCount}/${currentTabStorageResult.indexedDbCount}/${currentTabStorageResult.cacheCount} 个 local/session/indexedDB/cache 项`
-      } catch {
-        currentTabStorageMessage =
-          "；当前注册页站点存储清理失败，已继续打开页面"
-      }
+    try {
+      // 页面站点存储必须打开界面后注入清理，所以这里清理当前注册页 origin。
+      const currentTabStorageResult = await clearSiteStorageInTab(tabId)
+      currentTabStorageMessage = `；当前注册页已清理 ${currentTabStorageResult.localCount}/${currentTabStorageResult.sessionCount}/${currentTabStorageResult.indexedDbCount}/${currentTabStorageResult.cacheCount} 个 local/session/indexedDB/cache 项`
+    } catch {
+      currentTabStorageMessage = "；当前注册页站点存储清理失败，已继续打开页面"
+    }
 
-      // 再刷新一下
-      await chrome.tabs.update(tabId, {
-        active: true,
-        url: CHATGPT_SIGNUP_ENTRY_URL
-      })
-      const tab = await chrome.tabs.get(tabId)
+    // 再刷新一下，防止页面还是有缓存展示的状态
+    await chrome.tabs.update(tabId, {
+      active: true,
+      url: CHATGPT_SIGNUP_ENTRY_URL
+    })
+    const tab = await chrome.tabs.get(tabId)
 
-      return {
-        ok: true,
-        message: `${cookieResult.message}；${storageResult.message}${currentTabStorageMessage}；已打开 GPT 页面`,
-        targetTab: {
-          id: tab.id,
-          url: tab.url
-        }
+    return {
+      ok: true,
+      message: `${cookieResult.message}；${storageResult.message}${currentTabStorageMessage}；${
+        typeof reuseTabId === "number"
+          ? "已在当前 tab 打开 GPT 页面"
+          : "已打开 GPT 页面"
+      }`,
+      targetTab: {
+        id: tab.id,
+        url: tab.url
       }
     }
+  }
 
   const clickRegisterAndSubmitEmail = async (
     email: string,
@@ -646,6 +675,73 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         }
       }
 
+      return {
+        ok: false,
+        message: entryResult.ok
+          ? submitResult.message
+          : `${entryResult.message}；${submitResult.message}`,
+        targetTab: submitResult.tab
+      }
+    }
+
+    return {
+      ok: true,
+      message: entryResult.ok
+        ? `${entryResult.message}；${submitResult.message}`
+        : submitResult.message,
+      targetTab: submitResult.tab
+    }
+  }
+
+  const clickLoginAndSubmitEmail = async (
+    email: string,
+    tabId: number
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    const normalizedEmail = String(email || "").trim()
+    if (!normalizedEmail) {
+      return {
+        ok: false,
+        message: "缺少登录邮箱"
+      }
+    }
+
+    try {
+      await chrome.tabs.get(tabId)
+    } catch {
+      return {
+        ok: false,
+        message: "未找到 GPT 页面，请重新执行打开 GPT 页面"
+      }
+    }
+
+    const entryResult = await runPageActionInTab(tabId, {
+      button: {
+        texts: LOGIN_ENTRY_BUTTON_TEXTS
+      },
+      timeoutMs: 10000,
+      successMessage: "已点击 GPT 登录入口",
+      failureMessage: "未找到 GPT 页面上的登录入口"
+    })
+
+    const submitResult = await runPageActionInTab(tabId, {
+      fields: [
+        {
+          selectors: OPENAI_EMAIL_INPUT_SELECTORS,
+          value: normalizedEmail
+        }
+      ],
+      button: {
+        texts: OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
+      },
+      timeoutMs: 20000,
+      successMessage: "已填写登录邮箱并点击继续",
+      failureMessage: "未找到登录邮箱输入框或继续按钮"
+    })
+
+    if (!submitResult.ok) {
       return {
         ok: false,
         message: entryResult.ok
@@ -791,7 +887,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
   const refreshRegisterOAuthAndLogin = async (
     targetUrl: string,
-    managementKey: string
+    managementKey: string,
+    targetTabId?: number
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -805,7 +902,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     const result = await openCodexAuthLink(normalizedTargetUrl, {
       cleanupSession: false,
-      managementKey
+      managementKey,
+      targetTabId
     })
 
     return {
@@ -817,13 +915,167 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const chooseRegisterLoginAccount = async (
+    tabId: number,
+    email: string
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    const normalizedEmail = String(email || "").trim()
+    if (!normalizedEmail) {
+      return {
+        ok: false,
+        message: "缺少登录邮箱"
+      }
+    }
+
+    try {
+      await chrome.tabs.get(tabId)
+    } catch {
+      return {
+        ok: false,
+        message: "未找到 OpenAI 授权页 tab，请先执行 Step 6 或使用当前标签页"
+      }
+    }
+
+    const targetAccountResult = await runPageActionInTab(tabId, {
+      button: {
+        texts: [normalizedEmail]
+      },
+      timeoutMs: 5000,
+      successMessage: `已点击目标账号卡片 ${normalizedEmail}`,
+      failureMessage: `未找到目标账号卡片 ${normalizedEmail}`
+    })
+    if (targetAccountResult.ok) {
+      return {
+        ok: true,
+        message: targetAccountResult.message,
+        targetTab: targetAccountResult.tab
+      }
+    }
+
+    return {
+      ok: false,
+      message: `${targetAccountResult.message}；需要先执行注册流程 1、登录版 2、3 完成目标账号登录`,
+      targetTab: targetAccountResult.tab
+    }
+  }
+
+  const completeRegisterOAuthLogin = async (
+    tabId: number,
+    email: string,
+    password: string,
+    targetUrl: string,
+    managementKey: string
+  ): Promise<CodexRegisterStepResponse> => {
+    throwIfRunAborted()
+
+    const firstChoice = await chooseRegisterLoginAccount(tabId, email)
+    if (firstChoice.ok) {
+      return firstChoice
+    }
+
+    const normalizedTargetUrl = String(targetUrl || "").trim()
+    const normalizedManagementKey = String(managementKey || "").trim()
+    if (!normalizedTargetUrl) {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；缺少 CPA 地址，无法重新执行 Step 6`,
+        targetTab: firstChoice.targetTab
+      }
+    }
+
+    if (!normalizedManagementKey) {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；缺少 CPA 管理密钥，无法重新执行 Step 6`,
+        targetTab: firstChoice.targetTab
+      }
+    }
+
+    const openResult = await openChatGptRegisterEntry(tabId)
+    if (!openResult.ok || typeof openResult.targetTab?.id !== "number") {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；${openResult.message}`,
+        targetTab: openResult.targetTab
+      }
+    }
+
+    const verificationRequestedAt = Date.now()
+    const loginResult = await clickLoginAndSubmitEmail(
+      email,
+      openResult.targetTab.id
+    )
+    if (!loginResult.ok) {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；${loginResult.message}`,
+        targetTab: loginResult.targetTab
+      }
+    }
+
+    const codeResult = await fetchAndSubmitRegisterVerificationCode(
+      openResult.targetTab.id,
+      email,
+      password,
+      verificationRequestedAt
+    )
+    if (!codeResult.ok) {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；${loginResult.message}；${codeResult.message}`,
+        targetTab: codeResult.targetTab
+      }
+    }
+
+    const codeTabId = codeResult.targetTab?.id || openResult.targetTab.id
+    await waitForTabLoaded(codeTabId, undefined, 30000)
+
+    // 验证码提交后给页面一点时间写入登录缓存，再重新打开 OAuth。
+    await abortableSleep(15000, getAbortSignal())
+
+    const refreshResult = await refreshRegisterOAuthAndLogin(
+      normalizedTargetUrl,
+      normalizedManagementKey,
+      codeTabId
+    )
+    if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
+      return {
+        ok: false,
+        message: `${firstChoice.message}；${openResult.message}；${loginResult.message}；${codeResult.message}；${refreshResult.message}`,
+        targetTab: refreshResult.targetTab
+      }
+    }
+
+    const secondChoice = await chooseRegisterLoginAccount(
+      refreshResult.targetTab.id,
+      email
+    )
+    return {
+      ok: secondChoice.ok,
+      message: [
+        firstChoice.message,
+        openResult.message,
+        loginResult.message,
+        codeResult.message,
+        refreshResult.message,
+        secondChoice.message
+      ]
+        .filter(Boolean)
+        .join("；"),
+      targetTab: secondChoice.targetTab
+    }
+  }
+
   return {
     openChatGptRegisterEntry,
     clickRegisterAndSubmitEmail,
     fetchAndSubmitRegisterVerificationCode,
     submitRegisterProfile,
     clickRegisterReadyContinue,
-    refreshRegisterOAuthAndLogin
+    refreshRegisterOAuthAndLogin,
+    completeRegisterOAuthLogin
   }
 }
 
@@ -833,5 +1085,6 @@ export const {
   fetchAndSubmitRegisterVerificationCode,
   submitRegisterProfile,
   clickRegisterReadyContinue,
-  refreshRegisterOAuthAndLogin
+  refreshRegisterOAuthAndLogin,
+  completeRegisterOAuthLogin
 } = createCodexRegisterRunner()

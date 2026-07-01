@@ -38,6 +38,7 @@ type AccountWorkspaceProps = {
   runningCount: number
   failedCount: number
   disabled: boolean
+  stepCount?: number
   accountToolbarActions?: ReactNode
   debugTitleExtra: ReactNode
   debugContent: ReactNode
@@ -68,6 +69,7 @@ export function AccountWorkspace({
   runningCount,
   failedCount,
   disabled,
+  stepCount = STEP_COUNT,
   accountToolbarActions,
   debugTitleExtra,
   debugContent,
@@ -266,7 +268,7 @@ export function AccountWorkspace({
                         {account.email}
                       </span>
                       <Space className="account-status-tags" size={6}>
-                        <Tag variant="filled">{`${account.progress}/${STEP_COUNT}`}</Tag>
+                        <Tag variant="filled">{`${account.progress}/${stepCount}`}</Tag>
                         <Tag variant="filled" color={statusMeta.color}>
                           {statusMeta.label}
                         </Tag>

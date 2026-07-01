@@ -27,6 +27,7 @@ import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
 type OpenCodexAuthLinkOptions = {
   cleanupSession?: boolean
   managementKey?: string
+  targetTabId?: number
 }
 
 export const createCodexLoginRunner = (context: RunContext = {}) => {
@@ -369,10 +370,16 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     // region ========== 直接通过 CPA 管理接口获取最新 OAuth 授权链接 ==========
     const apiResult = await requestCpaOAuthUrl(targetUrl, managementKey)
     throwIfAborted(getAbortSignal())
-    const authTab = await chrome.tabs.create({
-      active: true,
-      url: apiResult.oauthUrl
-    })
+    const authTab =
+      typeof options.targetTabId === "number"
+        ? await chrome.tabs.update(options.targetTabId, {
+            active: true,
+            url: apiResult.oauthUrl
+          })
+        : await chrome.tabs.create({
+            active: true,
+            url: apiResult.oauthUrl
+          })
     if (shouldCleanupSession && authTab.id) {
       try {
         await clearSiteStorageInTab(authTab.id)
@@ -386,7 +393,9 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     throwIfAborted(getAbortSignal())
     return {
       ok: true,
-      message: `${cleanupMessage}已通过 CPA 管理接口获取 OAuth 链接并打开 OpenAI 授权页`,
+      message: `${cleanupMessage}已通过 CPA 管理接口获取 OAuth 链接并${
+        typeof options.targetTabId === "number" ? "复用当前 tab 打开" : "打开"
+      } OpenAI 授权页`,
       cpaOAuthState: apiResult.oauthState,
       targetTab: {
         id: authTab.id,
@@ -910,12 +919,24 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     cpaOAuthState = ""
   ): Promise<SubmitCodexOAuthCallbackResponse> => {
     throwIfAborted(getAbortSignal())
-    const submitResult = await submitCpaOAuthCallback(
-      targetUrl,
-      managementKey,
-      callbackUrl,
-      cpaOAuthState
-    )
+    let submitResult: Awaited<ReturnType<typeof submitCpaOAuthCallback>>
+    try {
+      submitResult = await submitCpaOAuthCallback(
+        targetUrl,
+        managementKey,
+        callbackUrl,
+        cpaOAuthState
+      )
+    } catch (error) {
+      return {
+        ok: false,
+        message: `回填回调地址失败：${
+          error instanceof Error ? error.message : "CPA 回调提交失败"
+        }`,
+        callbackUrl,
+        cpaOAuthState
+      }
+    }
     throwIfAborted(getAbortSignal())
     const closedCallbackTab =
       typeof callbackTabId === "number"

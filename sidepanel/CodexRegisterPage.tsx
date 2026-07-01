@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
+  completeRegisterOAuthLogin,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
@@ -20,7 +21,7 @@ import {
 } from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 6
+const REGISTER_STEP_COUNT = 7
 
 type RegisterStepResult = {
   ok: boolean
@@ -344,7 +345,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       setDebugRegisterTabId(String(result.targetTab?.id || ""))
-      setDebugProgress(REGISTER_STEP_COUNT)
+      setDebugProgress(6)
       setStatus("已刷新 OAuth 并进入登录授权流程")
       log.info(
         `[注册调试] Step 6 ${result.message}；tab=${
@@ -361,10 +362,35 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
+  const handleCompleteRegisterOAuthLogin = async () => {
+    await runRegisterDebugStep({
+      step: 7,
+      runningStatus: `正在完成登录 ${selectedDebugAccount?.email || ""}`,
+      runningMessage: "正在完成登录",
+      runningProgress: 6,
+      action: (tabId) => {
+        return completeRegisterOAuthLogin(
+          tabId,
+          selectedDebugAccount?.email || "",
+          selectedDebugAccount?.password || "",
+          cpaUrl,
+          cpaManagementKey
+        )
+      },
+      failureStatus: "完成登录失败",
+      successStatus: "已完成登录",
+      successProgress: REGISTER_STEP_COUNT as ManagedAccountProgress,
+      successAccountStatus: "done",
+      exceptionStatus: "完成登录异常",
+      exceptionMessage: "完成登录异常"
+    })
+  }
+
   return (
     <AccountWorkspace
       {...accountPage}
       disabled={isDebugRunning}
+      stepCount={REGISTER_STEP_COUNT}
       onCpaUrlChange={accountPage.handleCpaUrlChange}
       onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
       onSubmitAccount={accountPage.handleSubmitAccount}
@@ -461,6 +487,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 isDebugRunning || !cpaUrl.trim() || !cpaManagementKey.trim()
               }>
               6 刷新 OAuth 并登录
+            </Button>
+            <Button
+              onClick={() => {
+                void handleCompleteRegisterOAuthLogin()
+              }}
+              loading={isDebugRunning}
+              disabled={isDebugRunning || !selectedDebugAccount}>
+              7 完成登录
             </Button>
           </Space>
         </div>
