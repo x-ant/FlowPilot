@@ -51,13 +51,27 @@ export const pollMail2925VerificationCodeInPage = async (
   )
   const seenCodes = new Set<string>()
   let lastSkipMessage = ""
-  const debugLog = (message: string, extra?: unknown) => {
-    console.info(`[codex-login][2925验证码] ${message}`, extra || "")
-  }
   const formatDebugTime = (timestamp: number) => {
     return timestamp
       ? new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
       : "无"
+  }
+  const debugLog = (message: string, extra?: unknown) => {
+    const loggedAt = Date.now()
+    const logExtra =
+      extra && typeof extra === "object" && !Array.isArray(extra)
+        ? {
+            loggedAt,
+            loggedAtTime: formatDebugTime(loggedAt),
+            ...(extra as Record<string, unknown>)
+          }
+        : {
+            loggedAt,
+            loggedAtTime: formatDebugTime(loggedAt),
+            extra
+          }
+
+    console.info(`[codex-login][2925验证码] ${message}`, logExtra)
   }
   const wait = (timeout: number) => {
     return new Promise<void>((resolve) => {
@@ -412,6 +426,8 @@ export const pollMail2925VerificationCodeInPage = async (
   }
 
   debugLog("开始轮询", {
+    verificationRequestedAt: requestTimestamp,
+    verificationRequestedAtTime: formatDebugTime(requestTimestamp),
     requestTimestamp,
     requestTime: formatDebugTime(requestTimestamp),
     filterAfter,
@@ -437,54 +453,70 @@ export const pollMail2925VerificationCodeInPage = async (
         /openai|chatgpt|login|verification|code|验证码|登录|認証|確認/i.test(
           previewText
         )
+      const matchedTargetInPreview = isTargetRecipient(previewText)
 
-      debugLog("检查列表邮件", {
-        itemIndex,
-        timestamp,
-        time: formatDebugTime(timestamp),
-        filterAfter,
-        filterAfterTime: formatDebugTime(filterAfter),
-        matchedPreview,
-        previewText
-      })
-
-      if (timestamp > 0 && timestamp < filterAfter) {
-        lastSkipMessage = `列表时间早于过滤时间（列表时间 ${formatDebugTime(timestamp)}，过滤时间 ${formatDebugTime(filterAfter)}）`
-        debugLog("跳过列表旧邮件", {
+      if (matchedTargetInPreview) {
+        debugLog("检查列表邮件", {
           itemIndex,
+          verificationRequestedAt: requestTimestamp,
+          verificationRequestedAtTime: formatDebugTime(requestTimestamp),
           timestamp,
           time: formatDebugTime(timestamp),
           filterAfter,
           filterAfterTime: formatDebugTime(filterAfter),
+          matchedPreview,
+          matchedTargetInPreview,
           previewText
         })
+      }
+
+      if (timestamp > 0 && timestamp < filterAfter) {
+        lastSkipMessage = `列表时间早于过滤时间（列表时间 ${formatDebugTime(timestamp)}，过滤时间 ${formatDebugTime(filterAfter)}）`
+        if (matchedTargetInPreview) {
+          debugLog("跳过列表旧邮件", {
+            itemIndex,
+            verificationRequestedAt: requestTimestamp,
+            verificationRequestedAtTime: formatDebugTime(requestTimestamp),
+            timestamp,
+            time: formatDebugTime(timestamp),
+            filterAfter,
+            filterAfterTime: formatDebugTime(filterAfter),
+            previewText
+          })
+        }
         continue
       }
 
       if (
         !matchedPreview
       ) {
-        debugLog("跳过非验证码候选邮件", {
-          itemIndex,
-          previewText
-        })
+        if (matchedTargetInPreview) {
+          debugLog("跳过非验证码候选邮件", {
+            itemIndex,
+            previewText
+          })
+        }
         continue
       }
 
-      debugLog("打开验证码候选邮件", {
-        itemIndex,
-        timestamp,
-        time: formatDebugTime(timestamp),
-        previewText
-      })
+      if (matchedTargetInPreview) {
+        debugLog("打开验证码候选邮件", {
+          itemIndex,
+          timestamp,
+          time: formatDebugTime(timestamp),
+          previewText
+        })
+      }
       const bodyText = await openMailAndRead(item)
       const validation = validateMailDetail(bodyText, timestamp)
       if (!validation.ok) {
         lastSkipMessage = validation.message
-        debugLog("详情校验失败", {
-          itemIndex,
-          message: validation.message
-        })
+        if (!validation.message.includes("跳过非当前账号邮件")) {
+          debugLog("详情校验失败", {
+            itemIndex,
+            message: validation.message
+          })
+        }
         continue
       }
 

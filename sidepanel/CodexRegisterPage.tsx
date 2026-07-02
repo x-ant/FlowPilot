@@ -1,14 +1,15 @@
-import { Button, Select, Space, Tag } from "antd"
+import { Button, Input, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useState } from "react"
 
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
-  completeRegisterOAuthLogin,
+  completeRegisterPhoneVerification,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
-  submitRegisterProfile
+  submitRegisterProfile,
+  type HeroSmsPhoneVerificationOptions
 } from "../background/codex-register"
 import { AccountWorkspace } from "./AccountWorkspace"
 import { DebugTabControl } from "./DebugTabControl"
@@ -22,6 +23,40 @@ import {
 import { useAccountPageState } from "./useAccountPageState"
 
 const REGISTER_STEP_COUNT = 7
+const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
+
+const HERO_SMS_COUNTRY_OPTIONS = [
+  { label: "印度尼西亚 (+62)", value: "6", countryLabel: "Indonesia" },
+  { label: "泰国 (+66)", value: "52", countryLabel: "Thailand" },
+  { label: "越南 (+84)", value: "10", countryLabel: "Vietnam" },
+  { label: "英国 (+44)", value: "16", countryLabel: "United Kingdom" },
+  { label: "美国 (+1)", value: "187", countryLabel: "USA" },
+  { label: "日本 (+81)", value: "151", countryLabel: "Japan" }
+]
+
+const HERO_SMS_OPERATOR_OPTIONS = [
+  { label: "any", value: "any" },
+  { label: "telkomsel", value: "telkomsel" },
+  { label: "indosat", value: "indosat" },
+  { label: "xl", value: "xl" },
+  { label: "axis", value: "axis" },
+  { label: "three", value: "three" },
+  { label: "smartfren", value: "smartfren" }
+]
+
+type HeroSmsSettings = {
+  apiKey: string
+  countryId: string
+  operator: string
+  maxPrice: string
+}
+
+const DEFAULT_HERO_SMS_SETTINGS: HeroSmsSettings = {
+  apiKey: "",
+  countryId: "6",
+  operator: "any",
+  maxPrice: ""
+}
 
 type RegisterStepResult = {
   ok: boolean
@@ -66,6 +101,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugProgress, setDebugProgress] = useState(0)
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
+  const [heroSmsSettings, setHeroSmsSettings] = useState<HeroSmsSettings>(
+    DEFAULT_HERO_SMS_SETTINGS
+  )
 
   const selectedDebugAccount = useMemo(() => {
     const normalizedDebugEmail = normalizeEmail(debugEmail)
@@ -98,6 +136,59 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onBusyChange?.(false)
     }
   }, [isDebugRunning, onBusyChange])
+
+  useEffect(() => {
+    void chrome.storage.local.get([REGISTER_HERO_SMS_STORAGE_KEY], (result) => {
+      const stored = result?.[REGISTER_HERO_SMS_STORAGE_KEY] as
+        | Partial<HeroSmsSettings>
+        | undefined
+      setHeroSmsSettings({
+        apiKey: String(stored?.apiKey || ""),
+        countryId:
+          HERO_SMS_COUNTRY_OPTIONS.find((item) => {
+            return item.value === String(stored?.countryId || "")
+          })?.value || DEFAULT_HERO_SMS_SETTINGS.countryId,
+        operator: String(
+          stored?.operator || DEFAULT_HERO_SMS_SETTINGS.operator
+        ),
+        maxPrice: String(stored?.maxPrice || "")
+      })
+    })
+  }, [])
+
+  const patchHeroSmsSettings = (patch: Partial<HeroSmsSettings>) => {
+    setHeroSmsSettings((current) => {
+      const next = {
+        ...current,
+        ...patch
+      }
+      void chrome.storage.local.set({
+        [REGISTER_HERO_SMS_STORAGE_KEY]: next
+      })
+      return next
+    })
+  }
+
+  const buildHeroSmsOptions = (): HeroSmsPhoneVerificationOptions | null => {
+    const apiKey = String(heroSmsSettings.apiKey || "").trim()
+    if (!apiKey) {
+      setStatus("请先填写 HeroSMS 接码 API")
+      log.warn("[注册调试] Step 7 缺少 HeroSMS 接码 API")
+      return null
+    }
+
+    const country = HERO_SMS_COUNTRY_OPTIONS.find((item) => {
+      return item.value === heroSmsSettings.countryId
+    })
+
+    return {
+      apiKey,
+      countryId: Number(country?.value || DEFAULT_HERO_SMS_SETTINGS.countryId),
+      countryLabel: country?.countryLabel || "Indonesia",
+      operator: String(heroSmsSettings.operator || "any").trim() || "any",
+      maxPrice: String(heroSmsSettings.maxPrice || "").trim()
+    }
+  }
 
   const handleOpenRegisterEntry = async () => {
     if (isDebugRunning) {
@@ -362,27 +453,26 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
-  const handleCompleteRegisterOAuthLogin = async () => {
+  const handleCompleteRegisterPhoneVerification = async () => {
+    const heroSmsOptions = buildHeroSmsOptions()
+    if (!heroSmsOptions) {
+      return
+    }
+
     await runRegisterDebugStep({
       step: 7,
-      runningStatus: `正在完成登录 ${selectedDebugAccount?.email || ""}`,
-      runningMessage: "正在完成登录",
+      runningStatus: "正在执行手机号验证",
+      runningMessage: "正在获取手机号并等待短信验证码",
       runningProgress: 6,
       action: (tabId) => {
-        return completeRegisterOAuthLogin(
-          tabId,
-          selectedDebugAccount?.email || "",
-          selectedDebugAccount?.password || "",
-          cpaUrl,
-          cpaManagementKey
-        )
+        return completeRegisterPhoneVerification(tabId, heroSmsOptions)
       },
-      failureStatus: "完成登录失败",
-      successStatus: "已完成登录",
+      failureStatus: "手机号验证失败",
+      successStatus: "已完成手机号验证",
       successProgress: REGISTER_STEP_COUNT as ManagedAccountProgress,
       successAccountStatus: "done",
-      exceptionStatus: "完成登录异常",
-      exceptionMessage: "完成登录异常"
+      exceptionStatus: "手机号验证异常",
+      exceptionMessage: "手机号验证异常"
     })
   }
 
@@ -435,6 +525,55 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
             onClear={handleClearDebugState}
           />
+
+          <div className="debug-grid debug-grid--two">
+            <div className="debug-field">
+              <span className="debug-label">国家选项</span>
+              <Select
+                value={heroSmsSettings.countryId}
+                options={HERO_SMS_COUNTRY_OPTIONS}
+                onChange={(value) => {
+                  patchHeroSmsSettings({ countryId: value })
+                }}
+                disabled={isDebugRunning}
+              />
+            </div>
+            <div className="debug-field">
+              <span className="debug-label">运营商选项</span>
+              <Select
+                value={heroSmsSettings.operator}
+                options={HERO_SMS_OPERATOR_OPTIONS}
+                onChange={(value) => {
+                  patchHeroSmsSettings({ operator: value })
+                }}
+                disabled={isDebugRunning}
+              />
+            </div>
+            <div className="debug-field">
+              <span className="debug-label">接码 API</span>
+              <Input.Password
+                value={heroSmsSettings.apiKey}
+                placeholder="HeroSMS API key"
+                allowClear
+                onChange={(event) => {
+                  patchHeroSmsSettings({ apiKey: event.target.value })
+                }}
+                disabled={isDebugRunning}
+              />
+            </div>
+            <div className="debug-field">
+              <span className="debug-label">价格上限</span>
+              <Input
+                value={heroSmsSettings.maxPrice}
+                placeholder="例如 0.12"
+                allowClear
+                onChange={(event) => {
+                  patchHeroSmsSettings({ maxPrice: event.target.value })
+                }}
+                disabled={isDebugRunning}
+              />
+            </div>
+          </div>
 
           <Space size={8} wrap>
             <Button
@@ -490,11 +629,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             </Button>
             <Button
               onClick={() => {
-                void handleCompleteRegisterOAuthLogin()
+                void handleCompleteRegisterPhoneVerification()
               }}
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
-              7 完成登录
+              7 手机号验证
             </Button>
           </Space>
         </div>
