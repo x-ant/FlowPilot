@@ -1,4 +1,4 @@
-import { Button, Input, Select, Space, Tag } from "antd"
+import { Button, Checkbox, Input, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useState } from "react"
 
 import {
@@ -45,6 +45,7 @@ type HeroSmsSettings = {
   apiKey: string
   countryId: string
   operator: string
+  mockEnabled: boolean
   maxPrice: string
   fixedPrice: string
 }
@@ -63,6 +64,7 @@ const DEFAULT_HERO_SMS_SETTINGS: HeroSmsSettings = {
   apiKey: "",
   countryId: "",
   operator: "any",
+  mockEnabled: false,
   maxPrice: "",
   fixedPrice: ""
 }
@@ -232,6 +234,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         operator: String(
           stored?.operator || DEFAULT_HERO_SMS_SETTINGS.operator
         ),
+        mockEnabled: Boolean(stored?.mockEnabled),
         maxPrice: String(stored?.maxPrice || ""),
         fixedPrice: String(stored?.fixedPrice || "")
       })
@@ -257,13 +260,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    * 国家列表变化很低，先用 7 天缓存；缓存过期才请求 getCountries。
    */
   const loadHeroSmsCountryOptions = async () => {
-    if (!heroSmsSettings.apiKey.trim()) {
+    if (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim()) {
       setHeroSmsCountryOptions([])
       return
     }
 
     setIsHeroSmsCountriesLoading(true)
     try {
+      if (heroSmsSettings.mockEnabled) {
+        const options = await fetchHeroSmsCountries("", true)
+        setHeroSmsCountryOptions(options)
+        return
+      }
+
       const cached = (
         await readLocalStorage([REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY])
       )[REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY] as
@@ -278,7 +287,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         return
       }
 
-      const options = await fetchHeroSmsCountries(heroSmsSettings.apiKey)
+      const options = await fetchHeroSmsCountries(
+        heroSmsSettings.apiKey,
+        heroSmsSettings.mockEnabled
+      )
       setHeroSmsCountryOptions(options)
       await writeLocalStorage({
         [REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY]: {
@@ -307,13 +319,29 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    */
   const loadHeroSmsOperatorOptions = async (countryId: string) => {
     const normalizedCountryId = normalizeHeroSmsCountryIdValue(countryId)
-    if (!normalizedCountryId || !heroSmsSettings.apiKey.trim()) {
+    if (
+      normalizedCountryId === "" ||
+      (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim())
+    ) {
       setHeroSmsOperatorOptions([])
       return
     }
 
     setIsHeroSmsOperatorsLoading(true)
     try {
+      if (heroSmsSettings.mockEnabled) {
+        const operatorsByCountry = await fetchHeroSmsOperators(
+          normalizedCountryId,
+          "",
+          true
+        )
+        const operators = operatorsByCountry[normalizedCountryId] || []
+        setHeroSmsOperatorOptions(
+          buildHeroSmsOperatorOptions(operators, heroSmsSettings.operator)
+        )
+        return
+      }
+
       const cached = (
         await readLocalStorage([REGISTER_HERO_SMS_OPERATORS_CACHE_KEY])
       )[REGISTER_HERO_SMS_OPERATORS_CACHE_KEY] as
@@ -332,7 +360,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       const operatorsByCountry = await fetchHeroSmsOperators(
         normalizedCountryId,
-        heroSmsSettings.apiKey
+        heroSmsSettings.apiKey,
+        heroSmsSettings.mockEnabled
       )
       const now = Date.now()
       const updatedAtByCountry = {
@@ -374,7 +403,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }, [])
 
   useEffect(() => {
-    if (!heroSmsSettings.apiKey.trim()) {
+    if (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim()) {
       setHeroSmsCountryOptions([])
       setHeroSmsOperatorOptions([])
       return
@@ -388,7 +417,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     return () => {
       window.clearTimeout(timer)
     }
-  }, [heroSmsSettings.apiKey])
+  }, [heroSmsSettings.apiKey, heroSmsSettings.mockEnabled])
 
   useEffect(() => {
     void loadHeroSmsOperatorOptions(heroSmsSettings.countryId)
@@ -401,7 +430,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    */
   const buildHeroSmsOptions = (): HeroSmsPhoneVerificationOptions | null => {
     const apiKey = String(heroSmsSettings.apiKey || "").trim()
-    if (!apiKey) {
+    if (!heroSmsSettings.mockEnabled && !apiKey) {
       setStatus("请先填写 HeroSMS 接码 API")
       log.warn("[注册调试] Step 7 缺少 HeroSMS 接码 API")
       return null
@@ -422,7 +451,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return item.value === heroSmsSettings.countryId
     })
     const countryId = normalizeHeroSmsCountryIdValue(country?.value)
-    if (!countryId) {
+    if (countryId === "") {
       setStatus("请先选择有效的 HeroSMS 国家")
       log.warn("[注册调试] Step 7 HeroSMS 国家选项无效")
       return null
@@ -445,10 +474,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     return {
-      apiKey,
+      apiKey: heroSmsSettings.mockEnabled ? apiKey || "mock-api-key" : apiKey,
       countryId: Number(countryId),
       countryLabel: country?.countryLabel || `Country #${countryId}`,
       operator: String(heroSmsSettings.operator || "any").trim() || "any",
+      mockEnabled: heroSmsSettings.mockEnabled,
       maxPrice,
       fixedPrice
     }
@@ -817,7 +847,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 }}
                 disabled={
                   isDebugRunning ||
-                  !heroSmsSettings.apiKey.trim() ||
+                  (!heroSmsSettings.mockEnabled &&
+                    !heroSmsSettings.apiKey.trim()) ||
                   heroSmsCountryOptions.length === 0
                 }
               />
@@ -841,11 +872,26 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 }}
                 disabled={
                   isDebugRunning ||
-                  !heroSmsSettings.apiKey.trim() ||
-                  !heroSmsSettings.countryId ||
+                  (!heroSmsSettings.mockEnabled &&
+                    !heroSmsSettings.apiKey.trim()) ||
+                  heroSmsSettings.countryId === "" ||
                   heroSmsOperatorOptions.length === 0
                 }
               />
+            </div>
+            <div className="debug-field">
+              <span className="debug-label">HeroSMS Mock</span>
+              <Checkbox
+                checked={heroSmsSettings.mockEnabled}
+                onChange={(event) => {
+                  patchHeroSmsSettings({
+                    mockEnabled: event.target.checked,
+                    operator: "any"
+                  })
+                }}
+                disabled={isDebugRunning}>
+                不请求 HeroSMS
+              </Checkbox>
             </div>
             <div className="debug-field">
               <span className="debug-label">接码 API</span>
@@ -856,7 +902,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 onChange={(event) => {
                   patchHeroSmsSettings({ apiKey: event.target.value })
                 }}
-                disabled={isDebugRunning}
+                disabled={isDebugRunning || heroSmsSettings.mockEnabled}
               />
             </div>
             <div className="debug-field">

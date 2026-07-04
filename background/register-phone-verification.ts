@@ -11,6 +11,8 @@ export type HeroSmsPhoneVerificationOptions = {
   countryId: number
   countryLabel: string
   operator: string
+  /** 开启后不请求 HeroSMS，使用本地 mock 响应跑通流程。 */
+  mockEnabled?: boolean
   /** 用户允许的最高单价；必填，用来防止无上限买号。 */
   maxPrice: string
   /** 固定价格档位；填写后直接按该价格买号，不再查询并选择最低档。 */
@@ -131,6 +133,19 @@ const HERO_SMS_SET_STATUS_ERROR_MESSAGES: Record<number, string> = {
   422: "请求参数无效",
   500: "内部服务错误"
 }
+
+const HERO_SMS_MOCK_COUNTRY: HeroSmsCountryResponseItem = {
+  id: 2,
+  rus: "Mock United States",
+  eng: "Mock United States",
+  chn: "Mock 美国",
+  visible: 1,
+  retry: 1
+}
+
+const HERO_SMS_MOCK_OPERATOR = "mock"
+const HERO_SMS_MOCK_PHONE_NUMBER = "15551234567"
+const HERO_SMS_MOCK_PHONE_CODE = "123456"
 
 /**
  * 把 HeroSMS 响应体转换成适合错误信息展示的文本。
@@ -260,6 +275,94 @@ const buildHeroSmsUrl = (query: Record<string, string | number>) => {
 }
 
 /**
+ * 生成 HeroSMS mock 响应。
+ *
+ * mock 只用于本地跑通注册流程，不请求 HeroSMS，也不产生真实扣费。
+ *
+ * @param query HeroSMS handler API 查询参数。
+ * @return 与对应接口 Schema 对齐的 mock 响应。
+ */
+const buildHeroSmsMockPayload = (query: Record<string, string | number>) => {
+  const action = String(query.action || "")
+  const country = normalizeRequiredHeroSmsCountryId(
+    query.country ?? HERO_SMS_MOCK_COUNTRY.id
+  )
+  const maxPrice = normalizeHeroSmsPriceNumber(query.maxPrice) || 0.01
+
+  if (action === "getCountries") {
+    return [HERO_SMS_MOCK_COUNTRY]
+  }
+
+  if (action === "getOperators") {
+    return {
+      status: "success",
+      countryOperators: {
+        [String(country)]: [HERO_SMS_MOCK_OPERATOR]
+      }
+    }
+  }
+
+  if (action === "getPrices") {
+    return {
+      [String(country)]: {
+        mockLow: {
+          cost: 0.01,
+          count: 10,
+          physicalCount: 10
+        },
+        mockHigh: {
+          cost: 0.02,
+          count: 10,
+          physicalCount: 10
+        }
+      }
+    }
+  }
+
+  if (action === "getNumberV2") {
+    return {
+      activationId: "mock-activation-1",
+      phoneNumber: HERO_SMS_MOCK_PHONE_NUMBER,
+      activationCost: maxPrice,
+      currency: 840,
+      countryCode: country,
+      countryPhoneCode: 1,
+      canGetAnotherSms: true,
+      activationTime: new Date().toISOString(),
+      activationEndTime: new Date(
+        Date.now() + 2 * 60 * 60 * 1000
+      ).toISOString(),
+      activationOperator: String(query.operator || HERO_SMS_DEFAULT_OPERATOR)
+    }
+  }
+
+  if (action === "getStatusV2") {
+    return {
+      verificationType: 2,
+      sms: {
+        dateTime: new Date().toISOString(),
+        code: HERO_SMS_MOCK_PHONE_CODE,
+        text: `Mock verification code: ${HERO_SMS_MOCK_PHONE_CODE}`
+      },
+      call: {
+        from: "",
+        text: "",
+        code: "",
+        dateTime: "",
+        url: "",
+        parsingCount: 0
+      }
+    }
+  }
+
+  if (action === "setStatus") {
+    return "STATUS_OK"
+  }
+
+  throw new Error(`HeroSMS mock 未支持接口：${action || "unknown"}`)
+}
+
+/**
  * 请求 HeroSMS 列表接口并解析响应。
  *
  * getCountries/getOperators 文档示例均带 api_key，这里按文档要求必传。
@@ -273,8 +376,13 @@ const buildHeroSmsUrl = (query: Record<string, string | number>) => {
 const fetchHeroSmsPublicPayload = async <T>(
   query: Record<string, string | number>,
   actionLabel: string,
-  apiKey = ""
+  apiKey = "",
+  mockEnabled = false
 ): Promise<T> => {
+  if (mockEnabled) {
+    return buildHeroSmsMockPayload(query) as T
+  }
+
   const normalizedApiKey = String(apiKey || "").trim()
   if (!normalizedApiKey) {
     throw new Error("缺少 HeroSMS 接码 API")
@@ -319,6 +427,10 @@ const fetchHeroSmsPayload = async <T>(
   errorStatusMessages: Record<number, string> = {}
 ): Promise<T> => {
   const apiKey = String(options.apiKey || "").trim()
+  if (options.mockEnabled) {
+    return buildHeroSmsMockPayload(query) as T
+  }
+
   if (!apiKey) {
     throw new Error("缺少 HeroSMS 接码 API")
   }
@@ -714,13 +826,17 @@ export const assertHeroSmsActivationCostWithinExpected = (
  * @return 可直接用于侧边栏国家 Select 的选项列表。
  * @throws 当接口失败或没有解析到国家时抛错。
  */
-export const fetchHeroSmsCountries = async (apiKey = "") => {
+export const fetchHeroSmsCountries = async (
+  apiKey = "",
+  mockEnabled = false
+) => {
   const payload = await fetchHeroSmsPublicPayload<HeroSmsCountryResponseItem[]>(
     {
       action: "getCountries"
     },
     "HeroSMS getCountries",
-    apiKey
+    apiKey,
+    mockEnabled
   )
   const countries = parseHeroSmsCountryOptions(payload)
   if (countries.length === 0) {
@@ -738,7 +854,8 @@ export const fetchHeroSmsCountries = async (apiKey = "") => {
  */
 export const fetchHeroSmsOperators = async (
   countryId: string | number,
-  apiKey = ""
+  apiKey = "",
+  mockEnabled = false
 ) => {
   const normalizedCountryId = normalizeRequiredHeroSmsCountryId(countryId)
   const payload = await fetchHeroSmsPublicPayload<HeroSmsGetOperatorsResponse>(
@@ -747,7 +864,8 @@ export const fetchHeroSmsOperators = async (
       country: normalizedCountryId
     },
     "HeroSMS getOperators",
-    apiKey
+    apiKey,
+    mockEnabled
   )
   const operatorsByCountry = parseHeroSmsOperatorsByCountry(payload)
   if (Object.keys(operatorsByCountry).length === 0) {
