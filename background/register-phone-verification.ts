@@ -1,4 +1,4 @@
-import { abortableSleep } from "./utils/abort";
+import { abortableSleep } from "./utils/abort"
 
 const HERO_SMS_API_URL = "https://hero-sms.com/stubs/handler_api.php"
 const HERO_SMS_OPENAI_SERVICE_CODE = "dr"
@@ -297,6 +297,34 @@ const buildHeroSmsUrl = (query: Record<string, string | number>) => {
   return url.toString()
 }
 
+const maskHeroSmsQuery = (query: Record<string, string | number>) => {
+  return Object.fromEntries(
+    Object.entries(query).map(([key, value]) => {
+      return [key, /api[_-]?key/i.test(key) ? "***MASKED***" : value] as const
+    })
+  )
+}
+
+const maskHeroSmsUrl = (url: string) => {
+  try {
+    const parsed = new URL(url)
+    if (parsed.searchParams.has("api_key")) {
+      parsed.searchParams.set("api_key", "***MASKED***")
+    }
+    return parsed.toString()
+  } catch {
+    return url.replace(/(api_key=)[^&]+/i, "$1***MASKED***")
+  }
+}
+
+const logHeroSmsRawSample = (
+  phase: "mock" | "response",
+  actionLabel: string,
+  details: Record<string, unknown>
+) => {
+  console.info(`[codex-login][HeroSMS raw][${phase}] ${actionLabel}`, details)
+}
+
 /**
  * 生成 HeroSMS mock 响应。
  *
@@ -403,7 +431,12 @@ const fetchHeroSmsPublicPayload = async <T>(
   mockEnabled = false
 ): Promise<T> => {
   if (mockEnabled) {
-    return buildHeroSmsMockPayload(query) as T
+    const mockPayload = buildHeroSmsMockPayload(query)
+    logHeroSmsRawSample("mock", actionLabel, {
+      request: maskHeroSmsQuery(query),
+      payload: mockPayload
+    })
+    return mockPayload as T
   }
 
   const normalizedApiKey = String(apiKey || "").trim()
@@ -411,19 +444,27 @@ const fetchHeroSmsPublicPayload = async <T>(
     throw new Error("缺少 HeroSMS 接码 API")
   }
 
-  const response = await fetch(
-    buildHeroSmsUrl({
-      api_key: normalizedApiKey,
-      ...query
-    }),
-    {
-      cache: "no-store",
-      headers: {
-        Accept: "application/json"
-      }
+  const requestQuery = {
+    api_key: normalizedApiKey,
+    ...query
+  }
+  const requestUrl = buildHeroSmsUrl(requestQuery)
+  const response = await fetch(requestUrl, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json"
     }
-  )
-  const payload = parseHeroSmsPayload(await response.text())
+  })
+  const rawText = await response.text()
+  const payload = parseHeroSmsPayload(rawText)
+  logHeroSmsRawSample("response", actionLabel, {
+    requestUrl: maskHeroSmsUrl(requestUrl),
+    request: maskHeroSmsQuery(requestQuery),
+    status: response.status,
+    ok: response.ok,
+    rawText,
+    payload
+  })
   if (!response.ok) {
     throw new Error(
       `${actionLabel}失败：${describeHeroSmsPayload(payload) || response.status}`
@@ -451,20 +492,34 @@ const fetchHeroSmsPayload = async <T>(
 ): Promise<T> => {
   const apiKey = String(options.apiKey || "").trim()
   if (options.mockEnabled) {
-    return buildHeroSmsMockPayload(query) as T
+    const mockPayload = buildHeroSmsMockPayload(query)
+    logHeroSmsRawSample("mock", actionLabel, {
+      request: maskHeroSmsQuery(query),
+      payload: mockPayload
+    })
+    return mockPayload as T
   }
 
   if (!apiKey) {
     throw new Error("缺少 HeroSMS 接码 API")
   }
 
-  const response = await fetch(
-    buildHeroSmsUrl({
-      api_key: apiKey,
-      ...query
-    })
-  )
-  const payload = parseHeroSmsPayload(await response.text())
+  const requestQuery = {
+    api_key: apiKey,
+    ...query
+  }
+  const requestUrl = buildHeroSmsUrl(requestQuery)
+  const response = await fetch(requestUrl)
+  const rawText = await response.text()
+  const payload = parseHeroSmsPayload(rawText)
+  logHeroSmsRawSample("response", actionLabel, {
+    requestUrl: maskHeroSmsUrl(requestUrl),
+    request: maskHeroSmsQuery(requestQuery),
+    status: response.status,
+    ok: response.ok,
+    rawText,
+    payload
+  })
   if (!response.ok) {
     throw new Error(
       formatHeroSmsHttpError(
