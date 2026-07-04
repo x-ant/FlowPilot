@@ -8,9 +8,14 @@ import {
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
-  submitRegisterProfile,
-  type HeroSmsPhoneVerificationOptions
+  submitRegisterProfile
 } from "../background/codex-register"
+import {
+  fetchHeroSmsCountries,
+  fetchHeroSmsOperators,
+  type HeroSmsCountryOption,
+  type HeroSmsPhoneVerificationOptions
+} from "../background/register-phone-verification"
 import { AccountWorkspace } from "./AccountWorkspace"
 import { DebugTabControl } from "./DebugTabControl"
 import {
@@ -24,38 +29,107 @@ import { useAccountPageState } from "./useAccountPageState"
 
 const REGISTER_STEP_COUNT = 7
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
+const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
+  "codex-register:hero-sms-countries-cache"
+const REGISTER_HERO_SMS_OPERATORS_CACHE_KEY =
+  "codex-register:hero-sms-operators-cache"
+const HERO_SMS_COUNTRIES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const HERO_SMS_OPERATORS_CACHE_TTL_MS = 60 * 60 * 1000
 
-const HERO_SMS_COUNTRY_OPTIONS = [
-  { label: "印度尼西亚 (+62)", value: "6", countryLabel: "Indonesia" },
-  { label: "泰国 (+66)", value: "52", countryLabel: "Thailand" },
-  { label: "越南 (+84)", value: "10", countryLabel: "Vietnam" },
-  { label: "英国 (+44)", value: "16", countryLabel: "United Kingdom" },
-  { label: "美国 (+1)", value: "187", countryLabel: "USA" },
-  { label: "日本 (+81)", value: "151", countryLabel: "Japan" }
-]
-
-const HERO_SMS_OPERATOR_OPTIONS = [
-  { label: "any", value: "any" },
-  { label: "telkomsel", value: "telkomsel" },
-  { label: "indosat", value: "indosat" },
-  { label: "xl", value: "xl" },
-  { label: "axis", value: "axis" },
-  { label: "three", value: "three" },
-  { label: "smartfren", value: "smartfren" }
-]
+const HERO_SMS_DEFAULT_OPERATOR_OPTION = {
+  label: "不限（any）",
+  value: "any"
+}
 
 type HeroSmsSettings = {
   apiKey: string
   countryId: string
   operator: string
   maxPrice: string
+  fixedPrice: string
+}
+
+type HeroSmsCountriesCache = {
+  updatedAt: number
+  options: HeroSmsCountryOption[]
+}
+
+type HeroSmsOperatorsCache = {
+  updatedAtByCountry: Record<string, number>
+  operatorsByCountry: Record<string, string[]>
 }
 
 const DEFAULT_HERO_SMS_SETTINGS: HeroSmsSettings = {
   apiKey: "",
-  countryId: "6",
+  countryId: "",
   operator: "any",
-  maxPrice: ""
+  maxPrice: "",
+  fixedPrice: ""
+}
+
+const readLocalStorage = (keys: string[]) => {
+  return new Promise<Record<string, unknown>>((resolve) => {
+    chrome.storage.local.get(keys, resolve)
+  })
+}
+
+const writeLocalStorage = (items: Record<string, unknown>) => {
+  return new Promise<void>((resolve) => {
+    chrome.storage.local.set(items, () => {
+      resolve()
+    })
+  })
+}
+
+const isFreshCache = (updatedAt: unknown, ttlMs: number) => {
+  const timestamp = Number(updatedAt)
+  return Number.isFinite(timestamp) && Date.now() - timestamp < ttlMs
+}
+
+const normalizeHeroSmsCountryIdValue = (value: unknown) => {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return ""
+  }
+
+  const parsed = Math.floor(Number(value))
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 999
+    ? String(parsed)
+    : ""
+}
+
+const buildHeroSmsOperatorOptions = (
+  operators: string[] = [],
+  selectedOperator = "any"
+) => {
+  const normalizedSelected = String(selectedOperator || "any")
+    .trim()
+    .toLowerCase()
+  const options = [HERO_SMS_DEFAULT_OPERATOR_OPTION]
+  const seen = new Set(["any"])
+
+  operators.forEach((operator) => {
+    const normalized = String(operator || "")
+      .trim()
+      .toLowerCase()
+    if (!normalized || seen.has(normalized)) {
+      return
+    }
+
+    seen.add(normalized)
+    options.push({
+      label: normalized,
+      value: normalized
+    })
+  })
+
+  if (normalizedSelected && !seen.has(normalizedSelected)) {
+    options.push({
+      label: normalizedSelected,
+      value: normalizedSelected
+    })
+  }
+
+  return options
 }
 
 type RegisterStepResult = {
@@ -104,6 +178,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [heroSmsSettings, setHeroSmsSettings] = useState<HeroSmsSettings>(
     DEFAULT_HERO_SMS_SETTINGS
   )
+  const [heroSmsCountryOptions, setHeroSmsCountryOptions] = useState<
+    HeroSmsCountryOption[]
+  >([])
+  const [heroSmsOperatorOptions, setHeroSmsOperatorOptions] = useState<
+    (typeof HERO_SMS_DEFAULT_OPERATOR_OPTION)[]
+  >([])
+  const [isHeroSmsCountriesLoading, setIsHeroSmsCountriesLoading] =
+    useState(false)
+  const [isHeroSmsOperatorsLoading, setIsHeroSmsOperatorsLoading] =
+    useState(false)
 
   const selectedDebugAccount = useMemo(() => {
     const normalizedDebugEmail = normalizeEmail(debugEmail)
@@ -144,14 +228,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         | undefined
       setHeroSmsSettings({
         apiKey: String(stored?.apiKey || ""),
-        countryId:
-          HERO_SMS_COUNTRY_OPTIONS.find((item) => {
-            return item.value === String(stored?.countryId || "")
-          })?.value || DEFAULT_HERO_SMS_SETTINGS.countryId,
+        countryId: normalizeHeroSmsCountryIdValue(stored?.countryId),
         operator: String(
           stored?.operator || DEFAULT_HERO_SMS_SETTINGS.operator
         ),
-        maxPrice: String(stored?.maxPrice || "")
+        maxPrice: String(stored?.maxPrice || ""),
+        fixedPrice: String(stored?.fixedPrice || "")
       })
     })
   }, [])
@@ -169,6 +251,154 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     })
   }
 
+  /**
+   * 加载 HeroSMS 国家列表。
+   *
+   * 国家列表变化很低，先用 7 天缓存；缓存过期才请求 getCountries。
+   */
+  const loadHeroSmsCountryOptions = async () => {
+    if (!heroSmsSettings.apiKey.trim()) {
+      setHeroSmsCountryOptions([])
+      return
+    }
+
+    setIsHeroSmsCountriesLoading(true)
+    try {
+      const cached = (
+        await readLocalStorage([REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY])
+      )[REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY] as
+        | HeroSmsCountriesCache
+        | undefined
+
+      if (
+        cached?.options?.length &&
+        isFreshCache(cached.updatedAt, HERO_SMS_COUNTRIES_CACHE_TTL_MS)
+      ) {
+        setHeroSmsCountryOptions(cached.options)
+        return
+      }
+
+      const options = await fetchHeroSmsCountries(heroSmsSettings.apiKey)
+      setHeroSmsCountryOptions(options)
+      await writeLocalStorage({
+        [REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY]: {
+          updatedAt: Date.now(),
+          options
+        } satisfies HeroSmsCountriesCache
+      })
+    } catch (error) {
+      setHeroSmsCountryOptions([])
+      log.warn(
+        `[注册调试] HeroSMS 国家列表加载失败：${
+          error instanceof Error ? error.message : "未知错误"
+        }`
+      )
+    } finally {
+      setIsHeroSmsCountriesLoading(false)
+    }
+  }
+
+  /**
+   * 加载当前国家可选运营商。
+   *
+   * HeroSMS getOperators 返回按国家分组的运营商；这里按国家做 1 小时缓存。
+   *
+   * @param countryId 当前选择的 HeroSMS 国家 ID。
+   */
+  const loadHeroSmsOperatorOptions = async (countryId: string) => {
+    const normalizedCountryId = normalizeHeroSmsCountryIdValue(countryId)
+    if (!normalizedCountryId || !heroSmsSettings.apiKey.trim()) {
+      setHeroSmsOperatorOptions([])
+      return
+    }
+
+    setIsHeroSmsOperatorsLoading(true)
+    try {
+      const cached = (
+        await readLocalStorage([REGISTER_HERO_SMS_OPERATORS_CACHE_KEY])
+      )[REGISTER_HERO_SMS_OPERATORS_CACHE_KEY] as
+        | HeroSmsOperatorsCache
+        | undefined
+      const cachedOperators =
+        cached?.operatorsByCountry?.[normalizedCountryId] || []
+      const cachedAt = cached?.updatedAtByCountry?.[normalizedCountryId]
+
+      if (isFreshCache(cachedAt, HERO_SMS_OPERATORS_CACHE_TTL_MS)) {
+        setHeroSmsOperatorOptions(
+          buildHeroSmsOperatorOptions(cachedOperators, heroSmsSettings.operator)
+        )
+        return
+      }
+
+      const operatorsByCountry = await fetchHeroSmsOperators(
+        normalizedCountryId,
+        heroSmsSettings.apiKey
+      )
+      const now = Date.now()
+      const updatedAtByCountry = {
+        ...(cached?.updatedAtByCountry || {})
+      }
+      Object.keys(operatorsByCountry).forEach((itemCountryId) => {
+        updatedAtByCountry[itemCountryId] = now
+      })
+      updatedAtByCountry[normalizedCountryId] = now
+      const nextCache: HeroSmsOperatorsCache = {
+        updatedAtByCountry,
+        operatorsByCountry: {
+          ...(cached?.operatorsByCountry || {}),
+          ...operatorsByCountry,
+          [normalizedCountryId]: operatorsByCountry[normalizedCountryId] || []
+        }
+      }
+      const operators = nextCache.operatorsByCountry[normalizedCountryId] || []
+      setHeroSmsOperatorOptions(
+        buildHeroSmsOperatorOptions(operators, heroSmsSettings.operator)
+      )
+      await writeLocalStorage({
+        [REGISTER_HERO_SMS_OPERATORS_CACHE_KEY]: nextCache
+      })
+    } catch (error) {
+      setHeroSmsOperatorOptions([])
+      log.warn(
+        `[注册调试] HeroSMS 运营商列表加载失败：${
+          error instanceof Error ? error.message : "未知错误"
+        }`
+      )
+    } finally {
+      setIsHeroSmsOperatorsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadHeroSmsCountryOptions()
+  }, [])
+
+  useEffect(() => {
+    if (!heroSmsSettings.apiKey.trim()) {
+      setHeroSmsCountryOptions([])
+      setHeroSmsOperatorOptions([])
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadHeroSmsCountryOptions()
+      void loadHeroSmsOperatorOptions(heroSmsSettings.countryId)
+    }, 600)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [heroSmsSettings.apiKey])
+
+  useEffect(() => {
+    void loadHeroSmsOperatorOptions(heroSmsSettings.countryId)
+  }, [heroSmsSettings.countryId, heroSmsSettings.operator])
+
+  /**
+   * 组装 Step 7 使用的 HeroSMS 参数，并在发起扣费请求前做第一层价格校验。
+   *
+   * @return 参数合法时返回 HeroSMS 配置；缺少 API Key、价格上限或固定档位非法时返回 null。
+   */
   const buildHeroSmsOptions = (): HeroSmsPhoneVerificationOptions | null => {
     const apiKey = String(heroSmsSettings.apiKey || "").trim()
     if (!apiKey) {
@@ -177,16 +407,50 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return null
     }
 
-    const country = HERO_SMS_COUNTRY_OPTIONS.find((item) => {
+    const maxPrice = String(heroSmsSettings.maxPrice || "").trim()
+    if (
+      !maxPrice ||
+      !Number.isFinite(Number(maxPrice)) ||
+      Number(maxPrice) <= 0
+    ) {
+      setStatus("请先填写有效的 HeroSMS 价格上限")
+      log.warn("[注册调试] Step 7 缺少有效 HeroSMS 价格上限")
+      return null
+    }
+
+    const country = heroSmsCountryOptions.find((item) => {
       return item.value === heroSmsSettings.countryId
     })
+    const countryId = normalizeHeroSmsCountryIdValue(country?.value)
+    if (!countryId) {
+      setStatus("请先选择有效的 HeroSMS 国家")
+      log.warn("[注册调试] Step 7 HeroSMS 国家选项无效")
+      return null
+    }
+    const fixedPrice = String(heroSmsSettings.fixedPrice || "").trim()
+
+    if (
+      fixedPrice &&
+      (!Number.isFinite(Number(fixedPrice)) || Number(fixedPrice) <= 0)
+    ) {
+      setStatus("请填写有效的 HeroSMS 固定价格档位")
+      log.warn("[注册调试] Step 7 HeroSMS 固定价格档位无效")
+      return null
+    }
+
+    if (fixedPrice && Number(fixedPrice) > Number(maxPrice)) {
+      setStatus("HeroSMS 固定价格档位不能高于价格上限")
+      log.warn("[注册调试] Step 7 HeroSMS 固定价格档位高于价格上限")
+      return null
+    }
 
     return {
       apiKey,
-      countryId: Number(country?.value || DEFAULT_HERO_SMS_SETTINGS.countryId),
-      countryLabel: country?.countryLabel || "Indonesia",
+      countryId: Number(countryId),
+      countryLabel: country?.countryLabel || `Country #${countryId}`,
       operator: String(heroSmsSettings.operator || "any").trim() || "any",
-      maxPrice: String(heroSmsSettings.maxPrice || "").trim()
+      maxPrice,
+      fixedPrice
     }
   }
 
@@ -530,23 +794,57 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             <div className="debug-field">
               <span className="debug-label">国家选项</span>
               <Select
-                value={heroSmsSettings.countryId}
-                options={HERO_SMS_COUNTRY_OPTIONS}
-                onChange={(value) => {
-                  patchHeroSmsSettings({ countryId: value })
+                value={
+                  heroSmsCountryOptions.length
+                    ? heroSmsSettings.countryId || undefined
+                    : undefined
+                }
+                placeholder="填写 API 后加载"
+                showSearch={{
+                  optionFilterProp: "label",
+                  filterOption: (input, option) => {
+                    const keyword = input.trim().toLowerCase()
+                    const searchText = String(
+                      option?.searchText || option?.label || option?.value || ""
+                    ).toLowerCase()
+                    return searchText.includes(keyword)
+                  }
                 }}
-                disabled={isDebugRunning}
+                loading={isHeroSmsCountriesLoading}
+                options={heroSmsCountryOptions}
+                onChange={(value) => {
+                  patchHeroSmsSettings({ countryId: value, operator: "any" })
+                }}
+                disabled={
+                  isDebugRunning ||
+                  !heroSmsSettings.apiKey.trim() ||
+                  heroSmsCountryOptions.length === 0
+                }
               />
             </div>
             <div className="debug-field">
               <span className="debug-label">运营商选项</span>
               <Select
-                value={heroSmsSettings.operator}
-                options={HERO_SMS_OPERATOR_OPTIONS}
+                value={
+                  heroSmsOperatorOptions.length
+                    ? heroSmsSettings.operator || undefined
+                    : undefined
+                }
+                placeholder="选择国家后加载"
+                showSearch={{
+                  optionFilterProp: "label"
+                }}
+                loading={isHeroSmsOperatorsLoading}
+                options={heroSmsOperatorOptions}
                 onChange={(value) => {
                   patchHeroSmsSettings({ operator: value })
                 }}
-                disabled={isDebugRunning}
+                disabled={
+                  isDebugRunning ||
+                  !heroSmsSettings.apiKey.trim() ||
+                  !heroSmsSettings.countryId ||
+                  heroSmsOperatorOptions.length === 0
+                }
               />
             </div>
             <div className="debug-field">
@@ -565,10 +863,24 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               <span className="debug-label">价格上限</span>
               <Input
                 value={heroSmsSettings.maxPrice}
-                placeholder="例如 0.12"
+                placeholder="必填，例如 0.12"
                 allowClear
                 onChange={(event) => {
                   patchHeroSmsSettings({ maxPrice: event.target.value })
+                }}
+                disabled={isDebugRunning}
+              />
+            </div>
+            <div className="debug-field">
+              <span className="debug-label">固定价格档位</span>
+              <Input
+                value={heroSmsSettings.fixedPrice}
+                placeholder="可选，例如 0.08"
+                allowClear
+                onChange={(event) => {
+                  patchHeroSmsSettings({
+                    fixedPrice: event.target.value
+                  })
                 }}
                 disabled={isDebugRunning}
               />

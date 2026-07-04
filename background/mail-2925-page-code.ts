@@ -38,11 +38,13 @@ export const pollMail2925VerificationCodeInPage = async (
     0,
     Number(payload?.verificationRequestedAt || 0)
   )
+  // 有时候，实际09发送2925邮箱，但是收件时间显示07，慢了2分钟，所以做这个时钟容忍误差
+  const clockToleranceMs = 120 * 1000
   // 允许60秒误差，实际可能还剩59秒，但是已经是下一分钟了
   const staleToleranceMs = 60 * 1000
   // 如果是不是0，就取传入的时间往前一分钟，如果是0，就当前时间往前找10分钟
   const filterAfter = requestTimestamp
-    ? Math.max(0, requestTimestamp - staleToleranceMs)
+    ? Math.max(0, requestTimestamp - staleToleranceMs - clockToleranceMs)
     : startedAt - 10 * 60 * 1000
   const excludedCodes = new Set(
     (payload?.excludeCodes || [])
