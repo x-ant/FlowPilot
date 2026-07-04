@@ -44,6 +44,12 @@ export type HeroSmsActivation = {
   activationEndTime: string
   /** HeroSMS 实际分配的运营商；any 表示未指定运营商。 */
   activationOperator: string
+  /** HeroSMS 返回的服务代码；OpenAI/ChatGPT 当前为 dr。 */
+  serviceCode?: string
+  /** HeroSMS 返回的号码/激活子类型。 */
+  subtype?: number
+  /** HeroSMS 返回的激活订单状态。 */
+  status?: number
   /** 本地请求 getNumberV2 时选中的价格档位，用于和 activationCost 核对。 */
   selectedPrice?: number
 }
@@ -71,6 +77,12 @@ type HeroSmsGetNumberV2Response = {
   activationEndTime: string
   /** HeroSMS 实际分配的运营商；any 表示未指定运营商。 */
   activationOperator: string
+  /** HeroSMS 返回的服务代码；OpenAI/ChatGPT 当前为 dr。 */
+  serviceCode?: string
+  /** HeroSMS 返回的号码/激活子类型。 */
+  subtype?: number
+  /** HeroSMS 返回的激活订单状态。 */
+  status?: number
 }
 
 type HeroSmsErrorResponse = {
@@ -158,16 +170,16 @@ const HERO_SMS_SET_STATUS_ERROR_MESSAGES: Record<number, string> = {
 }
 
 const HERO_SMS_MOCK_COUNTRY: HeroSmsCountryResponseItem = {
-  id: 2,
-  rus: "Mock United States",
-  eng: "Mock United States",
-  chn: "Mock 美国",
+  id: 4,
+  rus: "Филиппины",
+  eng: "Philippines",
+  chn: "菲律宾",
   visible: 1,
   retry: 1
 }
 
-const HERO_SMS_MOCK_OPERATOR = "mock"
-const HERO_SMS_MOCK_PHONE_NUMBER = "5565984250396"
+const HERO_SMS_MOCK_OPERATOR = "smart"
+const HERO_SMS_MOCK_PHONE_NUMBER = "639317909039"
 const HERO_SMS_MOCK_PHONE_CODE = "123456"
 
 /**
@@ -377,13 +389,16 @@ const buildHeroSmsMockPayload = (query: Record<string, string | number>) => {
       activationCost: maxPrice,
       currency: 840,
       countryCode: country,
-      countryPhoneCode: 55,
+      countryPhoneCode: 63,
       canGetAnotherSms: true,
       activationTime: new Date().toISOString(),
       activationEndTime: new Date(
         Date.now() + 2 * 60 * 60 * 1000
       ).toISOString(),
-      activationOperator: String(query.operator || HERO_SMS_DEFAULT_OPERATOR)
+      activationOperator: String(query.operator || HERO_SMS_MOCK_OPERATOR),
+      serviceCode: HERO_SMS_OPENAI_SERVICE_CODE,
+      subtype: 1,
+      status: 4
     }
   }
 
@@ -864,7 +879,10 @@ const parseHeroSmsActivation = (
     canGetAnotherSms: payload.canGetAnotherSms,
     activationTime: payload.activationTime,
     activationEndTime: payload.activationEndTime,
-    activationOperator: payload.activationOperator
+    activationOperator: payload.activationOperator,
+    serviceCode: payload.serviceCode,
+    subtype: payload.subtype,
+    status: payload.status
   }
 }
 
