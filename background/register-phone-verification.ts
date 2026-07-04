@@ -1,4 +1,4 @@
-import { abortableSleep } from "./utils/abort"
+import { abortableSleep } from "./utils/abort";
 
 const HERO_SMS_API_URL = "https://hero-sms.com/stubs/handler_api.php"
 const HERO_SMS_OPENAI_SERVICE_CODE = "dr"
@@ -20,33 +20,56 @@ export type HeroSmsPhoneVerificationOptions = {
 }
 
 export type HeroSmsActivation = {
+  /** 本次买号订单/激活任务 ID，后续查验证码、完成订单、取消订单都使用它。 */
   activationId: string
+  /** HeroSMS 分配的手机号，填写页面时会结合 countryPhoneCode 处理区号。 */
   phoneNumber: string
+  /** 本次买号实际扣费金额。 */
   activationCost: number
+  /** 货币数字代码，例如 840 通常表示 USD 美元。 */
   currency: number
+  /** 当前项目选择的 HeroSMS 国家 ID。 */
   countryId: number
+  /** 当前项目展示用的国家名称。 */
   countryLabel: string
+  /** HeroSMS 返回的平台国家编号，不是电话区号。 */
   countryCode: number
+  /** 电话国家区号，例如 62 表示 +62。 */
   countryPhoneCode: number
+  /** 是否支持在同一个激活订单上继续接收另一条短信。 */
   canGetAnotherSms: boolean
+  /** 订单开始时间，通常是 ISO 格式 UTC 时间。 */
   activationTime: string
+  /** 订单过期时间，超过后通常不再继续等待验证码。 */
   activationEndTime: string
+  /** HeroSMS 实际分配的运营商；any 表示未指定运营商。 */
   activationOperator: string
+  /** 本地请求 getNumberV2 时选中的价格档位，用于和 activationCost 核对。 */
   selectedPrice?: number
 }
 
 export type HeroSmsActivationStatus = 3 | 6 | 8
 
 type HeroSmsGetNumberV2Response = {
+  /** 本次买号订单/激活任务 ID。 */
   activationId: string
+  /** HeroSMS 返回的手机号。 */
   phoneNumber: string
+  /** 本次买号实际扣费金额。 */
   activationCost: number
+  /** 货币数字代码，例如 840 通常表示 USD 美元。 */
   currency: number
+  /** HeroSMS 平台国家编号，不是电话区号。 */
   countryCode: number
+  /** 电话国家区号，例如 62 表示 +62。 */
   countryPhoneCode: number
+  /** 是否支持在同一个激活订单上继续接收另一条短信。 */
   canGetAnotherSms: boolean
+  /** 订单开始时间，通常是 ISO 格式 UTC 时间。 */
   activationTime: string
+  /** 订单过期时间，超过后通常不再继续等待验证码。 */
   activationEndTime: string
+  /** HeroSMS 实际分配的运营商；any 表示未指定运营商。 */
   activationOperator: string
 }
 
@@ -144,7 +167,7 @@ const HERO_SMS_MOCK_COUNTRY: HeroSmsCountryResponseItem = {
 }
 
 const HERO_SMS_MOCK_OPERATOR = "mock"
-const HERO_SMS_MOCK_PHONE_NUMBER = "15551234567"
+const HERO_SMS_MOCK_PHONE_NUMBER = "5565984250396"
 const HERO_SMS_MOCK_PHONE_CODE = "123456"
 
 /**
@@ -326,7 +349,7 @@ const buildHeroSmsMockPayload = (query: Record<string, string | number>) => {
       activationCost: maxPrice,
       currency: 840,
       countryCode: country,
-      countryPhoneCode: 1,
+      countryPhoneCode: 55,
       canGetAnotherSms: true,
       activationTime: new Date().toISOString(),
       activationEndTime: new Date(
@@ -1009,14 +1032,14 @@ export const setHeroSmsActivationStatus = async (
  * 页面环境可用的 DOM API，不能依赖扩展上下文里的变量。
  *
  * @param phoneNumber HeroSMS 返回的完整手机号。
- * @param countryLabel 侧边栏选择的国家展示名，用于匹配页面国家下拉。
- * @param countryPhoneCode HeroSMS 返回的手机号区号，用于同步页面国家并裁剪本地号码。
+ * @param _countryLabel 侧边栏选择的国家展示名；当前保留参数用于兼容调用方。
+ * @param _countryPhoneCode HeroSMS 返回的手机号区号；当前由页面根据完整号码自动识别国家。
  * @return 页面操作结果。
  */
 export const submitPhoneNumberInPage = (
   phoneNumber: string,
-  countryLabel: string,
-  countryPhoneCode: number
+  _countryLabel: string,
+  _countryPhoneCode: number
 ): Promise<{ ok: boolean; message: string }> => {
   const phoneInputSelectors = [
     "input[type='tel']",
@@ -1183,61 +1206,6 @@ export const submitPhoneNumberInPage = (
   }
 
   /**
-   * 尝试同步页面里的原生国家下拉。
-   *
-   * 优先用国家名称匹配，失败时使用 HeroSMS 返回的手机号区号匹配。
-   *
-   * @param phoneInput 已找到的手机号输入框。
-   * @param dialCode HeroSMS 返回的手机号区号。
-   * @return 找到并切换国家选项时返回 true。
-   */
-  const selectNativeCountry = (phoneInput: HTMLInputElement, dialCode = "") => {
-    const selectors = [
-      "select",
-      "[data-testid='hidden-select-container'] select"
-    ]
-    const roots = [
-      phoneInput.closest("form"),
-      phoneInput.closest("fieldset"),
-      phoneInput.parentElement?.parentElement,
-      document
-    ].filter(Boolean) as ParentNode[]
-
-    for (const root of roots) {
-      for (const selector of selectors) {
-        const select = Array.from(root.querySelectorAll(selector)).find(
-          (element) => {
-            return element instanceof HTMLSelectElement && isVisible(element)
-          }
-        ) as HTMLSelectElement | undefined
-
-        if (!select) {
-          continue
-        }
-
-        const option = Array.from(select.options).find((item) => {
-          const text = `${item.textContent || ""} ${item.value || ""}`
-          return (
-            (countryLabel &&
-              normalizeText(text).includes(normalizeText(countryLabel))) ||
-            (dialCode && normalizeDigits(text).includes(dialCode))
-          )
-        })
-
-        if (option) {
-          select.value = option.value
-          option.selected = true
-          select.dispatchEvent(new Event("input", { bubbles: true }))
-          select.dispatchEvent(new Event("change", { bubbles: true }))
-          return true
-        }
-      }
-    }
-
-    return false
-  }
-
-  /**
    * 查找手机号页继续按钮。
    *
    * @return 第一个文案匹配且可点击的按钮。
@@ -1307,14 +1275,8 @@ export const submitPhoneNumberInPage = (
       }
     }
 
-    const dialCode = normalizeDigits(String(countryPhoneCode || ""))
-    const countrySynced = selectNativeCountry(phoneInput, dialCode)
     const digits = normalizeDigits(phoneNumber)
-    const localNumber =
-      dialCode && digits.startsWith(dialCode)
-        ? digits.slice(dialCode.length)
-        : digits
-    setInputValue(phoneInput, countrySynced ? localNumber : `+${digits}`)
+    setInputValue(phoneInput, `+${digits}`)
     phoneInput.focus()
 
     const hiddenInput = Array.from(
@@ -1340,7 +1302,7 @@ export const submitPhoneNumberInPage = (
 
     return {
       ok: true,
-      message: `已填写手机号 +${digits}${countrySynced ? " 并同步国家选项" : ""}，已点击继续`
+      message: `已填写手机号 +${digits}，已点击继续`
     }
   })()
 }

@@ -169,22 +169,49 @@ const OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS = [
   "下一步"
 ]
 
+/**
+ * 在 ChatGPT 注册资料页填写姓名和年龄/生日，并提交创建账户表单。
+ *
+ * 这个函数会被注入到目标页面执行，所以只使用页面上下文里的 DOM API。
+ *
+ * @param fullName 要填写到名称输入框的默认姓名。
+ * @param age 用来推算生日年份的年龄。
+ * @return 页面填写和提交结果。
+ */
 const submitRegisterProfileInPage = (
   fullName: string,
   age: number
 ): Promise<{ ok: boolean; message: string }> => {
+  /**
+   * 在页面上下文里等待一小段时间。
+   *
+   * @param timeoutMs 等待毫秒数。
+   * @return 等待完成的 Promise。
+   */
   const waitForDelay = (timeoutMs: number) => {
     return new Promise<void>((resolve) => {
       window.setTimeout(resolve, timeoutMs)
     })
   }
 
+  /**
+   * 统一页面文案，方便和中文/英文按钮文本做宽松匹配。
+   *
+   * @param value 原始页面文本。
+   * @return 去空白并小写后的文本。
+   */
   function normalizeText(value: string) {
     return String(value || "")
       .replace(/\s+/g, "")
       .toLowerCase()
   }
 
+  /**
+   * 读取元素上的可见文本和辅助属性文本。
+   *
+   * @param element 要识别的页面元素。
+   * @return 规范化后的元素文本。
+   */
   const getElementText = (element: Element) => {
     const inputValue = element instanceof HTMLInputElement ? element.value : ""
 
@@ -200,6 +227,12 @@ const submitRegisterProfileInPage = (
     )
   }
 
+  /**
+   * 判断元素是否不可见、禁用或不可点击。
+   *
+   * @param element 要检查的页面元素。
+   * @return 不可操作时返回 true。
+   */
   const isUnavailable = (element: Element) => {
     const htmlElement = element as HTMLElement
     const rect = htmlElement.getBoundingClientRect()
@@ -215,6 +248,13 @@ const submitRegisterProfileInPage = (
     )
   }
 
+  /**
+   * 轮询等待页面上出现目标元素或状态。
+   *
+   * @param getter 每次轮询执行的查找函数。
+   * @param timeoutMs 最长等待时间。
+   * @return 找到的值；超时返回 undefined。
+   */
   const waitFor = async <T>(
     getter: () => T | undefined | Promise<T | undefined>,
     timeoutMs: number
@@ -232,6 +272,12 @@ const submitRegisterProfileInPage = (
     return undefined
   }
 
+  /**
+   * 按选择器列表查找第一个可操作输入控件。
+   *
+   * @param selectors 候选 CSS 选择器。
+   * @return 找到的输入控件；找不到返回 undefined。
+   */
   const findInput = (selectors: string[]) => {
     for (const selector of selectors) {
       const matched = Array.from(document.querySelectorAll(selector)).find(
@@ -248,6 +294,12 @@ const submitRegisterProfileInPage = (
     return undefined
   }
 
+  /**
+   * 用原生 setter 写入 input/select 的值，并派发 React 能感知的事件。
+   *
+   * @param input 要写入的输入框或下拉框。
+   * @param value 要写入的值。
+   */
   const setInputValue = (
     input: HTMLInputElement | HTMLSelectElement,
     value: string
@@ -286,6 +338,12 @@ const submitRegisterProfileInPage = (
     input.dispatchEvent(new Event("change", { bubbles: true }))
   }
 
+  /**
+   * 填写普通输入框、下拉框或 contenteditable 风格字段。
+   *
+   * @param element 要填写的页面元素。
+   * @param value 要写入的值。
+   */
   const fillField = async (element: HTMLElement, value: string) => {
     if (
       element instanceof HTMLInputElement ||
@@ -333,6 +391,12 @@ const submitRegisterProfileInPage = (
     element.blur()
   }
 
+  /**
+   * 查找 React Aria Select 结构里的隐藏原生 select。
+   *
+   * @param labels 年/月/日等候选标签。
+   * @return 匹配到的隐藏 select。
+   */
   const findBirthdaySelect = (labels: string[]) => {
     const normalizedLabels = labels.map(normalizeText)
 
@@ -356,6 +420,11 @@ const submitRegisterProfileInPage = (
       .find(Boolean) as HTMLSelectElement | undefined
   }
 
+  /**
+   * 根据默认年龄推算可填写的生日值。
+   *
+   * @return 年、月、日和完整日期字符串。
+   */
   const getBirthdayFromAge = () => {
     const year = String(
       new Date().getFullYear() - Math.floor(Number(age) || 20)
@@ -369,6 +438,11 @@ const submitRegisterProfileInPage = (
     }
   }
 
+  /**
+   * 兼容多种生日字段结构，优先填写显式年月日，其次写隐藏 birthday 字段。
+   *
+   * @return 成功填写的字段类型描述；找不到返回 undefined。
+   */
   const fillBirthdayField = async () => {
     const birthday = getBirthdayFromAge()
     const hidden = document.querySelector(
@@ -437,6 +511,11 @@ const submitRegisterProfileInPage = (
     return undefined
   }
 
+  /**
+   * 查找资料页的创建账户/继续按钮。
+   *
+   * @return 可点击按钮元素。
+   */
   const findButton = () =>
     Array.from(
       document.querySelectorAll(
@@ -452,6 +531,11 @@ const submitRegisterProfileInPage = (
       )
     }) as HTMLElement | undefined
 
+  /**
+   * 获取按钮所在表单，供 requestSubmit 使用。
+   *
+   * @return 按钮和表单上下文。
+   */
   const getButtonActionContext = () => {
     const button = findButton()
     const buttonForm =
@@ -468,6 +552,14 @@ const submitRegisterProfileInPage = (
     }
   }
 
+  /**
+   * 触发表单提交，优先直接点击按钮，失败时退回 requestSubmit。
+   *
+   * @param button 要点击的按钮。
+   * @param buttonForm 按钮原生 form 引用。
+   * @param form 最近的表单元素。
+   * @return 是否成功触发提交动作。
+   */
   const performButtonAction = (
     button: HTMLElement | undefined,
     buttonForm: HTMLFormElement | null,
@@ -577,7 +669,21 @@ const submitRegisterProfileInPage = (
   })()
 }
 
+/**
+ * 检测注册邮箱是否已经提交到下一页。
+ *
+ * Step 2 重复执行时，页面可能已经进入密码页或验证码页；这种情况下不应把
+ * “找不到邮箱输入框”当作失败。
+ *
+ * @return 已进入下一页时返回说明文案，否则返回空字符串。
+ */
 const detectRegisterEmailSubmittedInPage = () => {
+  /**
+   * 清理页面文本里的多余空白。
+   *
+   * @param value 原始页面文本。
+   * @return 规范化后的页面文本。
+   */
   const normalizeText = (value: string) => {
     return String(value || "")
       .replace(/\s+/g, " ")
@@ -609,17 +715,41 @@ const detectRegisterEmailSubmittedInPage = () => {
   return ""
 }
 
+/**
+ * 创建 codex-register 调试流程 runner。
+ *
+ * runner 中每个方法对应一个注册/登录原子步骤，侧边栏调试按钮直接调用这些方法。
+ *
+ * @param context 当前运行上下文，主要用于中断信号。
+ * @return codex-register 各步骤的执行函数集合。
+ */
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
   const { openCodexAuthLink } = createCodexLoginRunner(context)
+  /**
+   * 获取当前流程的中断信号。
+   *
+   * @return AbortSignal；没有传入时为 undefined。
+   */
   const getAbortSignal = () => context.abortSignal
 
+  /**
+   * 如果流程已经被取消，立即抛出标准 AbortError。
+   *
+   * @throws DOMException 当运行上下文已被取消时抛出。
+   */
   const throwIfRunAborted = () => {
     if (getAbortSignal()?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError")
     }
   }
 
+  /**
+   * Step 1：清理 OpenAI/ChatGPT 旧会话并打开 GPT 注册入口页。
+   *
+   * @param reuseTabId 可选复用的标签页 ID；传入时会在该标签页打开入口页。
+   * @return 打开入口页后的标签页信息。
+   */
   const openChatGptRegisterEntry = async (
     reuseTabId?: number
   ): Promise<CodexRegisterStepResponse> => {
@@ -667,6 +797,15 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 2：点击 GPT 注册入口，并提交注册邮箱。
+   *
+   * 该步骤只处理“注册”入口；如果页面已经进入密码页或验证码页，会视为已完成。
+   *
+   * @param email 要注册的邮箱。
+   * @param tabId Step 1 打开的 GPT 页面标签页 ID。
+   * @return 邮箱提交结果。
+   */
   const clickRegisterAndSubmitEmail = async (
     email: string,
     tabId: number
@@ -750,6 +889,15 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * 登录版 Step 2：点击 GPT 登录入口，并提交登录邮箱。
+   *
+   * 该方法给 Step 6 缺账号卡片时复用，区别于注册版 Step 2 的注册入口点击。
+   *
+   * @param email 要登录的邮箱。
+   * @param tabId GPT 页面标签页 ID。
+   * @return 登录邮箱提交结果。
+   */
   const clickLoginAndSubmitEmail = async (
     email: string,
     tabId: number
@@ -817,6 +965,15 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 3：从 2925 邮箱读取验证码，并填写到当前 OpenAI 页面。
+   *
+   * @param tabId 等待填写验证码的 OpenAI/ChatGPT 标签页 ID。
+   * @param email 2925 邮箱账号，也是目标 OpenAI 账号。
+   * @param password 2925 邮箱密码。
+   * @param verificationRequestedAt 发起验证码请求的时间，用于过滤旧邮件。
+   * @return 验证码读取和提交结果。
+   */
   const fetchAndSubmitRegisterVerificationCode = async (
     tabId: number,
     email: string,
@@ -879,6 +1036,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 4：填写注册资料页的名称和年龄/生日。
+   *
+   * @param tabId 注册资料页所在标签页 ID。
+   * @return 资料填写和提交结果。
+   */
   const submitRegisterProfile = async (
     tabId: number
   ): Promise<CodexRegisterStepResponse> => {
@@ -912,6 +1075,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 5：点击注册完成后的“继续/Continue”按钮。
+   *
+   * @param tabId 注册流程标签页 ID。
+   * @return 点击继续按钮的结果。
+   */
   const clickRegisterReadyContinue = async (
     tabId: number
   ): Promise<CodexRegisterStepResponse> => {
@@ -942,6 +1111,14 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 6 前半段：从 CPA 页面刷新 OAuth 授权链接并进入 OpenAI 登录授权页。
+   *
+   * @param targetUrl 侧边栏填写的 CPA OAuth 页面地址。
+   * @param managementKey CPA 管理密钥。
+   * @param targetTabId 可选复用的标签页 ID。
+   * @return 打开 OAuth 登录授权页的结果。
+   */
   const refreshRegisterOAuthAndLogin = async (
     targetUrl: string,
     managementKey: string,
@@ -972,6 +1149,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 6 后半段：在 OAuth 登录授权页选择目标账号卡片。
+   *
+   * @param tabId OAuth 登录授权页标签页 ID。
+   * @param email 要点击的目标账号邮箱。
+   * @return 账号卡片点击结果。
+   */
   const chooseRegisterLoginAccount = async (
     tabId: number,
     email: string
@@ -1018,6 +1202,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * Step 7：通过 HeroSMS 完成 OpenAI 手机号验证。
+   *
+   * @param tabId 手机号验证页面标签页 ID。
+   * @param options HeroSMS 接码配置。
+   * @return 手机号提交、短信验证码读取和提交结果。
+   */
   const completeRegisterPhoneVerification = async (
     tabId: number,
     options: HeroSmsPhoneVerificationOptions
@@ -1128,6 +1319,19 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  /**
+   * 完成 Step 6 的账号选择兜底流程。
+   *
+   * 先尝试点击已有账号卡片；如果没有对应卡片，则复用 Step 1、登录版 Step 2、
+   * Step 3 完成目标账号登录，再刷新 OAuth 并重新点击账号卡片。
+   *
+   * @param tabId OAuth 登录授权页标签页 ID。
+   * @param email 目标 OpenAI/2925 邮箱。
+   * @param password 2925 邮箱密码，用于读取登录验证码。
+   * @param targetUrl CPA OAuth 页面地址，用于登录后重新刷新授权页。
+   * @param managementKey CPA 管理密钥。
+   * @return OAuth 账号选择或兜底登录后的结果。
+   */
   const completeRegisterOAuthLogin = async (
     tabId: number,
     email: string,

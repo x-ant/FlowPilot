@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
+  completeRegisterOAuthLogin,
   completeRegisterPhoneVerification,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
@@ -693,11 +694,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     })
   }
 
-  const handleRefreshRegisterOAuthAndLogin = async () => {
+  const handleCompleteRegisterOAuthLogin = async () => {
     const normalizedCpaUrl = String(cpaUrl || "").trim()
     const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
 
-    if (isDebugRunning) {
+    if (isDebugRunning || !selectedDebugAccount) {
       return
     }
 
@@ -714,36 +715,80 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     setIsDebugRunning(true)
-    setStatus("正在刷新 OAuth 并登录")
-    log.info("[注册调试] Step 6 开始刷新 OAuth 并登录")
+    setRunningEmail(selectedDebugAccount.email)
+    setStatus("正在完成 OAuth 登录")
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 6 开始`)
+    patchAccountState(selectedDebugAccount.email, {
+      progress: 5,
+      status: "running",
+      lastMessage: "正在刷新 OAuth 并选择账号卡片"
+    })
 
     try {
-      const result = await refreshRegisterOAuthAndLogin(
+      const refreshResult = await refreshRegisterOAuthAndLogin(
         normalizedCpaUrl,
         normalizedCpaManagementKey
       )
-
-      if (!result.ok) {
-        setStatus("刷新 OAuth 并登录失败")
-        log.warn(`[注册调试] Step 6 ${result.message}`)
+      if (
+        !refreshResult.ok ||
+        typeof refreshResult.targetTab?.id !== "number"
+      ) {
+        setStatus("OAuth 登录失败")
+        log.warn(
+          `[注册调试][${selectedDebugAccount.email}] ${refreshResult.message}`
+        )
+        patchAccountState(selectedDebugAccount.email, {
+          status: "failed",
+          lastMessage: refreshResult.message
+        })
         return
       }
 
-      setDebugRegisterTabId(String(result.targetTab?.id || ""))
+      const result = await completeRegisterOAuthLogin(
+        refreshResult.targetTab.id,
+        selectedDebugAccount.email,
+        selectedDebugAccount.password,
+        normalizedCpaUrl,
+        normalizedCpaManagementKey
+      )
+      const message = `${refreshResult.message}；${result.message}`
+
+      if (!result.ok) {
+        setStatus("OAuth 登录失败")
+        log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+        patchAccountState(selectedDebugAccount.email, {
+          status: "failed",
+          lastMessage: message
+        })
+        return
+      }
+
+      setDebugRegisterTabId(
+        String(result.targetTab?.id || refreshResult.targetTab.id)
+      )
       setDebugProgress(6)
-      setStatus("已刷新 OAuth 并进入登录授权流程")
+      setStatus("已完成 OAuth 登录")
       log.info(
-        `[注册调试] Step 6 ${result.message}；tab=${
+        `[注册调试][${selectedDebugAccount.email}] Step 6 ${message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
+      patchAccountState(selectedDebugAccount.email, {
+        progress: 6,
+        status: "running",
+        lastMessage: message
+      })
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "刷新 OAuth 并登录异常"
-      setStatus("刷新 OAuth 并登录异常")
-      log.warn(`[注册调试] Step 6 ${message}`)
+      const message = error instanceof Error ? error.message : "OAuth 登录异常"
+      setStatus("OAuth 登录异常")
+      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+      patchAccountState(selectedDebugAccount.email, {
+        status: "failed",
+        lastMessage: message
+      })
     } finally {
       setIsDebugRunning(false)
+      setRunningEmail("")
     }
   }
 
@@ -977,13 +1022,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             </Button>
             <Button
               onClick={() => {
-                void handleRefreshRegisterOAuthAndLogin()
+                void handleCompleteRegisterOAuthLogin()
               }}
               loading={isDebugRunning}
               disabled={
-                isDebugRunning || !cpaUrl.trim() || !cpaManagementKey.trim()
+                isDebugRunning ||
+                !selectedDebugAccount ||
+                !cpaUrl.trim() ||
+                !cpaManagementKey.trim()
               }>
-              6 刷新 OAuth 并登录
+              6 完成 OAuth 登录
             </Button>
             <Button
               onClick={() => {
