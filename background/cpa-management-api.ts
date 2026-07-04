@@ -42,14 +42,14 @@ const deriveCpaManagementOrigin = (rawUrl: string) => {
   }
 }
 
-const fetchCpaManagementJson = async (
+const fetchCpaManagementJson = async <T>(
   origin: string,
   path: string,
   options: CpaManagementRequestOptions & {
     method?: "GET" | "POST"
     body?: Record<string, unknown>
   }
-): Promise<unknown> => {
+): Promise<T> => {
   const managementKey = normalizeString(options.managementKey)
   if (!managementKey) {
     throw new Error("尚未填写 CPA 管理密钥")
@@ -94,7 +94,7 @@ const fetchCpaManagementJson = async (
       )
     }
 
-    return payload
+    return payload as T
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("CPA 管理接口请求超时")
@@ -121,14 +121,14 @@ export const requestCpaOAuthUrl = async (
   managementKey: string
 ): Promise<RequestCpaOAuthUrlResult> => {
   const managementOrigin = deriveCpaManagementOrigin(cpaUrl)
-  const result = (await fetchCpaManagementJson(
+  const result = await fetchCpaManagementJson<CpaOAuthUrlResponse>(
     managementOrigin,
     "/v0/management/codex-auth-url",
     {
       method: "GET",
       managementKey
     }
-  )) as CpaOAuthUrlResponse
+  )
   const oauthUrl = normalizeString(result.url)
   const oauthState = normalizeString(result.state)
 
@@ -193,7 +193,7 @@ export const submitCpaOAuthCallback = async (
   }
 
   const managementOrigin = deriveCpaManagementOrigin(cpaUrl)
-  const result = (await fetchCpaManagementJson(
+  const result = await fetchCpaManagementJson<CpaOAuthCallbackResponse>(
     managementOrigin,
     "/v0/management/oauth-callback",
     {
@@ -204,7 +204,7 @@ export const submitCpaOAuthCallback = async (
         redirect_url: normalizedCallbackUrl
       }
     }
-  )) as CpaOAuthCallbackResponse
+  )
 
   if (result.status !== "ok") {
     throw new Error(normalizeString(result.error) || "CPA 回调提交失败")
