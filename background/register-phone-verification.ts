@@ -4,7 +4,7 @@ const HERO_SMS_API_URL = "https://hero-sms.com/stubs/handler_api.php"
 const HERO_SMS_OPENAI_SERVICE_CODE = "dr"
 const HERO_SMS_DEFAULT_OPERATOR = "any"
 const HERO_SMS_DEFAULT_POLL_INTERVAL_MS = 5000
-const HERO_SMS_DEFAULT_POLL_ROUNDS = 36
+const HERO_SMS_DEFAULT_POLL_ROUNDS = 26
 
 export type HeroSmsPhoneVerificationOptions = {
   apiKey: string
@@ -17,6 +17,8 @@ export type HeroSmsPhoneVerificationOptions = {
   maxPrice: string
   /** 固定价格档位；填写后直接按该价格买号，不再查询并选择最低档。 */
   fixedPrice?: string
+  /** 将 HeroSMS 执行进度写入侧边栏执行日志。 */
+  onLog?: (level: "info" | "warn" | "debug", message: string) => void
 }
 
 export type HeroSmsActivation = {
@@ -335,6 +337,14 @@ const logHeroSmsRawSample = (
   details: Record<string, unknown>
 ) => {
   console.info(`[codex-login][HeroSMS raw][${phase}] ${actionLabel}`, details)
+}
+
+const logHeroSmsProgress = (
+  options: HeroSmsPhoneVerificationOptions,
+  level: "info" | "warn" | "debug",
+  message: string
+) => {
+  options.onLog?.(level, message)
 }
 
 /**
@@ -986,9 +996,21 @@ export const requestHeroSmsActivation = async (
 ) => {
   const pricesToTry = await resolveHeroSmsPriceCandidates(options)
   const operator = normalizeHeroSmsOperatorFilter(options.operator)
+  logHeroSmsProgress(
+    options,
+    "info",
+    `HeroSMS 准备获取手机号：国家 ${options.countryLabel || options.countryId}，运营商 ${
+      operator || "any"
+    }，价格档位 ${pricesToTry.join(", ")}`
+  )
 
   let lastPayloadText = ""
   for (const maxPrice of pricesToTry) {
+    logHeroSmsProgress(
+      options,
+      "info",
+      `HeroSMS 正在请求手机号：maxPrice=${maxPrice}，fixedPrice=true`
+    )
     const payload = await fetchHeroSmsPayload<HeroSmsGetNumberV2Response>(
       options,
       {
@@ -1005,6 +1027,11 @@ export const requestHeroSmsActivation = async (
     )
     const activation = parseHeroSmsActivation(payload, options)
     if (activation) {
+      logHeroSmsProgress(
+        options,
+        "info",
+        `HeroSMS 已获取手机号 ${activation.phoneNumber}：订单 ${activation.activationId}，国家码 ${activation.countryCode}，区号 +${activation.countryPhoneCode}，运营商 ${activation.activationOperator}，成本 ${activation.activationCost}，币种 ${activation.currency}，结束时间 ${activation.activationEndTime}`
+      )
       return {
         ...activation,
         selectedPrice: maxPrice
@@ -1040,11 +1067,17 @@ export const pollHeroSmsCode = async (
 ) => {
   let lastStatus = ""
 
+  // 130s，2分钟10秒，2分钟可以取消判断为确实收不到验证码了，这里冗余10秒
   for (let round = 1; round <= HERO_SMS_DEFAULT_POLL_ROUNDS; round += 1) {
     if (signal?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError")
     }
 
+    logHeroSmsProgress(
+      options,
+      "info",
+      `HeroSMS 正在查询短信验证码：订单 ${activation.activationId}，手机号 ${activation.phoneNumber}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮`
+    )
     const payload = await fetchHeroSmsPayload<HeroSmsGetStatusV2Response>(
       options,
       {
@@ -1060,10 +1093,24 @@ export const pollHeroSmsCode = async (
       extractHeroSmsCode(payload.sms?.code) ||
       extractHeroSmsCode(payload.call?.code)
     if (code) {
+      logHeroSmsProgress(
+        options,
+        "info",
+        `HeroSMS 已收到短信验证码：订单 ${activation.activationId}，第 ${round} 轮`
+      )
       return code
     }
 
-    await abortableSleep(HERO_SMS_DEFAULT_POLL_INTERVAL_MS, signal)
+    logHeroSmsProgress(
+      options,
+      "info",
+      `HeroSMS 暂未收到验证码：订单 ${activation.activationId}，第 ${round} 轮，状态 ${
+        lastStatus || "空"
+      }`
+    )
+    if (round < HERO_SMS_DEFAULT_POLL_ROUNDS) {
+      await abortableSleep(HERO_SMS_DEFAULT_POLL_INTERVAL_MS, signal)
+    }
   }
 
   throw new Error(

@@ -1,23 +1,13 @@
-import { createCodexLoginRunner } from "./codex-login"
-import { createMail2925Runner } from "./mail-2925"
-import {
-  assertHeroSmsActivationCostWithinExpected,
-  pollHeroSmsCode,
-  requestHeroSmsActivation,
-  setHeroSmsActivationStatus,
-  submitPhoneNumberInPage,
-  type HeroSmsActivation,
-  type HeroSmsPhoneVerificationOptions
-} from "./register-phone-verification"
-import { abortableSleep } from "./utils/abort"
-import {
-  clearOpenTabSiteStorageForUrls,
-  clearSessionCookiesForUrls,
-  clearSiteStorageInTab
-} from "./utils/browser-session-cleanup"
-import { runPageActionInTab } from "./utils/page-action-runner"
-import type { RunContext } from "./utils/run-context"
-import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils"
+import { createCodexLoginRunner } from "./codex-login";
+import { createMail2925Runner } from "./mail-2925";
+import { detectCodexAuthPageStateInPage } from "./page-script";
+import { assertHeroSmsActivationCostWithinExpected, pollHeroSmsCode, requestHeroSmsActivation, setHeroSmsActivationStatus, submitPhoneNumberInPage, type HeroSmsActivation, type HeroSmsPhoneVerificationOptions } from "./register-phone-verification";
+import { abortableSleep } from "./utils/abort";
+import { clearOpenTabSiteStorageForUrls, clearSessionCookiesForUrls, clearSiteStorageInTab } from "./utils/browser-session-cleanup";
+import { runPageActionInTab } from "./utils/page-action-runner";
+import type { RunContext } from "./utils/run-context";
+import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils";
+
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [
@@ -32,10 +22,17 @@ const OPENAI_SESSION_CLEANUP_URLS = [
 ]
 const DEFAULT_REGISTER_FULL_NAME = "drizzle"
 const DEFAULT_REGISTER_AGE = 20
+const REGISTER_OAUTH_VALID_MS = 5 * 60 * 1000
+/**
+ * 预估一次返回获取新手机号，然后循环获取验证码的时间为140秒
+ */
+const REGISTER_PHONE_RETRY_MIN_REMAINING_MS = 140 * 1000
 
 type CodexRegisterStepResponse = {
   ok: boolean
   message: string
+  needRefreshOAuth?: boolean
+  oauthStartedAt?: number
   targetTab?: {
     id?: number
     url?: string
@@ -66,6 +63,97 @@ const formatHeroSmsActivationSummary = (activation: HeroSmsActivation) => {
     .join("，")
 }
 
+const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    return (
+      /^https?:$/.test(url.protocol) &&
+      ["localhost", "127.0.0.1"].includes(url.hostname) &&
+      url.pathname === "/auth/callback"
+    )
+  } catch {
+    return false
+  }
+}
+
+const isHeroSmsCodeTimeoutError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "")
+  return /^等待手机验证码超时/.test(message)
+}
+
+const formatDurationSeconds = (ms: number) => {
+  return `${Math.max(0, Math.floor(ms / 1000))} 秒`
+}
+
+const requestHistoryBackInPage = () => {
+  if (window.history.length <= 1) {
+    return {
+      ok: false,
+      message: "当前页面没有可回退的历史记录"
+    }
+  }
+
+  window.history.back()
+  return {
+    ok: true,
+    message: "已触发页面回退"
+  }
+}
+
+const waitForPhoneInputInPage = async () => {
+  const selectors = [
+    "input[type='tel']",
+    "input[name*='phone' i]:not([type='hidden'])",
+    "input[id*='phone' i]:not([type='hidden'])",
+    "input[autocomplete='tel']"
+  ]
+  const waitForDelay = (timeoutMs: number) => {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, timeoutMs)
+    })
+  }
+  const isVisible = (element: Element | null) => {
+    if (!element) {
+      return false
+    }
+
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    )
+  }
+  const findPhoneInput = () => {
+    return selectors
+      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .find((element) => {
+        const input = element as HTMLInputElement
+        return input instanceof HTMLInputElement && !input.disabled && isVisible(input)
+      })
+  }
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 15000) {
+    if (findPhoneInput()) {
+      return {
+        ok: true,
+        message: "页面已回到手机号输入页"
+      }
+    }
+
+    await waitForDelay(300)
+  }
+
+  return {
+    ok: false,
+    message: "回退后未等到手机号输入框"
+  }
+}
+
 /**
  * 静默取消 HeroSMS 激活订单。
  *
@@ -83,9 +171,21 @@ const releaseHeroSmsActivationQuietly = async (
     return
   }
 
+  options.onLog?.(
+    "info",
+    `HeroSMS 正在取消激活订单 ${activation.activationId}，手机号 ${activation.phoneNumber}`
+  )
   try {
     await setHeroSmsActivationStatus(options, activation, 8)
+    options.onLog?.(
+      "info",
+      `HeroSMS 已取消激活订单 ${activation.activationId}，手机号 ${activation.phoneNumber}`
+    )
   } catch {
+    options.onLog?.(
+      "warn",
+      `HeroSMS 取消激活订单失败 ${activation.activationId}，手机号 ${activation.phoneNumber}；请稍后人工检查`
+    )
     // 订单释放失败不覆盖原始错误。
   }
 }
@@ -745,6 +845,135 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
+   * 等待手机验证码提交后的页面结果。
+   *
+   * 只把进入 localhost 回调当成成功；如果已经离开验证码页但不是回调页，
+   * 停止自动重试，交给人工判断手机号是否已经验证完成。
+   *
+   * @param tabId 当前 OpenAI 授权页标签页 ID。
+   * @return 页面状态检测结果。
+   */
+  const waitForPhoneVerificationSubmitState = async (tabId: number) => {
+    const startedAt = Date.now()
+    let lastState = {
+      ok: false,
+      state: "other",
+      message: "手机验证码提交后未确认页面状态",
+      url: ""
+    }
+
+    while (Date.now() - startedAt < 45000) {
+      throwIfRunAborted()
+
+      const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+      const currentUrl = String(currentTab?.url || "")
+      if (isCodexOAuthCallbackUrl(currentUrl)) {
+        return {
+          ok: true,
+          state: "callback",
+          message: "手机验证码已通过，页面已跳转到 localhost 回调地址",
+          url: currentUrl
+        }
+      }
+
+      try {
+        await waitForTabLoaded(tabId)
+        const [detectResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: detectCodexAuthPageStateInPage
+        })
+        const detected = detectResult?.result
+        lastState = {
+          ok: Boolean(detected?.ok),
+          state: detected?.state || "other",
+          message: detected?.message || "未识别手机验证码提交后的页面状态",
+          url: detected?.url || currentUrl
+        }
+      } catch (error) {
+        lastState = {
+          ok: false,
+          state: "other",
+          message:
+            error instanceof Error
+              ? error.message
+              : "手机验证码提交后页面暂不可检测",
+          url: currentUrl
+        }
+      }
+
+      if (lastState.state === "oauth_consent_ready") {
+        return {
+          ...lastState,
+          ok: false,
+          releaseActivation: false,
+          message:
+            "手机验证码提交后已离开验证码页，但还没有到 localhost 回调地址，请人工判断是否已验证成功"
+        }
+      }
+
+      if (lastState.state === "verification_invalid_code") {
+        return {
+          ...lastState,
+          releaseActivation: true
+        }
+      }
+
+      if (lastState.state !== "verification_pending") {
+        return {
+          ...lastState,
+          ok: false,
+          releaseActivation: false,
+          message: `${lastState.message}；手机验证码提交后已离开验证码页，但还没有到 localhost 回调地址，请人工判断是否已验证成功`
+        }
+      }
+
+      await abortableSleep(500, getAbortSignal())
+    }
+
+    return {
+      ...lastState,
+      ok: false,
+      releaseActivation: lastState.state === "verification_pending",
+      message: `${lastState.message}；45 秒内未确认手机验证码提交后的页面状态`
+    }
+  }
+
+  /**
+   * 手机验证码超时后回退到手机号输入页。
+   *
+   * 这里按用户要求使用浏览器历史回退，不直接跳转 /add-phone；如果历史栈无法
+   * 回到手机号页，就交给外层重新执行 Step 6 刷新 OAuth。
+   *
+   * @param tabId 当前手机号验证码页标签页 ID。
+   * @return 是否重新看到手机号输入框。
+   */
+  const returnToPhoneInputByHistoryBack = async (tabId: number) => {
+    const [backResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: requestHistoryBackInPage
+    })
+    const backValue = backResult?.result
+    if (!backValue?.ok) {
+      return {
+        ok: false,
+        message: backValue?.message || "触发页面回退失败"
+      }
+    }
+
+    // 等待回退动作开始；requestHistoryBackInPage 返回时页面不一定已经切换。这时注入脚本可能失败
+    await abortableSleep(1000, getAbortSignal())
+    const [readyResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: waitForPhoneInputInPage
+    })
+    const readyValue = readyResult?.result
+    return {
+      ok: Boolean(readyValue?.ok),
+      message: readyValue?.message || "未确认页面是否回到手机号输入页"
+    }
+  }
+
+  /**
    * Step 1：清理 OpenAI/ChatGPT 旧会话并打开 GPT 注册入口页。
    *
    * @param reuseTabId 可选复用的标签页 ID；传入时会在该标签页打开入口页。
@@ -1145,6 +1374,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       message: result.ok
         ? `${result.message}；已刷新 OAuth 并进入登录授权流程`
         : result.message,
+      oauthStartedAt: result.ok ? Date.now() : undefined,
       targetTab: result.targetTab
     }
   }
@@ -1207,11 +1437,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    *
    * @param tabId 手机号验证页面标签页 ID。
    * @param options HeroSMS 接码配置。
+   * @param oauthStartedAt 验证开始时间戳，用于后面判断是重新拿OAuhtUrl，还是从重新拿手机号
    * @return 手机号提交、短信验证码读取和提交结果。
    */
   const completeRegisterPhoneVerification = async (
     tabId: number,
-    options: HeroSmsPhoneVerificationOptions
+    options: HeroSmsPhoneVerificationOptions,
+    oauthStartedAt = Date.now()
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -1225,80 +1457,172 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
 
     let activation: HeroSmsActivation | null = null
+    let hasReceivedHeroSmsCode = false
     try {
-      activation = await requestHeroSmsActivation(options)
-      assertHeroSmsActivationCostWithinExpected(activation)
-      const activationSummary = formatHeroSmsActivationSummary(activation)
-      throwIfRunAborted()
+      while (true) {
+        activation = await requestHeroSmsActivation(options)
+        assertHeroSmsActivationCostWithinExpected(activation)
+        const activationSummary = formatHeroSmsActivationSummary(activation)
+        throwIfRunAborted()
 
-      await waitForTabLoaded(tabId)
-      const [phoneResult] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: submitPhoneNumberInPage,
-        args: [
-          activation.phoneNumber,
-          activation.countryLabel,
-          activation.countryPhoneCode
-        ]
-      })
-      const phonePageResult = phoneResult?.result
-      if (!phonePageResult?.ok) {
-        await releaseHeroSmsActivationQuietly(options, activation)
-        const currentTab = await chrome.tabs.get(tabId)
+        await waitForTabLoaded(tabId)
+        const [phoneResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: submitPhoneNumberInPage,
+          args: [
+            activation.phoneNumber,
+            activation.countryLabel,
+            activation.countryPhoneCode
+          ]
+        })
+        const phonePageResult = phoneResult?.result
+        if (!phonePageResult?.ok) {
+          options.onLog?.(
+            "warn",
+            `手机号 ${activation.phoneNumber} 页面提交失败，HeroSMS 订单 ${activation.activationId} 未取消；新订单未满 2 分钟通常无法取消，等待平台自动回收`
+          )
+          const currentTab = await chrome.tabs.get(tabId)
+          return {
+            ok: false,
+            message: `已从 HeroSMS 获取手机号 ${activation.phoneNumber}，但页面提交失败：${
+              phonePageResult?.message || "未知错误"
+            }；${activationSummary}`,
+            targetTab: {
+              id: tabId,
+              url: currentTab.url
+            }
+          }
+        }
+
+        let code = ""
+        try {
+          code = await pollHeroSmsCode(options, activation, getAbortSignal())
+          hasReceivedHeroSmsCode = true
+        } catch (error) {
+          if (!isHeroSmsCodeTimeoutError(error)) {
+            throw error
+          }
+
+          const timeoutMessage =
+            error instanceof Error ? error.message : "等待手机验证码超时"
+          await releaseHeroSmsActivationQuietly(options, activation)
+          activation = null
+
+          const remainingMs =
+            oauthStartedAt + REGISTER_OAUTH_VALID_MS - Date.now()
+          options.onLog?.(
+            "warn",
+            `${timeoutMessage}；OAuth 预计剩余 ${formatDurationSeconds(
+              remainingMs
+            )}`
+          )
+
+          if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
+            const backResult = await returnToPhoneInputByHistoryBack(tabId)
+            if (backResult.ok) {
+              options.onLog?.(
+                "warn",
+                `${backResult.message}，OAuth 剩余时间充足，继续更换手机号`
+              )
+              continue
+            }
+
+            return {
+              ok: false,
+              needRefreshOAuth: true,
+              message: `${timeoutMessage}；${backResult.message}，需要重新执行 Step 6 刷新 OAuth；${activationSummary}`,
+              targetTab: {
+                id: tabId,
+                url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+              }
+            }
+          }
+
+          return {
+            ok: false,
+            needRefreshOAuth: true,
+            message: `${timeoutMessage}；OAuth 剩余时间不足 ${formatDurationSeconds(
+              REGISTER_PHONE_RETRY_MIN_REMAINING_MS
+            )}，需要重新执行 Step 6 刷新 OAuth；${activationSummary}`,
+            targetTab: {
+              id: tabId,
+              url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+            }
+          }
+        }
+        throwIfRunAborted()
+
+        await chrome.tabs.update(tabId, { active: true })
+        const submitResult = await runPageActionInTab(tabId, {
+          fields: [
+            {
+              selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+              value: code,
+              allowSplitInput: true
+            }
+          ],
+          button: {
+            texts: OPENAI_CONTINUE_BUTTON_TEXTS,
+            triggerMode: "requestSubmit"
+          },
+          timeoutMs: 20000,
+          successMessage: "已填写手机验证码并点击继续",
+          failureMessage: "未找到手机验证码输入框或继续按钮"
+        })
+
+        if (!submitResult.ok) {
+          await releaseHeroSmsActivationQuietly(options, activation)
+          return {
+            ok: false,
+            message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${activationSummary}`,
+            targetTab: submitResult.tab
+          }
+        }
+
+        const submitState = await waitForPhoneVerificationSubmitState(tabId)
+        if (!submitState.ok) {
+          if (submitState.releaseActivation) {
+            await releaseHeroSmsActivationQuietly(options, activation)
+          } else {
+            options.onLog?.(
+              "warn",
+              `HeroSMS 订单 ${activation.activationId} 已收到并提交验证码，页面结果需要人工判断，未取消该订单`
+            )
+          }
+          return {
+            ok: false,
+            message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${submitState.message}；${activationSummary}`,
+            targetTab: {
+              id: tabId,
+              url: submitState.url || submitResult.tab?.url
+            }
+          }
+        }
+
+        try {
+          await setHeroSmsActivationStatus(options, activation, 6)
+        } catch {
+          // 页面已经提交成功，平台完成状态失败只留给后续人工检查。
+        }
+
         return {
-          ok: false,
-          message: `已从 HeroSMS 获取手机号 ${activation.phoneNumber}，但页面提交失败：${
-            phonePageResult?.message || "未知错误"
-          }；${activationSummary}`,
+          ok: true,
+          message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${submitState.message}；${activationSummary}`,
           targetTab: {
             id: tabId,
-            url: currentTab.url
+            url: submitState.url || submitResult.tab?.url
           }
         }
-      }
-
-      const code = await pollHeroSmsCode(options, activation, getAbortSignal())
-      throwIfRunAborted()
-
-      await chrome.tabs.update(tabId, { active: true })
-      const submitResult = await runPageActionInTab(tabId, {
-        fields: [
-          {
-            selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
-            value: code,
-            allowSplitInput: true
-          }
-        ],
-        button: {
-          texts: OPENAI_CONTINUE_BUTTON_TEXTS,
-          triggerMode: "requestSubmit"
-        },
-        timeoutMs: 20000,
-        successMessage: "已填写手机验证码并点击继续",
-        failureMessage: "未找到手机验证码输入框或继续按钮"
-      })
-
-      if (!submitResult.ok) {
-        return {
-          ok: false,
-          message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${activationSummary}`,
-          targetTab: submitResult.tab
-        }
-      }
-
-      try {
-        await setHeroSmsActivationStatus(options, activation, 6)
-      } catch {
-        // 页面已经提交成功，平台完成状态失败只留给后续人工检查。
-      }
-
-      return {
-        ok: true,
-        message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${activationSummary}`,
-        targetTab: submitResult.tab
       }
     } catch (error) {
-      await releaseHeroSmsActivationQuietly(options, activation)
+      if (hasReceivedHeroSmsCode) {
+        await releaseHeroSmsActivationQuietly(options, activation)
+      } else if (activation) {
+        options.onLog?.(
+          "warn",
+          `HeroSMS 订单 ${activation.activationId} 尚未收到验证码，未主动取消；新订单未满 2 分钟通常无法取消，等待平台自动回收`
+        )
+      }
 
       const currentTab = await chrome.tabs.get(tabId).catch(() => null)
       const errorMessage =
@@ -1435,6 +1759,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       ]
         .filter(Boolean)
         .join("；"),
+      oauthStartedAt: refreshResult.oauthStartedAt,
       targetTab: secondChoice.targetTab
     }
   }

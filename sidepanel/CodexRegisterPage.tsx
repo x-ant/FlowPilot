@@ -36,6 +36,7 @@ const REGISTER_HERO_SMS_OPERATORS_CACHE_KEY =
   "codex-register:hero-sms-operators-cache"
 const HERO_SMS_COUNTRIES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const HERO_SMS_OPERATORS_CACHE_TTL_MS = 60 * 60 * 1000
+const REGISTER_PHONE_MAX_OAUTH_REFRESHES = 2
 
 const HERO_SMS_DEFAULT_OPERATOR_OPTION = {
   label: "不限（any）",
@@ -138,6 +139,8 @@ const buildHeroSmsOperatorOptions = (
 type RegisterStepResult = {
   ok: boolean
   message: string
+  needRefreshOAuth?: boolean
+  oauthStartedAt?: number
   targetTab?: {
     id?: number
     url?: string
@@ -178,6 +181,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugProgress, setDebugProgress] = useState(0)
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
+  const [debugOAuthStartedAt, setDebugOAuthStartedAt] = useState(0)
   const [heroSmsSettings, setHeroSmsSettings] = useState<HeroSmsSettings>(
     DEFAULT_HERO_SMS_SETTINGS
   )
@@ -481,7 +485,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       operator: String(heroSmsSettings.operator || "any").trim() || "any",
       mockEnabled: heroSmsSettings.mockEnabled,
       maxPrice,
-      fixedPrice
+      fixedPrice,
+      onLog: (level, message) => {
+        log[level](`[注册调试] Step 7 ${message}`)
+      }
     }
   }
 
@@ -543,6 +550,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugRegisterTabId("")
     setDebugProgress(0)
     setDebugVerificationRequestedAt(0)
+    setDebugOAuthStartedAt(0)
     setStatus("注册调试状态已清空")
   }
 
@@ -766,6 +774,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setDebugRegisterTabId(
         String(result.targetTab?.id || refreshResult.targetTab.id)
       )
+      setDebugOAuthStartedAt(
+        result.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
+      )
       setDebugProgress(6)
       setStatus("已完成 OAuth 登录")
       log.info(
@@ -798,21 +809,167 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    await runRegisterDebugStep({
-      step: 7,
-      runningStatus: "正在执行手机号验证",
-      runningMessage: "正在获取手机号并等待短信验证码",
-      runningProgress: 6,
-      action: (tabId) => {
-        return completeRegisterPhoneVerification(tabId, heroSmsOptions)
-      },
-      failureStatus: "手机号验证失败",
-      successStatus: "已完成手机号验证",
-      successProgress: REGISTER_STEP_COUNT as ManagedAccountProgress,
-      successAccountStatus: "done",
-      exceptionStatus: "手机号验证异常",
-      exceptionMessage: "手机号验证异常"
+    if (isDebugRunning || !selectedDebugAccount) {
+      return
+    }
+
+    const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
+    if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
+      setStatus("请先执行 Step 6 完成 OAuth 登录")
+      log.warn("[注册调试] Step 7 缺少注册 tabId，请先执行 Step 6")
+      return
+    }
+
+    setIsDebugRunning(true)
+    setRunningEmail(selectedDebugAccount.email)
+    setStatus("正在执行手机号验证")
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 开始`)
+    patchAccountState(selectedDebugAccount.email, {
+      progress: 6,
+      status: "running",
+      lastMessage: "正在获取手机号并等待短信验证码"
     })
+
+    try {
+      let tabId = parsedTabId
+      let oauthStartedAt = debugOAuthStartedAt || Date.now()
+      let oauthRefreshCount = 0
+
+      while (true) {
+        const result = await completeRegisterPhoneVerification(
+          tabId,
+          heroSmsOptions,
+          oauthStartedAt
+        )
+
+        if (result.ok) {
+          setDebugRegisterTabId(String(result.targetTab?.id || tabId))
+          setDebugProgress(REGISTER_STEP_COUNT)
+          setStatus("已完成手机号验证")
+          log.info(
+            `[注册调试][${selectedDebugAccount.email}] Step 7 ${
+              result.message
+            }；tab=${result.targetTab?.id || "unknown"}；url=${
+              result.targetTab?.url || "unknown"
+            }`
+          )
+          patchAccountState(selectedDebugAccount.email, {
+            progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
+            status: "done",
+            lastMessage: result.message
+          })
+          return
+        }
+
+        if (!result.needRefreshOAuth) {
+          setStatus("手机号验证失败")
+          log.warn(
+            `[注册调试][${selectedDebugAccount.email}] ${result.message}`
+          )
+          patchAccountState(selectedDebugAccount.email, {
+            status: "failed",
+            lastMessage: result.message
+          })
+          return
+        }
+
+        if (oauthRefreshCount >= REGISTER_PHONE_MAX_OAUTH_REFRESHES) {
+          const message = `${result.message}；已达到 OAuth 刷新上限 ${REGISTER_PHONE_MAX_OAUTH_REFRESHES} 次`
+          setStatus("手机号验证失败")
+          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+          patchAccountState(selectedDebugAccount.email, {
+            status: "failed",
+            lastMessage: message
+          })
+          return
+        }
+
+        const normalizedCpaUrl = String(cpaUrl || "").trim()
+        const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
+        if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
+          const message = `${result.message}；缺少 CPA 地址或管理密钥，无法重新执行 Step 6`
+          setStatus("手机号验证失败")
+          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+          patchAccountState(selectedDebugAccount.email, {
+            status: "failed",
+            lastMessage: message
+          })
+          return
+        }
+
+        oauthRefreshCount += 1
+        setStatus("OAuth 时间不足，正在重新执行 Step 6")
+        log.warn(
+          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 6（${oauthRefreshCount}/${REGISTER_PHONE_MAX_OAUTH_REFRESHES}）`
+        )
+        patchAccountState(selectedDebugAccount.email, {
+          progress: 6,
+          status: "running",
+          lastMessage: "OAuth 时间不足，正在重新执行 Step 6"
+        })
+
+        const refreshResult = await refreshRegisterOAuthAndLogin(
+          normalizedCpaUrl,
+          normalizedCpaManagementKey,
+          tabId
+        )
+        if (
+          !refreshResult.ok ||
+          typeof refreshResult.targetTab?.id !== "number"
+        ) {
+          const message = `${result.message}；${refreshResult.message}`
+          setStatus("OAuth 登录失败")
+          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+          patchAccountState(selectedDebugAccount.email, {
+            status: "failed",
+            lastMessage: message
+          })
+          return
+        }
+
+        const loginResult = await completeRegisterOAuthLogin(
+          refreshResult.targetTab.id,
+          selectedDebugAccount.email,
+          selectedDebugAccount.password,
+          normalizedCpaUrl,
+          normalizedCpaManagementKey
+        )
+        const step6Message = `${refreshResult.message}；${loginResult.message}`
+        if (
+          !loginResult.ok ||
+          typeof loginResult.targetTab?.id !== "number"
+        ) {
+          setStatus("OAuth 登录失败")
+          log.warn(
+            `[注册调试][${selectedDebugAccount.email}] ${step6Message}`
+          )
+          patchAccountState(selectedDebugAccount.email, {
+            status: "failed",
+            lastMessage: step6Message
+          })
+          return
+        }
+
+        tabId = loginResult.targetTab.id
+        oauthStartedAt =
+          loginResult.oauthStartedAt ||
+          refreshResult.oauthStartedAt ||
+          Date.now()
+        setDebugRegisterTabId(String(tabId))
+        setDebugOAuthStartedAt(oauthStartedAt)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "手机号验证异常"
+      setStatus("手机号验证异常")
+      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+      patchAccountState(selectedDebugAccount.email, {
+        status: "failed",
+        lastMessage: message
+      })
+    } finally {
+      setIsDebugRunning(false)
+      setRunningEmail("")
+    }
   }
 
   return (
