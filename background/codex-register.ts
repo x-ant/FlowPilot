@@ -33,6 +33,8 @@ type CodexRegisterStepResponse = {
   message: string
   needRefreshOAuth?: boolean
   oauthStartedAt?: number
+  cpaOAuthState?: string
+  callbackUrl?: string
   targetTab?: {
     id?: number
     url?: string
@@ -825,7 +827,8 @@ const detectRegisterEmailSubmittedInPage = () => {
  */
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
-  const { openCodexAuthLink } = createCodexLoginRunner(context)
+  const { openCodexAuthLink, submitCodexOAuthCallbackToCpa } =
+    createCodexLoginRunner(context)
   /**
    * 获取当前流程的中断信号。
    *
@@ -1375,6 +1378,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         ? `${result.message}；已刷新 OAuth 并进入登录授权流程`
         : result.message,
       oauthStartedAt: result.ok ? Date.now() : undefined,
+      cpaOAuthState: result.cpaOAuthState,
       targetTab: result.targetTab
     }
   }
@@ -1608,6 +1612,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         return {
           ok: true,
           message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${submitState.message}；${activationSummary}`,
+          callbackUrl: submitState.url,
           targetTab: {
             id: tabId,
             url: submitState.url || submitResult.tab?.url
@@ -1760,7 +1765,47 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         .filter(Boolean)
         .join("；"),
       oauthStartedAt: refreshResult.oauthStartedAt,
+      cpaOAuthState: refreshResult.cpaOAuthState,
       targetTab: secondChoice.targetTab
+    }
+  }
+
+  /**
+   * Step 8：把注册 OAuth 回调地址提交回 CPA。
+   *
+   * 复用 codex-login 的最后一步，只负责把 Step 7 成功后的 localhost 回调地址
+   * 回填给 CPA 管理接口。
+   *
+   * @param targetUrl CPA OAuth 页面地址。
+   * @param managementKey CPA 管理密钥。
+   * @param callbackUrl Step 7 成功后捕获到的 localhost 回调地址。
+   * @param callbackTabId 可选，回填成功后关闭这个授权标签页。
+   * @param cpaOAuthState Step 6 获取 OAuth URL 时返回的 state。
+   * @return CPA 回填结果。
+   */
+  const submitRegisterOAuthCallbackToCpa = async (
+    targetUrl: string,
+    managementKey: string,
+    callbackUrl: string,
+    callbackTabId?: number,
+    cpaOAuthState = ""
+  ): Promise<CodexRegisterStepResponse> => {
+    const result = await submitCodexOAuthCallbackToCpa(
+      targetUrl,
+      managementKey,
+      callbackUrl,
+      callbackTabId,
+      cpaOAuthState
+    )
+    return {
+      ok: result.ok,
+      message: result.message,
+      callbackUrl: result.callbackUrl || callbackUrl,
+      cpaOAuthState,
+      targetTab: {
+        id: callbackTabId,
+        url: result.callbackUrl || callbackUrl
+      }
     }
   }
 
@@ -1772,7 +1817,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     clickRegisterReadyContinue,
     refreshRegisterOAuthAndLogin,
     completeRegisterPhoneVerification,
-    completeRegisterOAuthLogin
+    completeRegisterOAuthLogin,
+    submitRegisterOAuthCallbackToCpa
   }
 }
 
@@ -1784,5 +1830,6 @@ export const {
   clickRegisterReadyContinue,
   refreshRegisterOAuthAndLogin,
   completeRegisterPhoneVerification,
-  completeRegisterOAuthLogin
+  completeRegisterOAuthLogin,
+  submitRegisterOAuthCallbackToCpa
 } = createCodexRegisterRunner()

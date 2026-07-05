@@ -9,6 +9,7 @@ import {
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
+  submitRegisterOAuthCallbackToCpa,
   submitRegisterProfile
 } from "../background/codex-register"
 import {
@@ -28,7 +29,7 @@ import {
 } from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 7
+const REGISTER_STEP_COUNT = 8
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
 const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
   "codex-register:hero-sms-countries-cache"
@@ -141,6 +142,8 @@ type RegisterStepResult = {
   message: string
   needRefreshOAuth?: boolean
   oauthStartedAt?: number
+  cpaOAuthState?: string
+  callbackUrl?: string
   targetTab?: {
     id?: number
     url?: string
@@ -182,6 +185,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
   const [debugOAuthStartedAt, setDebugOAuthStartedAt] = useState(0)
+  const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
+  const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const [heroSmsSettings, setHeroSmsSettings] = useState<HeroSmsSettings>(
     DEFAULT_HERO_SMS_SETTINGS
   )
@@ -551,6 +556,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugProgress(0)
     setDebugVerificationRequestedAt(0)
     setDebugOAuthStartedAt(0)
+    setDebugCpaOAuthState("")
+    setDebugCallbackUrl("")
     setStatus("注册调试状态已清空")
   }
 
@@ -777,6 +784,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setDebugOAuthStartedAt(
         result.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
       )
+      setDebugCpaOAuthState(
+        result.cpaOAuthState || refreshResult.cpaOAuthState || ""
+      )
+      setDebugCallbackUrl("")
       setDebugProgress(6)
       setStatus("已完成 OAuth 登录")
       log.info(
@@ -844,7 +855,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
         if (result.ok) {
           setDebugRegisterTabId(String(result.targetTab?.id || tabId))
-          setDebugProgress(REGISTER_STEP_COUNT)
+          setDebugCallbackUrl(result.callbackUrl || result.targetTab?.url || "")
+          setDebugProgress(7)
           setStatus("已完成手机号验证")
           log.info(
             `[注册调试][${selectedDebugAccount.email}] Step 7 ${
@@ -854,8 +866,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             }`
           )
           patchAccountState(selectedDebugAccount.email, {
-            progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
-            status: "done",
+            progress: 7,
+            status: "running",
             lastMessage: result.message
           })
           return
@@ -957,10 +969,89 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           Date.now()
         setDebugRegisterTabId(String(tabId))
         setDebugOAuthStartedAt(oauthStartedAt)
+        setDebugCpaOAuthState(
+          loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
+        )
+        setDebugCallbackUrl("")
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "手机号验证异常"
       setStatus("手机号验证异常")
+      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+      patchAccountState(selectedDebugAccount.email, {
+        status: "failed",
+        lastMessage: message
+      })
+    } finally {
+      setIsDebugRunning(false)
+      setRunningEmail("")
+    }
+  }
+
+  const handleSubmitRegisterOAuthCallbackToCpa = async () => {
+    if (isDebugRunning || !selectedDebugAccount) {
+      return
+    }
+
+    const normalizedCpaUrl = String(cpaUrl || "").trim()
+    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
+    if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
+      setStatus("请先填写 CPA 地址和管理密钥")
+      log.warn("[注册调试] Step 8 缺少 CPA 地址或管理密钥")
+      return
+    }
+
+    const normalizedCallbackUrl = String(debugCallbackUrl || "").trim()
+    if (!normalizedCallbackUrl) {
+      setStatus("请先执行 Step 7 获取 OAuth 回调地址")
+      log.warn("[注册调试] Step 8 缺少 OAuth 回调地址")
+      return
+    }
+
+    const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
+    const callbackTabId =
+      Number.isFinite(parsedTabId) && parsedTabId > 0 ? parsedTabId : undefined
+
+    setIsDebugRunning(true)
+    setRunningEmail(selectedDebugAccount.email)
+    setStatus("正在回填 CPA")
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 8 开始`)
+    patchAccountState(selectedDebugAccount.email, {
+      progress: 7,
+      status: "running",
+      lastMessage: "正在把 OAuth 回调地址提交回 CPA"
+    })
+
+    try {
+      const result = await submitRegisterOAuthCallbackToCpa(
+        normalizedCpaUrl,
+        normalizedCpaManagementKey,
+        normalizedCallbackUrl,
+        callbackTabId,
+        debugCpaOAuthState
+      )
+
+      if (!result.ok) {
+        setStatus("CPA 回填失败")
+        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
+        patchAccountState(selectedDebugAccount.email, {
+          status: "failed",
+          lastMessage: result.message
+        })
+        return
+      }
+
+      setDebugProgress(REGISTER_STEP_COUNT)
+      setStatus("已完成 CPA 回填")
+      log.info(`[注册调试][${selectedDebugAccount.email}] Step 8 ${result.message}`)
+      patchAccountState(selectedDebugAccount.email, {
+        progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
+        status: "done",
+        lastMessage: result.message
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "CPA 回填异常"
+      setStatus("CPA 回填异常")
       log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
       patchAccountState(selectedDebugAccount.email, {
         status: "failed",
@@ -1011,6 +1102,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     setDebugEmail(value)
                     setDebugProgress(0)
                     setDebugVerificationRequestedAt(0)
+                    setDebugOAuthStartedAt(0)
+                    setDebugCpaOAuthState("")
+                    setDebugCallbackUrl("")
                   }}
                   disabled={isDebugRunning || accounts.length === 0}
                 />
@@ -1197,6 +1291,20 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
               7 手机号验证
+            </Button>
+            <Button
+              onClick={() => {
+                void handleSubmitRegisterOAuthCallbackToCpa()
+              }}
+              loading={isDebugRunning}
+              disabled={
+                isDebugRunning ||
+                !selectedDebugAccount ||
+                !debugCallbackUrl ||
+                !cpaUrl.trim() ||
+                !cpaManagementKey.trim()
+              }>
+              8 回填 CPA
             </Button>
           </Space>
         </div>
