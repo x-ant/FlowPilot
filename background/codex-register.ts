@@ -41,6 +41,14 @@ type CodexRegisterStepResponse = {
   }
 }
 
+type RegisterPhoneVerificationSubmitState = {
+  ok: boolean
+  state: string
+  message: string
+  url: string
+  releaseActivation?: boolean
+}
+
 /**
  * 汇总 HeroSMS 买号结果里的扣费和号码信息。
  *
@@ -856,7 +864,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * @param tabId 当前 OpenAI 授权页标签页 ID。
    * @return 页面状态检测结果。
    */
-  const waitForPhoneVerificationSubmitState = async (tabId: number) => {
+  const waitForPhoneVerificationSubmitState = async (
+    tabId: number
+  ): Promise<RegisterPhoneVerificationSubmitState> => {
     const startedAt = Date.now()
     let lastState = {
       ok: false,
@@ -945,7 +955,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * 手机验证码超时后回退到手机号输入页。
    *
    * 这里按用户要求使用浏览器历史回退，不直接跳转 /add-phone；如果历史栈无法
-   * 回到手机号页，就交给外层重新执行 Step 6 刷新 OAuth。
+   * 回到手机号页，就交给外层重新执行 Step 5 刷新 OAuth。
    *
    * @param tabId 当前手机号验证码页标签页 ID。
    * @return 是否重新看到手机号输入框。
@@ -1124,7 +1134,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   /**
    * 登录版 Step 2：点击 GPT 登录入口，并提交登录邮箱。
    *
-   * 该方法给 Step 6 缺账号卡片时复用，区别于注册版 Step 2 的注册入口点击。
+   * 该方法给 Step 5 缺账号卡片时复用，区别于注册版 Step 2 的注册入口点击。
    *
    * @param email 要登录的邮箱。
    * @param tabId GPT 页面标签页 ID。
@@ -1308,7 +1318,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 5：点击注册完成后的“继续/Continue”按钮。
+   * 注册资料完成页：点击“继续/Continue”按钮。
    *
    * @param tabId 注册流程标签页 ID。
    * @return 点击继续按钮的结果。
@@ -1344,7 +1354,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 6 前半段：从 CPA 页面刷新 OAuth 授权链接并进入 OpenAI 登录授权页。
+   * Step 5 前半段：从 CPA 页面刷新 OAuth 授权链接并进入 OpenAI 登录授权页。
    *
    * @param targetUrl 侧边栏填写的 CPA OAuth 页面地址。
    * @param managementKey CPA 管理密钥。
@@ -1384,7 +1394,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 6 后半段：在 OAuth 登录授权页选择目标账号卡片。
+   * Step 5 后半段：在 OAuth 登录授权页选择目标账号卡片。
    *
    * @param tabId OAuth 登录授权页标签页 ID。
    * @param email 要点击的目标账号邮箱。
@@ -1409,7 +1419,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     } catch {
       return {
         ok: false,
-        message: "未找到 OpenAI 授权页 tab，请先执行 Step 6 或使用当前标签页"
+        message: "未找到 OpenAI 授权页 tab，请先执行 Step 5 或使用当前标签页"
       }
     }
 
@@ -1437,7 +1447,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 7：通过 HeroSMS 完成 OpenAI 手机号验证。
+   * Step 6：通过 HeroSMS 完成 OpenAI 手机号验证。
    *
    * @param tabId 手机号验证页面标签页 ID。
    * @param options HeroSMS 接码配置。
@@ -1456,7 +1466,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     } catch {
       return {
         ok: false,
-        message: "未找到手机号验证页面 tab，请先执行 Step 6 或使用当前标签页"
+        message: "未找到手机号验证页面 tab，请先执行 Step 5 或使用当前标签页"
       }
     }
 
@@ -1534,7 +1544,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             return {
               ok: false,
               needRefreshOAuth: true,
-              message: `${timeoutMessage}；${backResult.message}，需要重新执行 Step 6 刷新 OAuth；${activationSummary}`,
+              message: `${timeoutMessage}；${backResult.message}，需要重新执行 Step 5 刷新 OAuth；${activationSummary}`,
               targetTab: {
                 id: tabId,
                 url: (await chrome.tabs.get(tabId).catch(() => null))?.url
@@ -1547,7 +1557,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             needRefreshOAuth: true,
             message: `${timeoutMessage}；OAuth 剩余时间不足 ${formatDurationSeconds(
               REGISTER_PHONE_RETRY_MIN_REMAINING_MS
-            )}，需要重新执行 Step 6 刷新 OAuth；${activationSummary}`,
+            )}，需要重新执行 Step 5 刷新 OAuth；${activationSummary}`,
             targetTab: {
               id: tabId,
               url: (await chrome.tabs.get(tabId).catch(() => null))?.url
@@ -1649,7 +1659,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 完成 Step 6 的账号选择兜底流程。
+   * 完成 Step 5 的账号选择兜底流程。
    *
    * 先尝试点击已有账号卡片；如果没有对应卡片，则复用 Step 1、登录版 Step 2、
    * Step 3 完成目标账号登录，再刷新 OAuth 并重新点击账号卡片。
@@ -1680,7 +1690,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (!normalizedTargetUrl) {
       return {
         ok: false,
-        message: `${firstChoice.message}；缺少 CPA 地址，无法重新执行 Step 6`,
+        message: `${firstChoice.message}；缺少 CPA 地址，无法重新执行 Step 5`,
         targetTab: firstChoice.targetTab
       }
     }
@@ -1688,7 +1698,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (!normalizedManagementKey) {
       return {
         ok: false,
-        message: `${firstChoice.message}；缺少 CPA 管理密钥，无法重新执行 Step 6`,
+        message: `${firstChoice.message}；缺少 CPA 管理密钥，无法重新执行 Step 5`,
         targetTab: firstChoice.targetTab
       }
     }
@@ -1771,16 +1781,16 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 8：把注册 OAuth 回调地址提交回 CPA。
+   * Step 7：把注册 OAuth 回调地址提交回 CPA。
    *
-   * 复用 codex-login 的最后一步，只负责把 Step 7 成功后的 localhost 回调地址
+   * 复用 codex-login 的最后一步，只负责把 Step 6 成功后的 localhost 回调地址
    * 回填给 CPA 管理接口。
    *
    * @param targetUrl CPA OAuth 页面地址。
    * @param managementKey CPA 管理密钥。
-   * @param callbackUrl Step 7 成功后捕获到的 localhost 回调地址。
+   * @param callbackUrl Step 6 成功后捕获到的 localhost 回调地址。
    * @param callbackTabId 可选，回填成功后关闭这个授权标签页。
-   * @param cpaOAuthState Step 6 获取 OAuth URL 时返回的 state。
+   * @param cpaOAuthState Step 5 获取 OAuth URL 时返回的 state。
    * @return CPA 回填结果。
    */
   const submitRegisterOAuthCallbackToCpa = async (

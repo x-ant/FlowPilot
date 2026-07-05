@@ -29,7 +29,7 @@ import {
 } from "./shared"
 import { useAccountPageState } from "./useAccountPageState"
 
-const REGISTER_STEP_COUNT = 8
+const REGISTER_STEP_COUNT = 7
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
 const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
   "codex-register:hero-sms-countries-cache"
@@ -434,7 +434,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }, [heroSmsSettings.countryId, heroSmsSettings.operator])
 
   /**
-   * 组装 Step 7 使用的 HeroSMS 参数，并在发起扣费请求前做第一层价格校验。
+   * 组装 Step 6 使用的 HeroSMS 参数，并在发起扣费请求前做第一层价格校验。
    *
    * @return 参数合法时返回 HeroSMS 配置；缺少 API Key、价格上限或固定档位非法时返回 null。
    */
@@ -442,7 +442,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const apiKey = String(heroSmsSettings.apiKey || "").trim()
     if (!heroSmsSettings.mockEnabled && !apiKey) {
       setStatus("请先填写 HeroSMS 接码 API")
-      log.warn("[注册调试] Step 7 缺少 HeroSMS 接码 API")
+      log.warn("[注册调试] Step 6 缺少 HeroSMS 接码 API")
       return null
     }
 
@@ -453,7 +453,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       Number(maxPrice) <= 0
     ) {
       setStatus("请先填写有效的 HeroSMS 价格上限")
-      log.warn("[注册调试] Step 7 缺少有效 HeroSMS 价格上限")
+      log.warn("[注册调试] Step 6 缺少有效 HeroSMS 价格上限")
       return null
     }
 
@@ -463,7 +463,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const countryId = normalizeHeroSmsCountryIdValue(country?.value)
     if (countryId === "") {
       setStatus("请先选择有效的 HeroSMS 国家")
-      log.warn("[注册调试] Step 7 HeroSMS 国家选项无效")
+      log.warn("[注册调试] Step 6 HeroSMS 国家选项无效")
       return null
     }
     const fixedPrice = String(heroSmsSettings.fixedPrice || "").trim()
@@ -473,13 +473,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       (!Number.isFinite(Number(fixedPrice)) || Number(fixedPrice) <= 0)
     ) {
       setStatus("请填写有效的 HeroSMS 固定价格档位")
-      log.warn("[注册调试] Step 7 HeroSMS 固定价格档位无效")
+      log.warn("[注册调试] Step 6 HeroSMS 固定价格档位无效")
       return null
     }
 
     if (fixedPrice && Number(fixedPrice) > Number(maxPrice)) {
       setStatus("HeroSMS 固定价格档位不能高于价格上限")
-      log.warn("[注册调试] Step 7 HeroSMS 固定价格档位高于价格上限")
+      log.warn("[注册调试] Step 6 HeroSMS 固定价格档位高于价格上限")
       return null
     }
 
@@ -492,7 +492,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       maxPrice,
       fixedPrice,
       onLog: (level, message) => {
-        log[level](`[注册调试] Step 7 ${message}`)
+        log[level](`[注册调试] Step 6 ${message}`)
       }
     }
   }
@@ -681,31 +681,27 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     await runRegisterDebugStep({
       step: 4,
       runningStatus: "正在完成账户创建",
-      runningMessage: "正在填写名称和年龄/生日",
+      runningMessage: "正在填写名称和年龄/生日并点击继续",
       runningProgress: 3,
-      action: submitRegisterProfile,
+      action: async (tabId) => {
+        const profileResult = await submitRegisterProfile(tabId)
+        if (!profileResult.ok) {
+          return profileResult
+        }
+
+        const continueResult = await clickRegisterReadyContinue(tabId)
+        return {
+          ok: continueResult.ok,
+          message: `${profileResult.message}；${continueResult.message}`,
+          targetTab: continueResult.targetTab || profileResult.targetTab
+        }
+      },
       failureStatus: "完成账户创建失败",
-      successStatus: "已完成账户创建",
+      successStatus: "已完成账户创建并点击继续",
       successProgress: 4,
       successAccountStatus: "running",
       exceptionStatus: "完成账户创建异常",
       exceptionMessage: "完成账户创建异常"
-    })
-  }
-
-  const handleClickRegisterReadyContinue = async () => {
-    await runRegisterDebugStep({
-      step: 5,
-      runningStatus: "正在点击继续",
-      runningMessage: "正在点击继续",
-      runningProgress: 4,
-      action: clickRegisterReadyContinue,
-      failureStatus: "点击继续失败",
-      successStatus: "已点击继续",
-      successProgress: 5,
-      successAccountStatus: "running",
-      exceptionStatus: "点击继续异常",
-      exceptionMessage: "点击继续异常"
     })
   }
 
@@ -719,22 +715,22 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
     if (!normalizedCpaUrl) {
       setStatus("请先填写 CPA 地址")
-      log.warn("[注册调试] Step 6 缺少 CPA 地址")
+      log.warn("[注册调试] Step 5 缺少 CPA 地址")
       return
     }
 
     if (!normalizedCpaManagementKey) {
       setStatus("请先填写 CPA 管理密钥")
-      log.warn("[注册调试] Step 6 缺少 CPA 管理密钥")
+      log.warn("[注册调试] Step 5 缺少 CPA 管理密钥")
       return
     }
 
     setIsDebugRunning(true)
     setRunningEmail(selectedDebugAccount.email)
     setStatus("正在完成 OAuth 登录")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 6 开始`)
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 5 开始`)
     patchAccountState(selectedDebugAccount.email, {
-      progress: 5,
+      progress: 4,
       status: "running",
       lastMessage: "正在刷新 OAuth 并选择账号卡片"
     })
@@ -788,15 +784,15 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         result.cpaOAuthState || refreshResult.cpaOAuthState || ""
       )
       setDebugCallbackUrl("")
-      setDebugProgress(6)
+      setDebugProgress(5)
       setStatus("已完成 OAuth 登录")
       log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 6 ${message}；tab=${
+        `[注册调试][${selectedDebugAccount.email}] Step 5 ${message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
       patchAccountState(selectedDebugAccount.email, {
-        progress: 6,
+        progress: 5,
         status: "running",
         lastMessage: message
       })
@@ -826,17 +822,17 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
     const parsedTabId = Number.parseInt(debugRegisterTabId, 10)
     if (!Number.isFinite(parsedTabId) || parsedTabId <= 0) {
-      setStatus("请先执行 Step 6 完成 OAuth 登录")
-      log.warn("[注册调试] Step 7 缺少注册 tabId，请先执行 Step 6")
+      setStatus("请先执行 Step 5 完成 OAuth 登录")
+      log.warn("[注册调试] Step 6 缺少注册 tabId，请先执行 Step 5")
       return
     }
 
     setIsDebugRunning(true)
     setRunningEmail(selectedDebugAccount.email)
     setStatus("正在执行手机号验证")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 开始`)
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 6 开始`)
     patchAccountState(selectedDebugAccount.email, {
-      progress: 6,
+      progress: 5,
       status: "running",
       lastMessage: "正在获取手机号并等待短信验证码"
     })
@@ -856,17 +852,17 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         if (result.ok) {
           setDebugRegisterTabId(String(result.targetTab?.id || tabId))
           setDebugCallbackUrl(result.callbackUrl || result.targetTab?.url || "")
-          setDebugProgress(7)
+          setDebugProgress(6)
           setStatus("已完成手机号验证")
           log.info(
-            `[注册调试][${selectedDebugAccount.email}] Step 7 ${
+            `[注册调试][${selectedDebugAccount.email}] Step 6 ${
               result.message
             }；tab=${result.targetTab?.id || "unknown"}；url=${
               result.targetTab?.url || "unknown"
             }`
           )
           patchAccountState(selectedDebugAccount.email, {
-            progress: 7,
+            progress: 6,
             status: "running",
             lastMessage: result.message
           })
@@ -899,7 +895,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         const normalizedCpaUrl = String(cpaUrl || "").trim()
         const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
         if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
-          const message = `${result.message}；缺少 CPA 地址或管理密钥，无法重新执行 Step 6`
+          const message = `${result.message}；缺少 CPA 地址或管理密钥，无法重新执行 Step 5`
           setStatus("手机号验证失败")
           log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
           patchAccountState(selectedDebugAccount.email, {
@@ -910,14 +906,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         oauthRefreshCount += 1
-        setStatus("OAuth 时间不足，正在重新执行 Step 6")
+        setStatus("OAuth 时间不足，正在重新执行 Step 5")
         log.warn(
-          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 6（${oauthRefreshCount}/${REGISTER_PHONE_MAX_OAUTH_REFRESHES}）`
+          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 5（${oauthRefreshCount}/${REGISTER_PHONE_MAX_OAUTH_REFRESHES}）`
         )
         patchAccountState(selectedDebugAccount.email, {
-          progress: 6,
+          progress: 5,
           status: "running",
-          lastMessage: "OAuth 时间不足，正在重新执行 Step 6"
+          lastMessage: "OAuth 时间不足，正在重新执行 Step 5"
         })
 
         const refreshResult = await refreshRegisterOAuthAndLogin(
@@ -946,18 +942,18 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           normalizedCpaUrl,
           normalizedCpaManagementKey
         )
-        const step6Message = `${refreshResult.message}；${loginResult.message}`
+        const step5Message = `${refreshResult.message}；${loginResult.message}`
         if (
           !loginResult.ok ||
           typeof loginResult.targetTab?.id !== "number"
         ) {
           setStatus("OAuth 登录失败")
           log.warn(
-            `[注册调试][${selectedDebugAccount.email}] ${step6Message}`
+            `[注册调试][${selectedDebugAccount.email}] ${step5Message}`
           )
           patchAccountState(selectedDebugAccount.email, {
             status: "failed",
-            lastMessage: step6Message
+            lastMessage: step5Message
           })
           return
         }
@@ -997,14 +993,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
     if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
       setStatus("请先填写 CPA 地址和管理密钥")
-      log.warn("[注册调试] Step 8 缺少 CPA 地址或管理密钥")
+      log.warn("[注册调试] Step 7 缺少 CPA 地址或管理密钥")
       return
     }
 
     const normalizedCallbackUrl = String(debugCallbackUrl || "").trim()
     if (!normalizedCallbackUrl) {
-      setStatus("请先执行 Step 7 获取 OAuth 回调地址")
-      log.warn("[注册调试] Step 8 缺少 OAuth 回调地址")
+      setStatus("请先执行 Step 6 获取 OAuth 回调地址")
+      log.warn("[注册调试] Step 7 缺少 OAuth 回调地址")
       return
     }
 
@@ -1015,9 +1011,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setIsDebugRunning(true)
     setRunningEmail(selectedDebugAccount.email)
     setStatus("正在回填 CPA")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 8 开始`)
+    log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 开始`)
     patchAccountState(selectedDebugAccount.email, {
-      progress: 7,
+      progress: 6,
       status: "running",
       lastMessage: "正在把 OAuth 回调地址提交回 CPA"
     })
@@ -1043,7 +1039,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       setDebugProgress(REGISTER_STEP_COUNT)
       setStatus("已完成 CPA 回填")
-      log.info(`[注册调试][${selectedDebugAccount.email}] Step 8 ${result.message}`)
+      log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 ${result.message}`)
       patchAccountState(selectedDebugAccount.email, {
         progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
         status: "done",
@@ -1261,15 +1257,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               }}
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
-              4 完成账户创建
-            </Button>
-            <Button
-              onClick={() => {
-                void handleClickRegisterReadyContinue()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning || !selectedDebugAccount}>
-              5 点击继续
+              4 完成账户创建并继续
             </Button>
             <Button
               onClick={() => {
@@ -1282,7 +1270,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 !cpaUrl.trim() ||
                 !cpaManagementKey.trim()
               }>
-              6 完成 OAuth 登录
+              5 完成 OAuth 登录
             </Button>
             <Button
               onClick={() => {
@@ -1290,7 +1278,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               }}
               loading={isDebugRunning}
               disabled={isDebugRunning || !selectedDebugAccount}>
-              7 手机号验证
+              6 手机号验证
             </Button>
             <Button
               onClick={() => {
@@ -1304,7 +1292,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                 !cpaUrl.trim() ||
                 !cpaManagementKey.trim()
               }>
-              8 回填 CPA
+              7 回填 CPA
             </Button>
           </Space>
         </div>
