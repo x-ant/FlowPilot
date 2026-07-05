@@ -32,6 +32,7 @@ type CodexRegisterStepResponse = {
   ok: boolean
   message: string
   needRefreshOAuth?: boolean
+  needsManualReview?: boolean
   oauthStartedAt?: number
   cpaOAuthState?: string
   callbackUrl?: string
@@ -1605,6 +1606,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           }
           return {
             ok: false,
+            needsManualReview: !submitState.releaseActivation,
             message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${submitState.message}；${activationSummary}`,
             targetTab: {
               id: tabId,

@@ -10,7 +10,12 @@ export type AccountFormValues = {
   password?: string
 }
 
-export type ManagedAccountStatus = "idle" | "running" | "done" | "failed"
+export type ManagedAccountStatus =
+  | "idle"
+  | "running"
+  | "done"
+  | "failed"
+  | "needs_review"
 
 export type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
@@ -44,6 +49,7 @@ export type FlowPage = "codex-login" | "codex-register"
 export type AccountRunResult = {
   ok: boolean
   message: string
+  needsReview?: boolean
 }
 
 export type PageProps = {
@@ -107,6 +113,10 @@ export const STATUS_META: Record<
   failed: {
     label: "失败",
     color: "error"
+  },
+  needs_review: {
+    label: "待人工判断",
+    color: "warning"
   }
 }
 
@@ -148,6 +158,10 @@ export const getFlowStepLabel = (step: DebugStep) => {
 export const getAccountProgressSummary = (account: ManagedAccount) => {
   if (account.status === "done") {
     return "已完成全部步骤"
+  }
+
+  if (account.status === "needs_review") {
+    return account.lastMessage || "需要人工判断后再处理"
   }
 
   const nextStep = Math.min(

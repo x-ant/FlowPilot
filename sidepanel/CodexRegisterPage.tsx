@@ -1,11 +1,12 @@
 import { Button, Checkbox, Input, Select, Space, Tag } from "antd"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
   completeRegisterOAuthLogin,
   completeRegisterPhoneVerification,
+  createCodexRegisterRunner,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
@@ -23,6 +24,9 @@ import { DebugTabControl } from "./DebugTabControl"
 import {
   normalizeEmail,
   REGISTER_STORAGE_KEYS,
+  resetManagedAccountState,
+  type AccountRunResult,
+  type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus,
   type PageProps
@@ -141,6 +145,7 @@ type RegisterStepResult = {
   ok: boolean
   message: string
   needRefreshOAuth?: boolean
+  needsManualReview?: boolean
   oauthStartedAt?: number
   cpaOAuthState?: string
   callbackUrl?: string
@@ -165,6 +170,225 @@ type RegisterDebugStepOptions = {
   beforeRun?: () => void
 }
 
+const runManagedRegisterFlow = async (
+  cpaUrl: string,
+  cpaManagementKey: string,
+  account: ManagedAccount,
+  heroSmsOptions: HeroSmsPhoneVerificationOptions,
+  runner: ReturnType<typeof createCodexRegisterRunner>,
+  onStage: (progress: ManagedAccountProgress, message: string) => void
+): Promise<AccountRunResult> => {
+  const messages: string[] = []
+  const startFromStep = account.progress >= 4 ? 5 : 1
+
+  if (startFromStep === 1) {
+    const step1Result = await runner.openChatGptRegisterEntry()
+    if (!step1Result.ok || !step1Result.targetTab?.id) {
+      return {
+        ok: false,
+        message: step1Result.message || "步骤 1 执行失败"
+      }
+    }
+    messages.push(step1Result.message)
+    onStage(1, step1Result.message)
+
+    const registerTabId = step1Result.targetTab.id
+    const verificationRequestedAt = Date.now()
+    const step2Result = await runner.clickRegisterAndSubmitEmail(
+      account.email,
+      registerTabId
+    )
+    if (!step2Result.ok) {
+      return {
+        ok: false,
+        message: step2Result.message || "步骤 2 执行失败"
+      }
+    }
+    messages.push(step2Result.message)
+    onStage(2, step2Result.message)
+
+    const step3Result = await runner.fetchAndSubmitRegisterVerificationCode(
+      registerTabId,
+      account.email,
+      account.password,
+      verificationRequestedAt
+    )
+    if (!step3Result.ok) {
+      return {
+        ok: false,
+        message: step3Result.message || "步骤 3 执行失败"
+      }
+    }
+    messages.push(step3Result.message)
+    onStage(3, step3Result.message)
+
+    const profileResult = await runner.submitRegisterProfile(registerTabId)
+    if (!profileResult.ok) {
+      return {
+        ok: false,
+        message: profileResult.message || "步骤 4 执行失败"
+      }
+    }
+    const continueResult = await runner.clickRegisterReadyContinue(registerTabId)
+    if (!continueResult.ok) {
+      return {
+        ok: false,
+        message: `${profileResult.message}；${continueResult.message || "步骤 4 执行失败"}`
+      }
+    }
+    const step4Message = `${profileResult.message}；${continueResult.message}`
+    messages.push(step4Message)
+    onStage(4, step4Message)
+  }
+
+  const refreshResult = await runner.refreshRegisterOAuthAndLogin(
+    cpaUrl,
+    cpaManagementKey
+  )
+  if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
+    return {
+      ok: false,
+      message: refreshResult.message || "步骤 5 执行失败"
+    }
+  }
+  const loginResult = await runner.completeRegisterOAuthLogin(
+    refreshResult.targetTab.id,
+    account.email,
+    account.password,
+    cpaUrl,
+    cpaManagementKey
+  )
+  const step5Message = `${refreshResult.message}；${loginResult.message}`
+  if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
+    return {
+      ok: false,
+      message: step5Message || "步骤 5 执行失败"
+    }
+  }
+  messages.push(step5Message)
+  onStage(5, step5Message)
+
+  let phoneTabId = loginResult.targetTab.id
+  let oauthStartedAt =
+    loginResult.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
+  let cpaOAuthState =
+    loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
+  let oauthRefreshCount = 0
+  let phoneResult: RegisterStepResult
+
+  while (true) {
+    phoneResult = await runner.completeRegisterPhoneVerification(
+      phoneTabId,
+      heroSmsOptions,
+      oauthStartedAt
+    )
+
+    if (phoneResult.ok) {
+      break
+    }
+
+    if (!phoneResult.needRefreshOAuth) {
+      if (phoneResult.needsManualReview) {
+        onStage(6, phoneResult.message)
+        return {
+          ok: false,
+          needsReview: true,
+          message: `${phoneResult.message}；手机号验证码已经提交但跳转结果无法判断，为避免重复浪费手机号，请人工检查`
+        }
+      }
+
+      return {
+        ok: false,
+        message: phoneResult.message || "步骤 6 执行失败"
+      }
+    }
+
+    if (oauthRefreshCount >= REGISTER_PHONE_MAX_OAUTH_REFRESHES) {
+      return {
+        ok: false,
+        message: `${phoneResult.message}；已达到 OAuth 刷新上限 ${REGISTER_PHONE_MAX_OAUTH_REFRESHES} 次`
+      }
+    }
+
+    oauthRefreshCount += 1
+    const nextRefreshResult = await runner.refreshRegisterOAuthAndLogin(
+      cpaUrl,
+      cpaManagementKey,
+      phoneTabId
+    )
+    if (
+      !nextRefreshResult.ok ||
+      typeof nextRefreshResult.targetTab?.id !== "number"
+    ) {
+      return {
+        ok: false,
+        message: `${phoneResult.message}；${nextRefreshResult.message}`
+      }
+    }
+
+    const nextLoginResult = await runner.completeRegisterOAuthLogin(
+      nextRefreshResult.targetTab.id,
+      account.email,
+      account.password,
+      cpaUrl,
+      cpaManagementKey
+    )
+    if (!nextLoginResult.ok || typeof nextLoginResult.targetTab?.id !== "number") {
+      return {
+        ok: false,
+        message: `${phoneResult.message}；${nextRefreshResult.message}；${nextLoginResult.message}`
+      }
+    }
+
+    phoneTabId = nextLoginResult.targetTab.id
+    oauthStartedAt =
+      nextLoginResult.oauthStartedAt ||
+      nextRefreshResult.oauthStartedAt ||
+      Date.now()
+    cpaOAuthState =
+      nextLoginResult.cpaOAuthState || nextRefreshResult.cpaOAuthState || ""
+  }
+
+  const callbackUrl = phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
+  if (!callbackUrl) {
+    onStage(6, phoneResult.message)
+    return {
+      ok: false,
+      needsReview: true,
+      message: `${phoneResult.message}；步骤 6 未返回 OAuth 回调地址，无法判断手机号验证结果；为避免重复消耗手机号，请人工检查`
+    }
+  }
+  messages.push(phoneResult.message)
+  onStage(6, phoneResult.message)
+
+  const step7Result = await runner.submitRegisterOAuthCallbackToCpa(
+    cpaUrl,
+    cpaManagementKey,
+    callbackUrl,
+    phoneTabId,
+    cpaOAuthState
+  )
+  if (!step7Result.ok) {
+    onStage(7, step7Result.message || "CPA 回填失败")
+    return {
+      ok: false,
+      needsReview: true,
+      message: `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${step7Result.message || "步骤 7 执行失败"}`
+    }
+  }
+  messages.push(step7Result.message)
+  onStage(7, step7Result.message)
+
+  return {
+    ok: true,
+    message: messages.filter(Boolean).join("；")
+  }
+}
+
+const isRegisterAccountDone = (account: ManagedAccount) => {
+  return account.status === "done" || account.progress >= REGISTER_STEP_COUNT
+}
+
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
     storageKeys: REGISTER_STORAGE_KEYS,
@@ -175,6 +399,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     accounts,
     cpaManagementKey,
     cpaUrl,
+    selectedEmails,
+    selectedEmailSet,
+    selectedCount,
+    setAccounts,
+    syncAccounts,
     patchAccountState,
     setRunningEmail
   } = accountPage
@@ -200,6 +429,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     useState(false)
   const [isHeroSmsOperatorsLoading, setIsHeroSmsOperatorsLoading] =
     useState(false)
+  const [isBatchRunning, setIsBatchRunning] = useState(false)
+  const [isBatchStopping, setIsBatchStopping] = useState(false)
+  const batchCancelRef = useRef(false)
+  const batchAbortControllerRef = useRef<AbortController | null>(null)
 
   const selectedDebugAccount = useMemo(() => {
     const normalizedDebugEmail = normalizeEmail(debugEmail)
@@ -227,11 +460,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }, [accounts, debugEmail])
 
   useEffect(() => {
-    onBusyChange?.(isDebugRunning)
+    onBusyChange?.(isBatchRunning || isDebugRunning)
     return () => {
       onBusyChange?.(false)
     }
-  }, [isDebugRunning, onBusyChange])
+  }, [isBatchRunning, isDebugRunning, onBusyChange])
 
   useEffect(() => {
     void chrome.storage.local.get([REGISTER_HERO_SMS_STORAGE_KEY], (result) => {
@@ -438,11 +671,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    *
    * @return 参数合法时返回 HeroSMS 配置；缺少 API Key、价格上限或固定档位非法时返回 null。
    */
-  const buildHeroSmsOptions = (): HeroSmsPhoneVerificationOptions | null => {
+  const buildHeroSmsOptions = (
+    logPrefix = "注册调试"
+  ): HeroSmsPhoneVerificationOptions | null => {
     const apiKey = String(heroSmsSettings.apiKey || "").trim()
     if (!heroSmsSettings.mockEnabled && !apiKey) {
       setStatus("请先填写 HeroSMS 接码 API")
-      log.warn("[注册调试] Step 6 缺少 HeroSMS 接码 API")
+      log.warn(`[${logPrefix}] Step 6 缺少 HeroSMS 接码 API`)
       return null
     }
 
@@ -453,7 +688,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       Number(maxPrice) <= 0
     ) {
       setStatus("请先填写有效的 HeroSMS 价格上限")
-      log.warn("[注册调试] Step 6 缺少有效 HeroSMS 价格上限")
+      log.warn(`[${logPrefix}] Step 6 缺少有效 HeroSMS 价格上限`)
       return null
     }
 
@@ -463,7 +698,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const countryId = normalizeHeroSmsCountryIdValue(country?.value)
     if (countryId === "") {
       setStatus("请先选择有效的 HeroSMS 国家")
-      log.warn("[注册调试] Step 6 HeroSMS 国家选项无效")
+      log.warn(`[${logPrefix}] Step 6 HeroSMS 国家选项无效`)
       return null
     }
     const fixedPrice = String(heroSmsSettings.fixedPrice || "").trim()
@@ -473,13 +708,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       (!Number.isFinite(Number(fixedPrice)) || Number(fixedPrice) <= 0)
     ) {
       setStatus("请填写有效的 HeroSMS 固定价格档位")
-      log.warn("[注册调试] Step 6 HeroSMS 固定价格档位无效")
+      log.warn(`[${logPrefix}] Step 6 HeroSMS 固定价格档位无效`)
       return null
     }
 
     if (fixedPrice && Number(fixedPrice) > Number(maxPrice)) {
       setStatus("HeroSMS 固定价格档位不能高于价格上限")
-      log.warn("[注册调试] Step 6 HeroSMS 固定价格档位高于价格上限")
+      log.warn(`[${logPrefix}] Step 6 HeroSMS 固定价格档位高于价格上限`)
       return null
     }
 
@@ -492,7 +727,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       maxPrice,
       fixedPrice,
       onLog: (level, message) => {
-        log[level](`[注册调试] Step 6 ${message}`)
+        log[level](`[${logPrefix}] Step 6 ${message}`)
       }
     }
   }
@@ -870,6 +1105,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         if (!result.needRefreshOAuth) {
+          if (result.needsManualReview) {
+            setStatus("手机号验证结果需要人工判断")
+            log.warn(
+              `[注册调试][${selectedDebugAccount.email}] ${result.message}`
+            )
+            patchAccountState(selectedDebugAccount.email, {
+              progress: 6,
+              status: "needs_review",
+              lastMessage: `${result.message}；手机号验证码已经提交但跳转结果无法判断，为避免重复浪费手机号，请人工检查`
+            })
+            return
+          }
+
           setStatus("手机号验证失败")
           log.warn(
             `[注册调试][${selectedDebugAccount.email}] ${result.message}`
@@ -1028,11 +1276,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       )
 
       if (!result.ok) {
-        setStatus("CPA 回填失败")
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
+        const message = `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${result.message}`
+        setStatus("CPA 回填需要人工处理")
+        log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
         patchAccountState(selectedDebugAccount.email, {
-          status: "failed",
-          lastMessage: result.message
+          progress: 7,
+          status: "needs_review",
+          lastMessage: message
         })
         return
       }
@@ -1059,10 +1309,225 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
+  const handleStartBatch = async () => {
+    const normalizedCpaUrl = String(cpaUrl || "").trim()
+    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
+    if (!normalizedCpaUrl) {
+      setStatus("请先填写 CPA 地址")
+      log.warn("未填写 CPA 地址")
+      return
+    }
+
+    if (!normalizedCpaManagementKey) {
+      setStatus("请先填写 CPA 管理密钥")
+      log.warn("未填写 CPA 管理密钥")
+      return
+    }
+
+    if (accounts.length === 0) {
+      setStatus("请先添加至少一个账号")
+      log.warn("账号列表为空")
+      return
+    }
+
+    if (isBatchRunning || isDebugRunning) {
+      return
+    }
+
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要执行的账号")
+      log.info("请先选择要执行的账号")
+      return
+    }
+
+    const heroSmsOptions = buildHeroSmsOptions("注册执行")
+    if (!heroSmsOptions) {
+      return
+    }
+
+    const isTargetAccount = (account: ManagedAccount) => {
+      return (
+        selectedEmailSet.has(normalizeEmail(account.email)) &&
+        !isRegisterAccountDone(account) &&
+        account.status !== "needs_review"
+      )
+    }
+    const runnableCount = accounts.filter(isTargetAccount).length
+    if (runnableCount === 0) {
+      const emptyMessage = "选中的账号没有可执行项"
+      setStatus(emptyMessage)
+      log.info(emptyMessage)
+      return
+    }
+
+    batchCancelRef.current = false
+    setIsBatchStopping(false)
+    const batchAbortController = new AbortController()
+    batchAbortControllerRef.current = batchAbortController
+    const registerRunner = createCodexRegisterRunner({
+      abortSignal: batchAbortController.signal
+    })
+    setIsBatchRunning(true)
+    setRunningEmail("")
+
+    let workingAccounts = accounts.map((account) => {
+      if (!isTargetAccount(account)) {
+        return account
+      }
+
+      return account.progress < 4 ? resetManagedAccountState(account) : account
+    })
+    syncAccounts(workingAccounts, normalizedCpaUrl, normalizedCpaManagementKey)
+
+    const batchLabel = "选中账号"
+    setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
+    log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
+
+    let currentRunnableIndex = 0
+    for (let index = 0; index < workingAccounts.length; index += 1) {
+      if (batchCancelRef.current) {
+        setStatus("已停止批量执行")
+        log.warn("批量执行已停止")
+        break
+      }
+
+      const currentAccount = workingAccounts[index]
+      if (!isTargetAccount(currentAccount)) {
+        continue
+      }
+
+      currentRunnableIndex += 1
+      setRunningEmail(currentAccount.email)
+      setStatus(
+        `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
+      )
+      log.info(`开始处理账号 ${currentAccount.email}`)
+
+      const updateCurrentAccount = (
+        patch: Partial<ManagedAccount>
+      ): ManagedAccount[] => {
+        const nextAccounts = [...workingAccounts]
+        nextAccounts[index] = {
+          ...nextAccounts[index],
+          ...patch,
+          updatedAt: Date.now()
+        }
+        workingAccounts = nextAccounts
+        setAccounts(nextAccounts)
+        syncAccounts(nextAccounts, normalizedCpaUrl, normalizedCpaManagementKey)
+        return nextAccounts
+      }
+
+      updateCurrentAccount({
+        status: "running",
+        lastMessage: "正在打开 GPT 注册页"
+      })
+
+      let runResult: AccountRunResult
+      try {
+        runResult = await runManagedRegisterFlow(
+          normalizedCpaUrl,
+          normalizedCpaManagementKey,
+          currentAccount,
+          heroSmsOptions,
+          registerRunner,
+          (progress, message) => {
+            const nextStatus: ManagedAccountStatus =
+              progress === REGISTER_STEP_COUNT ? "done" : "running"
+            updateCurrentAccount({
+              progress,
+              status: nextStatus,
+              lastMessage: message
+            })
+            setStatus(`账号 ${currentAccount.email} 已完成 Step ${progress}`)
+            log.info(`[${currentAccount.email}] ${message}`)
+          }
+        )
+      } catch (error) {
+        runResult = {
+          ok: false,
+          message:
+            error instanceof Error ? error.message : "账号自动注册时发生异常"
+        }
+      }
+
+      if (batchCancelRef.current) {
+        updateCurrentAccount({
+          status: "failed",
+          lastMessage: runResult.message || "已停止当前流程"
+        })
+        setStatus("已停止当前流程")
+        log.warn(
+          `[${currentAccount.email}] ${runResult.message || "已停止当前流程"}`
+        )
+        break
+      }
+
+      if (runResult.ok) {
+        updateCurrentAccount({
+          progress: REGISTER_STEP_COUNT,
+          status: "done",
+          lastMessage: runResult.message
+        })
+        log.info(`[${currentAccount.email}] ${runResult.message}`)
+        continue
+      }
+
+      const currentState = workingAccounts[index]
+      if (runResult.needsReview) {
+        updateCurrentAccount({
+          progress: currentState.progress,
+          status: "needs_review",
+          lastMessage: runResult.message
+        })
+        setStatus(`账号 ${currentAccount.email} 需要人工判断`)
+        log.warn(`[${currentAccount.email}] ${runResult.message}`)
+        continue
+      }
+
+      updateCurrentAccount({
+        progress: currentState.progress,
+        status: "failed",
+        lastMessage: runResult.message
+      })
+      setStatus(`账号 ${currentAccount.email} 执行失败`)
+      log.warn(`[${currentAccount.email}] ${runResult.message}`)
+    }
+
+    setRunningEmail("")
+    setIsBatchRunning(false)
+    setIsBatchStopping(false)
+    batchAbortControllerRef.current = null
+    setStatus(
+      batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
+    )
+  }
+
+  const handleStopBatch = () => {
+    if (isBatchStopping) {
+      return
+    }
+
+    setIsBatchStopping(true)
+    batchCancelRef.current = true
+    batchAbortControllerRef.current?.abort()
+    setStatus("正在停止当前流程")
+    log.warn("收到停止请求，等待当前步骤结束")
+  }
+
+  const disabled = isBatchRunning || isDebugRunning
+  const hasBatchConfig = Boolean(
+    cpaUrl.trim() &&
+      cpaManagementKey.trim() &&
+      (heroSmsSettings.mockEnabled || heroSmsSettings.apiKey.trim()) &&
+      heroSmsSettings.maxPrice.trim() &&
+      heroSmsSettings.countryId
+  )
+
   return (
     <AccountWorkspace
       {...accountPage}
-      disabled={isDebugRunning}
+      disabled={disabled}
       stepCount={REGISTER_STEP_COUNT}
       onCpaUrlChange={accountPage.handleCpaUrlChange}
       onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
@@ -1074,6 +1539,26 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onToggleAllAccountsSelected={accountPage.handleToggleAllAccountsSelected}
       onMoveSelectedAccount={accountPage.handleMoveSelectedAccount}
       onMarkSelectedAccountsDone={accountPage.handleMarkSelectedAccountsDone}
+      accountToolbarActions={
+        isBatchRunning ? (
+          <Button
+            danger
+            disabled={isBatchStopping}
+            loading={isBatchStopping}
+            onClick={handleStopBatch}>
+            {isBatchStopping ? "正在停止" : "停止当前流程"}
+          </Button>
+        ) : (
+          <Button
+            type="primary"
+            disabled={!hasBatchConfig || selectedCount === 0}
+            onClick={() => {
+              void handleStartBatch()
+            }}>
+            执行
+          </Button>
+        )
+      }
       debugTitleExtra={
         <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
       }
