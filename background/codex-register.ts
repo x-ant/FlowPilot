@@ -1509,11 +1509,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           }
         }
 
+        options.onPhoneVerificationPhase?.("phone_submitted")
         let code = ""
         try {
           code = await pollHeroSmsCode(options, activation, getAbortSignal())
           hasReceivedHeroSmsCode = true
         } catch (error) {
+          options.onPhoneVerificationPhase?.("phone_wait_finished")
           if (!isHeroSmsCodeTimeoutError(error)) {
             throw error
           }
@@ -1565,6 +1567,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             }
           }
         }
+        options.onPhoneVerificationPhase?.("phone_wait_finished")
         throwIfRunAborted()
 
         await chrome.tabs.update(tabId, { active: true })

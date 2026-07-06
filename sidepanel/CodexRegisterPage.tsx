@@ -1,4 +1,4 @@
-import { Button, Checkbox, Input, Select, Space, Tag } from "antd"
+import { Button, Checkbox, Input, Modal, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -170,12 +170,19 @@ type RegisterDebugStepOptions = {
   beforeRun?: () => void
 }
 
+type RegisterStopStrategy =
+  | "none"
+  | "immediate"
+  | "after_phone"
+  | "finish_current_if_phone_success"
+
 const runManagedRegisterFlow = async (
   cpaUrl: string,
   cpaManagementKey: string,
   account: ManagedAccount,
   heroSmsOptions: HeroSmsPhoneVerificationOptions,
   runner: ReturnType<typeof createCodexRegisterRunner>,
+  getStopStrategy: () => RegisterStopStrategy,
   onStage: (progress: ManagedAccountProgress, message: string) => void
 ): Promise<AccountRunResult> => {
   const messages: string[] = []
@@ -303,6 +310,13 @@ const runManagedRegisterFlow = async (
       }
     }
 
+    if (getStopStrategy() !== "none") {
+      return {
+        ok: false,
+        message: `${phoneResult.message}；已按停止策略在当前手机号结束后停止`
+      }
+    }
+
     if (oauthRefreshCount >= REGISTER_PHONE_MAX_OAUTH_REFRESHES) {
       return {
         ok: false,
@@ -360,6 +374,15 @@ const runManagedRegisterFlow = async (
   }
   messages.push(phoneResult.message)
   onStage(6, phoneResult.message)
+
+  if (getStopStrategy() === "after_phone") {
+    return {
+      ok: false,
+      needsReview: true,
+      message:
+        "当前手机号验证已结束并按停止策略停止；手机号可能已经验证成功，但 CPA 尚未回填，请人工处理"
+    }
+  }
 
   const step7Result = await runner.submitRegisterOAuthCallbackToCpa(
     cpaUrl,
@@ -431,8 +454,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     useState(false)
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [isBatchStopping, setIsBatchStopping] = useState(false)
+  const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
   const batchCancelRef = useRef(false)
   const batchAbortControllerRef = useRef<AbortController | null>(null)
+  const batchStopStrategyRef = useRef<RegisterStopStrategy>("none")
+  const isWaitingForPhoneCodeRef = useRef(false)
+  const isManualPhoneStopRef = useRef(false)
 
   const selectedDebugAccount = useMemo(() => {
     const normalizedDebugEmail = normalizeEmail(debugEmail)
@@ -672,7 +699,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    * @return 参数合法时返回 HeroSMS 配置；缺少 API Key、价格上限或固定档位非法时返回 null。
    */
   const buildHeroSmsOptions = (
-    logPrefix = "注册调试"
+    logPrefix = "注册调试",
+    onPhoneVerificationPhase?: HeroSmsPhoneVerificationOptions["onPhoneVerificationPhase"]
   ): HeroSmsPhoneVerificationOptions | null => {
     const apiKey = String(heroSmsSettings.apiKey || "").trim()
     if (!heroSmsSettings.mockEnabled && !apiKey) {
@@ -728,7 +756,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       fixedPrice,
       onLog: (level, message) => {
         log[level](`[${logPrefix}] Step 6 ${message}`)
-      }
+      },
+      onPhoneVerificationPhase
     }
   }
 
@@ -1340,7 +1369,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const heroSmsOptions = buildHeroSmsOptions("注册执行")
+    const heroSmsOptions = buildHeroSmsOptions("注册执行", (phase) => {
+      isWaitingForPhoneCodeRef.current = phase === "phone_submitted"
+    })
     if (!heroSmsOptions) {
       return
     }
@@ -1361,7 +1392,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     batchCancelRef.current = false
+    batchStopStrategyRef.current = "none"
+    isWaitingForPhoneCodeRef.current = false
+    isManualPhoneStopRef.current = false
     setIsBatchStopping(false)
+    setIsStopStrategyModalOpen(false)
     const batchAbortController = new AbortController()
     batchAbortControllerRef.current = batchAbortController
     const registerRunner = createCodexRegisterRunner({
@@ -1431,6 +1466,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           currentAccount,
           heroSmsOptions,
           registerRunner,
+          () => batchStopStrategyRef.current,
           (progress, message) => {
             const nextStatus: ManagedAccountStatus =
               progress === REGISTER_STEP_COUNT ? "done" : "running"
@@ -1452,9 +1488,15 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       if (batchCancelRef.current) {
+        const currentState = workingAccounts[index]
         updateCurrentAccount({
-          status: "failed",
-          lastMessage: runResult.message || "已停止当前流程"
+          progress: isManualPhoneStopRef.current ? 6 : currentState.progress,
+          status:
+            isManualPhoneStopRef.current ? "needs_review" : "failed",
+          lastMessage:
+            isManualPhoneStopRef.current
+              ? "已直接停止，当前手机号验证码由人工负责"
+              : runResult.message || "已停止当前流程"
         })
         setStatus("已停止当前流程")
         log.warn(
@@ -1470,6 +1512,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           lastMessage: runResult.message
         })
         log.info(`[${currentAccount.email}] ${runResult.message}`)
+        if (batchStopStrategyRef.current !== "none") {
+          break
+        }
         continue
       }
 
@@ -1482,6 +1527,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         })
         setStatus(`账号 ${currentAccount.email} 需要人工判断`)
         log.warn(`[${currentAccount.email}] ${runResult.message}`)
+        if (batchStopStrategyRef.current !== "none") {
+          break
+        }
         continue
       }
 
@@ -1492,15 +1540,24 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
       setStatus(`账号 ${currentAccount.email} 执行失败`)
       log.warn(`[${currentAccount.email}] ${runResult.message}`)
+      if (batchStopStrategyRef.current !== "none") {
+        break
+      }
     }
 
     setRunningEmail("")
     setIsBatchRunning(false)
     setIsBatchStopping(false)
+    setIsStopStrategyModalOpen(false)
+    isWaitingForPhoneCodeRef.current = false
+    isManualPhoneStopRef.current = false
     batchAbortControllerRef.current = null
     setStatus(
-      batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
+      batchCancelRef.current || batchStopStrategyRef.current !== "none"
+        ? "已停止批量执行"
+        : `${batchLabel}执行已结束`
     )
+    batchStopStrategyRef.current = "none"
   }
 
   const handleStopBatch = () => {
@@ -1508,11 +1565,40 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
+    if (isWaitingForPhoneCodeRef.current) {
+      setIsStopStrategyModalOpen(true)
+      return
+    }
+
+    batchStopStrategyRef.current = "immediate"
+    isManualPhoneStopRef.current = false
     setIsBatchStopping(true)
     batchCancelRef.current = true
     batchAbortControllerRef.current?.abort()
     setStatus("正在停止当前流程")
     log.warn("收到停止请求，等待当前步骤结束")
+  }
+
+  const handleChooseStopStrategy = (strategy: RegisterStopStrategy) => {
+    setIsStopStrategyModalOpen(false)
+    batchStopStrategyRef.current = strategy
+    setIsBatchStopping(true)
+
+    if (strategy === "immediate") {
+      isManualPhoneStopRef.current = true
+      batchCancelRef.current = true
+      batchAbortControllerRef.current?.abort()
+      setStatus("正在立即停止，当前手机号后续由人工处理")
+      log.warn("已选择立即停止，当前手机号验证码由人工处理")
+      return
+    }
+
+    setStatus("已设置停止策略，等待当前手机号验证结束")
+    log.warn(
+      strategy === "after_phone"
+        ? "已选择当前手机号验证结束后停止"
+        : "已选择当前手机号失败则停止，成功则完成 CPA 回填后停止"
+    )
   }
 
   const disabled = isBatchRunning || isDebugRunning
@@ -1525,7 +1611,47 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   )
 
   return (
-    <AccountWorkspace
+    <>
+      <Modal
+        title="当前正在等待手机号验证码"
+        open={isStopStrategyModalOpen}
+        closable={false}
+        maskClosable={false}
+        footer={[
+          <Button
+            key="immediate"
+            danger
+            onClick={() => {
+              handleChooseStopStrategy("immediate")
+            }}>
+            直接停止
+          </Button>,
+          <Button
+            key="after-phone"
+            onClick={() => {
+              handleChooseStopStrategy("after_phone")
+            }}>
+            手机号结束后停止
+          </Button>,
+          <Button
+            key="finish"
+            type="primary"
+            onClick={() => {
+              handleChooseStopStrategy("finish_current_if_phone_success")
+            }}>
+            成功则完成回填
+          </Button>
+        ]}>
+        <div>
+          <p>
+            当前手机号已经提交，正在等待验证码。直接停止会把当前手机号后续处理交给你人工负责。
+          </p>
+          <p>
+            推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成 CPA 回填后停止。
+          </p>
+        </div>
+      </Modal>
+      <AccountWorkspace
       {...accountPage}
       disabled={disabled}
       stepCount={REGISTER_STEP_COUNT}
@@ -1782,6 +1908,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           </Space>
         </div>
       }
-    />
+      />
+    </>
   )
 }

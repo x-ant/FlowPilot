@@ -19,6 +19,10 @@ export type HeroSmsPhoneVerificationOptions = {
   fixedPrice?: string
   /** 将 HeroSMS 执行进度写入侧边栏执行日志。 */
   onLog?: (level: "info" | "warn" | "debug", message: string) => void
+  /** 通知侧边栏手机号已提交/等待验证码已结束，用于决定停止策略。 */
+  onPhoneVerificationPhase?: (
+    phase: "phone_submitted" | "phone_wait_finished"
+  ) => void
 }
 
 export type HeroSmsActivation = {
