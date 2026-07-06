@@ -2,6 +2,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   Dropdown,
   Empty,
   Form,
@@ -40,6 +41,7 @@ type AccountWorkspaceProps = {
   disabled: boolean
   stepCount?: number
   accountToolbarActions?: ReactNode
+  extraContent?: ReactNode
   debugTitleExtra: ReactNode
   debugContent: ReactNode
   onCpaUrlChange: (cpaUrl: string) => void
@@ -71,6 +73,7 @@ export function AccountWorkspace({
   disabled,
   stepCount = STEP_COUNT,
   accountToolbarActions,
+  extraContent,
   debugTitleExtra,
   debugContent,
   onCpaUrlChange,
@@ -110,83 +113,6 @@ export function AccountWorkspace({
 
   return (
     <>
-      <Card className="panel-card" title="CPA 地址">
-        <Form
-          form={loginForm}
-          layout="vertical"
-          requiredMark={false}
-          onValuesChange={(_, values) => {
-            onCpaUrlChange(String(values.cpaUrl || ""))
-            onCpaManagementKeyChange(String(values.cpaManagementKey || ""))
-          }}>
-          <Form.Item
-            label="CPA 地址"
-            name="cpaUrl"
-            rules={[{ required: true, message: "请输入 CPA 地址" }]}>
-            <Input placeholder="https://..." allowClear disabled={disabled} />
-          </Form.Item>
-          <Form.Item
-            label="CPA 管理密钥"
-            name="cpaManagementKey"
-            rules={[{ required: true, message: "请输入 CPA 管理密钥" }]}>
-            <Input.Password
-              placeholder="用于 CPA 管理接口"
-              allowClear
-              disabled={disabled}
-            />
-          </Form.Item>
-        </Form>
-      </Card>
-
-      <Card
-        className="panel-card"
-        title="账号管理"
-        extra={
-          <Space size={8}>
-            <Tag color="success">已完成 {completedCount}</Tag>
-            <Tag color="processing">执行中 {runningCount}</Tag>
-            <Tag color="error">失败 {failedCount}</Tag>
-          </Space>
-        }>
-        <Form
-          form={accountForm}
-          layout="vertical"
-          requiredMark={false}
-          onFinish={onSubmitAccount}>
-          <Form.Item
-            label="邮箱"
-            name="email"
-            rules={[
-              { required: true, message: "请输入邮箱" },
-              { type: "email", message: "邮箱格式不正确" }
-            ]}>
-            <Input
-              placeholder="name@example.com"
-              allowClear
-              disabled={disabled}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label="密码"
-            name="password"
-            rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password placeholder="请输入密码" disabled={disabled} />
-          </Form.Item>
-
-          <Space size={8} wrap>
-            <Button type="primary" htmlType="submit" disabled={disabled}>
-              {editingEmail ? "更新账号" : "添加账号"}
-            </Button>
-            <Button
-              onClick={handleCancelEdit}
-              disabled={disabled || !editingEmail}>
-              取消编辑
-            </Button>
-          </Space>
-        </Form>
-      </Card>
-
       <Card className="panel-card" title="账号列表">
         {accounts.length > 0 ? (
           <div className="account-toolbar">
@@ -361,9 +287,121 @@ export function AccountWorkspace({
         )}
       </Card>
 
-      <Card className="panel-card" title="调试控制台" extra={debugTitleExtra}>
-        {debugContent}
-      </Card>
+      {extraContent}
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "cpa",
+            label: "CPA 地址",
+            children: (
+              <Form
+                form={loginForm}
+                layout="vertical"
+                requiredMark={false}
+                onValuesChange={(_, values) => {
+                  onCpaUrlChange(String(values.cpaUrl || ""))
+                  onCpaManagementKeyChange(
+                    String(values.cpaManagementKey || "")
+                  )
+                }}>
+                <Form.Item
+                  label="CPA 地址"
+                  name="cpaUrl"
+                  rules={[{ required: true, message: "请输入 CPA 地址" }]}>
+                  <Input
+                    placeholder="https://..."
+                    allowClear
+                    disabled={disabled}
+                  />
+                </Form.Item>
+                <Form.Item
+                  label="CPA 管理密钥"
+                  name="cpaManagementKey"
+                  rules={[{ required: true, message: "请输入 CPA 管理密钥" }]}>
+                  <Input.Password
+                    placeholder="用于 CPA 管理接口"
+                    allowClear
+                    disabled={disabled}
+                  />
+                </Form.Item>
+              </Form>
+            )
+          }
+        ]}
+      />
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "account",
+            label: "账号管理",
+            extra: (
+              <Space size={8}>
+                <Tag color="success">已完成 {completedCount}</Tag>
+                <Tag color="processing">执行中 {runningCount}</Tag>
+                <Tag color="error">失败 {failedCount}</Tag>
+              </Space>
+            ),
+            children: (
+              <Form
+                form={accountForm}
+                layout="vertical"
+                requiredMark={false}
+                onFinish={onSubmitAccount}>
+                <Form.Item
+                  label="邮箱"
+                  name="email"
+                  rules={[
+                    { required: true, message: "请输入邮箱" },
+                    { type: "email", message: "邮箱格式不正确" }
+                  ]}>
+                  <Input
+                    placeholder="name@example.com"
+                    allowClear
+                    disabled={disabled}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  label="密码"
+                  name="password"
+                  rules={[{ required: true, message: "请输入密码" }]}>
+                  <Input.Password
+                    placeholder="请输入密码"
+                    disabled={disabled}
+                  />
+                </Form.Item>
+
+                <Space size={8} wrap>
+                  <Button type="primary" htmlType="submit" disabled={disabled}>
+                    {editingEmail ? "更新账号" : "添加账号"}
+                  </Button>
+                  <Button
+                    onClick={handleCancelEdit}
+                    disabled={disabled || !editingEmail}>
+                    取消编辑
+                  </Button>
+                </Space>
+              </Form>
+            )
+          }
+        ]}
+      />
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "debug",
+            label: "调试控制台",
+            extra: debugTitleExtra,
+            children: debugContent
+          }
+        ]}
+      />
     </>
   )
 }

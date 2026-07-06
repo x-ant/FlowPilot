@@ -1,4 +1,4 @@
-import { Button, Checkbox, Input, Modal, Select, Space, Tag } from "antd"
+import { Button, Checkbox, Collapse, Input, Modal, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -1616,7 +1616,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         title="当前正在等待手机号验证码"
         open={isStopStrategyModalOpen}
         closable={false}
-        maskClosable={false}
+        mask={{ closable: false }}
         footer={[
           <Button
             key="immediate"
@@ -1685,6 +1685,130 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           </Button>
         )
       }
+      extraContent={
+        <Collapse
+          className="panel-card"
+          items={[
+            {
+              key: "hero-sms",
+              label: "接码配置",
+              children: (
+                <div className="debug-grid debug-grid--two">
+                  <div className="debug-field">
+                    <span className="debug-label">国家选项</span>
+                    <Select
+                      value={
+                        heroSmsCountryOptions.length
+                          ? heroSmsSettings.countryId || undefined
+                          : undefined
+                      }
+                      placeholder="填写 API 后加载"
+                      showSearch
+                      filterOption={(input, option) => {
+                        const keyword = input.trim().toLowerCase()
+                        const searchText = String(
+                          option?.searchText || option?.label || option?.value || ""
+                        ).toLowerCase()
+                        return searchText.includes(keyword)
+                      }}
+                      loading={isHeroSmsCountriesLoading}
+                      options={heroSmsCountryOptions}
+                      onChange={(value) => {
+                        patchHeroSmsSettings({
+                          countryId: value,
+                          operator: "any"
+                        })
+                      }}
+                      disabled={
+                        isDebugRunning ||
+                        (!heroSmsSettings.mockEnabled &&
+                          !heroSmsSettings.apiKey.trim()) ||
+                        heroSmsCountryOptions.length === 0
+                      }
+                    />
+                  </div>
+                  <div className="debug-field">
+                    <span className="debug-label">运营商选项</span>
+                    <Select
+                      value={
+                        heroSmsOperatorOptions.length
+                          ? heroSmsSettings.operator || undefined
+                          : undefined
+                      }
+                      placeholder="选择国家后加载"
+                      showSearch
+                      loading={isHeroSmsOperatorsLoading}
+                      options={heroSmsOperatorOptions}
+                      onChange={(value) => {
+                        patchHeroSmsSettings({ operator: value })
+                      }}
+                      disabled={
+                        isDebugRunning ||
+                        (!heroSmsSettings.mockEnabled &&
+                          !heroSmsSettings.apiKey.trim()) ||
+                        heroSmsSettings.countryId === "" ||
+                        heroSmsOperatorOptions.length === 0
+                      }
+                    />
+                  </div>
+                  <div className="debug-field">
+                    <span className="debug-label">HeroSMS Mock</span>
+                    <Checkbox
+                      checked={heroSmsSettings.mockEnabled}
+                      onChange={(event) => {
+                        patchHeroSmsSettings({
+                          mockEnabled: event.target.checked,
+                          operator: "any"
+                        })
+                      }}
+                      disabled={isDebugRunning}>
+                      不请求 HeroSMS
+                    </Checkbox>
+                  </div>
+                  <div className="debug-field">
+                    <span className="debug-label">接码 API</span>
+                    <Input.Password
+                      value={heroSmsSettings.apiKey}
+                      placeholder="HeroSMS API key"
+                      allowClear
+                      onChange={(event) => {
+                        patchHeroSmsSettings({ apiKey: event.target.value })
+                      }}
+                      disabled={isDebugRunning || heroSmsSettings.mockEnabled}
+                    />
+                  </div>
+                  <div className="debug-field">
+                    <span className="debug-label">价格上限</span>
+                    <Input
+                      value={heroSmsSettings.maxPrice}
+                      placeholder="必填，例如 0.12"
+                      allowClear
+                      onChange={(event) => {
+                        patchHeroSmsSettings({ maxPrice: event.target.value })
+                      }}
+                      disabled={isDebugRunning}
+                    />
+                  </div>
+                  <div className="debug-field">
+                    <span className="debug-label">固定价格档位</span>
+                    <Input
+                      value={heroSmsSettings.fixedPrice}
+                      placeholder="可选，例如 0.08"
+                      allowClear
+                      onChange={(event) => {
+                        patchHeroSmsSettings({
+                          fixedPrice: event.target.value
+                        })
+                      }}
+                      disabled={isDebugRunning}
+                    />
+                  </div>
+                </div>
+              )
+            }
+          ]}
+        />
+      }
       debugTitleExtra={
         <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
       }
@@ -1722,119 +1846,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
             onClear={handleClearDebugState}
           />
-
-          <div className="debug-grid debug-grid--two">
-            <div className="debug-field">
-              <span className="debug-label">国家选项</span>
-              <Select
-                value={
-                  heroSmsCountryOptions.length
-                    ? heroSmsSettings.countryId || undefined
-                    : undefined
-                }
-                placeholder="填写 API 后加载"
-                showSearch={{
-                  optionFilterProp: "label",
-                  filterOption: (input, option) => {
-                    const keyword = input.trim().toLowerCase()
-                    const searchText = String(
-                      option?.searchText || option?.label || option?.value || ""
-                    ).toLowerCase()
-                    return searchText.includes(keyword)
-                  }
-                }}
-                loading={isHeroSmsCountriesLoading}
-                options={heroSmsCountryOptions}
-                onChange={(value) => {
-                  patchHeroSmsSettings({ countryId: value, operator: "any" })
-                }}
-                disabled={
-                  isDebugRunning ||
-                  (!heroSmsSettings.mockEnabled &&
-                    !heroSmsSettings.apiKey.trim()) ||
-                  heroSmsCountryOptions.length === 0
-                }
-              />
-            </div>
-            <div className="debug-field">
-              <span className="debug-label">运营商选项</span>
-              <Select
-                value={
-                  heroSmsOperatorOptions.length
-                    ? heroSmsSettings.operator || undefined
-                    : undefined
-                }
-                placeholder="选择国家后加载"
-                showSearch={{
-                  optionFilterProp: "label"
-                }}
-                loading={isHeroSmsOperatorsLoading}
-                options={heroSmsOperatorOptions}
-                onChange={(value) => {
-                  patchHeroSmsSettings({ operator: value })
-                }}
-                disabled={
-                  isDebugRunning ||
-                  (!heroSmsSettings.mockEnabled &&
-                    !heroSmsSettings.apiKey.trim()) ||
-                  heroSmsSettings.countryId === "" ||
-                  heroSmsOperatorOptions.length === 0
-                }
-              />
-            </div>
-            <div className="debug-field">
-              <span className="debug-label">HeroSMS Mock</span>
-              <Checkbox
-                checked={heroSmsSettings.mockEnabled}
-                onChange={(event) => {
-                  patchHeroSmsSettings({
-                    mockEnabled: event.target.checked,
-                    operator: "any"
-                  })
-                }}
-                disabled={isDebugRunning}>
-                不请求 HeroSMS
-              </Checkbox>
-            </div>
-            <div className="debug-field">
-              <span className="debug-label">接码 API</span>
-              <Input.Password
-                value={heroSmsSettings.apiKey}
-                placeholder="HeroSMS API key"
-                allowClear
-                onChange={(event) => {
-                  patchHeroSmsSettings({ apiKey: event.target.value })
-                }}
-                disabled={isDebugRunning || heroSmsSettings.mockEnabled}
-              />
-            </div>
-            <div className="debug-field">
-              <span className="debug-label">价格上限</span>
-              <Input
-                value={heroSmsSettings.maxPrice}
-                placeholder="必填，例如 0.12"
-                allowClear
-                onChange={(event) => {
-                  patchHeroSmsSettings({ maxPrice: event.target.value })
-                }}
-                disabled={isDebugRunning}
-              />
-            </div>
-            <div className="debug-field">
-              <span className="debug-label">固定价格档位</span>
-              <Input
-                value={heroSmsSettings.fixedPrice}
-                placeholder="可选，例如 0.08"
-                allowClear
-                onChange={(event) => {
-                  patchHeroSmsSettings({
-                    fixedPrice: event.target.value
-                  })
-                }}
-                disabled={isDebugRunning}
-              />
-            </div>
-          </div>
 
           <Space size={8} wrap>
             <Button
