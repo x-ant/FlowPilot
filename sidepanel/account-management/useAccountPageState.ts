@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 
-import type { UiLogger } from "../shared/logging"
+import type { UiLogger } from "../../shared/logging"
 import {
   createManagedAccount,
   EMPTY_PAGE_STATE,
@@ -15,7 +15,7 @@ import {
   type AccountPageStorageKeys,
   type ManagedAccount,
   type ManagedAccountProgress
-} from "./shared"
+} from "../shared"
 
 type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys
@@ -331,3 +331,5 @@ export const useAccountPageState = ({
     }
   }
 }
+
+export type AccountPageState = ReturnType<typeof useAccountPageState>

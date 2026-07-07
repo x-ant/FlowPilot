@@ -6,7 +6,7 @@ import { abortableSleep } from "./utils/abort";
 import { clearOpenTabSiteStorageForUrls, clearSessionCookiesForUrls, clearSiteStorageInTab } from "./utils/browser-session-cleanup";
 import { runPageActionInTab } from "./utils/page-action-runner";
 import type { RunContext } from "./utils/run-context";
-import { findOrOpenTab, waitForTabLoaded } from "./utils/tab-utils";
+import { findOrOpenTab, waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils";
 
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
@@ -81,6 +81,18 @@ const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
       /^https?:$/.test(url.protocol) &&
       ["localhost", "127.0.0.1"].includes(url.hostname) &&
       url.pathname === "/auth/callback"
+    )
+  } catch {
+    return false
+  }
+}
+
+const isChatGptPageUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    return (
+      url.protocol === "https:" &&
+      ["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)
     )
   } catch {
     return false
@@ -1338,18 +1350,37 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    const readyUrl = await waitForTabMatchingUrl(tabId, isChatGptPageUrl, {
+      timeoutMs: 15000,
+      intervalMs: 300,
+      signal: getAbortSignal()
+    })
+    if (!readyUrl) {
+      const currentTab = await chrome.tabs.get(tabId)
+      return {
+        ok: false,
+        message: "未等到准备就绪页跳转到 ChatGPT 页面",
+        targetTab: {
+          id: tabId,
+          url: currentTab.url
+        }
+      }
+    }
+
     const submitResult = await runPageActionInTab(tabId, {
       button: {
         texts: OPENAI_READY_CONTINUE_BUTTON_TEXTS
       },
-      timeoutMs: 15000,
+      timeoutMs: 30000,
       successMessage: "已点击准备就绪页继续按钮",
       failureMessage: "未找到准备就绪页继续按钮"
     })
 
     return {
-      ok: submitResult.ok,
-      message: submitResult.message,
+      ok: true,
+      message: submitResult.ok
+        ? submitResult.message
+        : "超时认为 准备就绪页未出现继续按钮，已跳过",
       targetTab: submitResult.tab
     }
   }

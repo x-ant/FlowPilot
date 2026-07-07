@@ -649,26 +649,30 @@ const normalizeHeroSmsOperatorValue = (value: unknown) => {
  *
  * 只展示 visible=1 且 retry=1 的国家；id 按 getCountries Schema 允许 0..999。
  *
- * @param payload HeroSMS getCountries 响应数组。
+ * @param payload HeroSMS getCountries 响应；真实接口返回按国家 ID 分组的对象，mock 可返回数组。
  * @return 可搜索、可展示的国家选项。
  */
-const parseHeroSmsCountryOptions = (payload: HeroSmsCountryResponseItem[]) => {
+const parseHeroSmsCountryOptions = (payload: unknown) => {
+  const entries = Array.isArray(payload)
+    ? payload
+    : Object.values((payload || {}) as Record<string, unknown>)
   const seen = new Set<string>()
 
-  return payload
+  return entries
     .map((entry) => {
-      const id = Math.floor(Number(entry.id))
+      const country = entry as Partial<HeroSmsCountryResponseItem>
+      const id = Math.floor(Number(country.id))
       if (!Number.isFinite(id) || id < 0 || id > 999 || seen.has(String(id))) {
         return null
       }
 
-      if (entry.visible !== 1 || entry.retry !== 1) {
+      if (country.visible !== 1 || country.retry !== 1) {
         return null
       }
 
-      const english = String(entry.eng || "").trim()
-      const chinese = String(entry.chn || "").trim()
-      const russian = String(entry.rus || "").trim()
+      const english = String(country.eng || "").trim()
+      const chinese = String(country.chn || "").trim()
+      const russian = String(country.rus || "").trim()
       const label =
         chinese && english && chinese.toLowerCase() !== english.toLowerCase()
           ? `${chinese} (${english})`
@@ -940,7 +944,7 @@ export const fetchHeroSmsCountries = async (
   apiKey = "",
   mockEnabled = false
 ) => {
-  const payload = await fetchHeroSmsPublicPayload<HeroSmsCountryResponseItem[]>(
+  const payload = await fetchHeroSmsPublicPayload<unknown>(
     {
       action: "getCountries"
     },

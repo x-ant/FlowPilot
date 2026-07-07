@@ -1,4 +1,4 @@
-import { Button, Checkbox, Collapse, Input, Modal, Select, Space, Tag } from "antd"
+import { Button, Collapse, Modal, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -13,14 +13,15 @@ import {
   submitRegisterOAuthCallbackToCpa,
   submitRegisterProfile
 } from "../background/codex-register"
+import { type HeroSmsPhoneVerificationOptions } from "../background/register-phone-verification"
 import {
-  fetchHeroSmsCountries,
-  fetchHeroSmsOperators,
-  type HeroSmsCountryOption,
-  type HeroSmsPhoneVerificationOptions
-} from "../background/register-phone-verification"
-import { AccountWorkspace } from "./AccountWorkspace"
+  AccountFormPanel,
+  AccountListPanel,
+  useAccountPageState
+} from "./account-management"
+import { CpaConfigPanel } from "./cpa-config"
 import { DebugTabControl } from "./DebugTabControl"
+import { HeroSmsConfigPanel, useHeroSmsConfig } from "./hero-sms-config"
 import {
   normalizeEmail,
   REGISTER_STORAGE_KEYS,
@@ -31,115 +32,9 @@ import {
   type ManagedAccountStatus,
   type PageProps
 } from "./shared"
-import { useAccountPageState } from "./useAccountPageState"
 
 const REGISTER_STEP_COUNT = 7
-const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
-const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
-  "codex-register:hero-sms-countries-cache"
-const REGISTER_HERO_SMS_OPERATORS_CACHE_KEY =
-  "codex-register:hero-sms-operators-cache"
-const HERO_SMS_COUNTRIES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
-const HERO_SMS_OPERATORS_CACHE_TTL_MS = 60 * 60 * 1000
 const REGISTER_PHONE_MAX_OAUTH_REFRESHES = 2
-
-const HERO_SMS_DEFAULT_OPERATOR_OPTION = {
-  label: "不限（any）",
-  value: "any"
-}
-
-type HeroSmsSettings = {
-  apiKey: string
-  countryId: string
-  operator: string
-  mockEnabled: boolean
-  maxPrice: string
-  fixedPrice: string
-}
-
-type HeroSmsCountriesCache = {
-  updatedAt: number
-  options: HeroSmsCountryOption[]
-}
-
-type HeroSmsOperatorsCache = {
-  updatedAtByCountry: Record<string, number>
-  operatorsByCountry: Record<string, string[]>
-}
-
-const DEFAULT_HERO_SMS_SETTINGS: HeroSmsSettings = {
-  apiKey: "",
-  countryId: "",
-  operator: "any",
-  mockEnabled: false,
-  maxPrice: "",
-  fixedPrice: ""
-}
-
-const readLocalStorage = (keys: string[]) => {
-  return new Promise<Record<string, unknown>>((resolve) => {
-    chrome.storage.local.get(keys, resolve)
-  })
-}
-
-const writeLocalStorage = (items: Record<string, unknown>) => {
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.set(items, () => {
-      resolve()
-    })
-  })
-}
-
-const isFreshCache = (updatedAt: unknown, ttlMs: number) => {
-  const timestamp = Number(updatedAt)
-  return Number.isFinite(timestamp) && Date.now() - timestamp < ttlMs
-}
-
-const normalizeHeroSmsCountryIdValue = (value: unknown) => {
-  if (value === null || value === undefined || String(value).trim() === "") {
-    return ""
-  }
-
-  const parsed = Math.floor(Number(value))
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 999
-    ? String(parsed)
-    : ""
-}
-
-const buildHeroSmsOperatorOptions = (
-  operators: string[] = [],
-  selectedOperator = "any"
-) => {
-  const normalizedSelected = String(selectedOperator || "any")
-    .trim()
-    .toLowerCase()
-  const options = [HERO_SMS_DEFAULT_OPERATOR_OPTION]
-  const seen = new Set(["any"])
-
-  operators.forEach((operator) => {
-    const normalized = String(operator || "")
-      .trim()
-      .toLowerCase()
-    if (!normalized || seen.has(normalized)) {
-      return
-    }
-
-    seen.add(normalized)
-    options.push({
-      label: normalized,
-      value: normalized
-    })
-  })
-
-  if (normalizedSelected && !seen.has(normalizedSelected)) {
-    options.push({
-      label: normalizedSelected,
-      value: normalizedSelected
-    })
-  }
-
-  return options
-}
 
 type RegisterStepResult = {
   ok: boolean
@@ -236,7 +131,8 @@ const runManagedRegisterFlow = async (
         message: profileResult.message || "步骤 4 执行失败"
       }
     }
-    const continueResult = await runner.clickRegisterReadyContinue(registerTabId)
+    const continueResult =
+      await runner.clickRegisterReadyContinue(registerTabId)
     if (!continueResult.ok) {
       return {
         ok: false,
@@ -347,7 +243,10 @@ const runManagedRegisterFlow = async (
       cpaUrl,
       cpaManagementKey
     )
-    if (!nextLoginResult.ok || typeof nextLoginResult.targetTab?.id !== "number") {
+    if (
+      !nextLoginResult.ok ||
+      typeof nextLoginResult.targetTab?.id !== "number"
+    ) {
       return {
         ok: false,
         message: `${phoneResult.message}；${nextRefreshResult.message}；${nextLoginResult.message}`
@@ -363,7 +262,8 @@ const runManagedRegisterFlow = async (
       nextLoginResult.cpaOAuthState || nextRefreshResult.cpaOAuthState || ""
   }
 
-  const callbackUrl = phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
+  const callbackUrl =
+    phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
   if (!callbackUrl) {
     onStage(6, phoneResult.message)
     return {
@@ -439,19 +339,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugOAuthStartedAt, setDebugOAuthStartedAt] = useState(0)
   const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
-  const [heroSmsSettings, setHeroSmsSettings] = useState<HeroSmsSettings>(
-    DEFAULT_HERO_SMS_SETTINGS
-  )
-  const [heroSmsCountryOptions, setHeroSmsCountryOptions] = useState<
-    HeroSmsCountryOption[]
-  >([])
-  const [heroSmsOperatorOptions, setHeroSmsOperatorOptions] = useState<
-    (typeof HERO_SMS_DEFAULT_OPERATOR_OPTION)[]
-  >([])
-  const [isHeroSmsCountriesLoading, setIsHeroSmsCountriesLoading] =
-    useState(false)
-  const [isHeroSmsOperatorsLoading, setIsHeroSmsOperatorsLoading] =
-    useState(false)
+  const heroSms = useHeroSmsConfig({ log, setStatus })
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [isBatchStopping, setIsBatchStopping] = useState(false)
   const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
@@ -492,274 +380,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onBusyChange?.(false)
     }
   }, [isBatchRunning, isDebugRunning, onBusyChange])
-
-  useEffect(() => {
-    void chrome.storage.local.get([REGISTER_HERO_SMS_STORAGE_KEY], (result) => {
-      const stored = result?.[REGISTER_HERO_SMS_STORAGE_KEY] as
-        | Partial<HeroSmsSettings>
-        | undefined
-      setHeroSmsSettings({
-        apiKey: String(stored?.apiKey || ""),
-        countryId: normalizeHeroSmsCountryIdValue(stored?.countryId),
-        operator: String(
-          stored?.operator || DEFAULT_HERO_SMS_SETTINGS.operator
-        ),
-        mockEnabled: Boolean(stored?.mockEnabled),
-        maxPrice: String(stored?.maxPrice || ""),
-        fixedPrice: String(stored?.fixedPrice || "")
-      })
-    })
-  }, [])
-
-  const patchHeroSmsSettings = (patch: Partial<HeroSmsSettings>) => {
-    setHeroSmsSettings((current) => {
-      const next = {
-        ...current,
-        ...patch
-      }
-      void chrome.storage.local.set({
-        [REGISTER_HERO_SMS_STORAGE_KEY]: next
-      })
-      return next
-    })
-  }
-
-  /**
-   * 加载 HeroSMS 国家列表。
-   *
-   * 国家列表变化很低，先用 7 天缓存；缓存过期才请求 getCountries。
-   */
-  const loadHeroSmsCountryOptions = async () => {
-    if (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim()) {
-      setHeroSmsCountryOptions([])
-      return
-    }
-
-    setIsHeroSmsCountriesLoading(true)
-    try {
-      if (heroSmsSettings.mockEnabled) {
-        const options = await fetchHeroSmsCountries("", true)
-        setHeroSmsCountryOptions(options)
-        return
-      }
-
-      const cached = (
-        await readLocalStorage([REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY])
-      )[REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY] as
-        | HeroSmsCountriesCache
-        | undefined
-
-      if (
-        cached?.options?.length &&
-        isFreshCache(cached.updatedAt, HERO_SMS_COUNTRIES_CACHE_TTL_MS)
-      ) {
-        setHeroSmsCountryOptions(cached.options)
-        return
-      }
-
-      const options = await fetchHeroSmsCountries(
-        heroSmsSettings.apiKey,
-        heroSmsSettings.mockEnabled
-      )
-      setHeroSmsCountryOptions(options)
-      await writeLocalStorage({
-        [REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY]: {
-          updatedAt: Date.now(),
-          options
-        } satisfies HeroSmsCountriesCache
-      })
-    } catch (error) {
-      setHeroSmsCountryOptions([])
-      log.warn(
-        `[注册调试] HeroSMS 国家列表加载失败：${
-          error instanceof Error ? error.message : "未知错误"
-        }`
-      )
-    } finally {
-      setIsHeroSmsCountriesLoading(false)
-    }
-  }
-
-  /**
-   * 加载当前国家可选运营商。
-   *
-   * HeroSMS getOperators 返回按国家分组的运营商；这里按国家做 1 小时缓存。
-   *
-   * @param countryId 当前选择的 HeroSMS 国家 ID。
-   */
-  const loadHeroSmsOperatorOptions = async (countryId: string) => {
-    const normalizedCountryId = normalizeHeroSmsCountryIdValue(countryId)
-    if (
-      normalizedCountryId === "" ||
-      (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim())
-    ) {
-      setHeroSmsOperatorOptions([])
-      return
-    }
-
-    setIsHeroSmsOperatorsLoading(true)
-    try {
-      if (heroSmsSettings.mockEnabled) {
-        const operatorsByCountry = await fetchHeroSmsOperators(
-          normalizedCountryId,
-          "",
-          true
-        )
-        const operators = operatorsByCountry[normalizedCountryId] || []
-        setHeroSmsOperatorOptions(
-          buildHeroSmsOperatorOptions(operators, heroSmsSettings.operator)
-        )
-        return
-      }
-
-      const cached = (
-        await readLocalStorage([REGISTER_HERO_SMS_OPERATORS_CACHE_KEY])
-      )[REGISTER_HERO_SMS_OPERATORS_CACHE_KEY] as
-        | HeroSmsOperatorsCache
-        | undefined
-      const cachedOperators =
-        cached?.operatorsByCountry?.[normalizedCountryId] || []
-      const cachedAt = cached?.updatedAtByCountry?.[normalizedCountryId]
-
-      if (isFreshCache(cachedAt, HERO_SMS_OPERATORS_CACHE_TTL_MS)) {
-        setHeroSmsOperatorOptions(
-          buildHeroSmsOperatorOptions(cachedOperators, heroSmsSettings.operator)
-        )
-        return
-      }
-
-      const operatorsByCountry = await fetchHeroSmsOperators(
-        normalizedCountryId,
-        heroSmsSettings.apiKey,
-        heroSmsSettings.mockEnabled
-      )
-      const now = Date.now()
-      const updatedAtByCountry = {
-        ...(cached?.updatedAtByCountry || {})
-      }
-      Object.keys(operatorsByCountry).forEach((itemCountryId) => {
-        updatedAtByCountry[itemCountryId] = now
-      })
-      updatedAtByCountry[normalizedCountryId] = now
-      const nextCache: HeroSmsOperatorsCache = {
-        updatedAtByCountry,
-        operatorsByCountry: {
-          ...(cached?.operatorsByCountry || {}),
-          ...operatorsByCountry,
-          [normalizedCountryId]: operatorsByCountry[normalizedCountryId] || []
-        }
-      }
-      const operators = nextCache.operatorsByCountry[normalizedCountryId] || []
-      setHeroSmsOperatorOptions(
-        buildHeroSmsOperatorOptions(operators, heroSmsSettings.operator)
-      )
-      await writeLocalStorage({
-        [REGISTER_HERO_SMS_OPERATORS_CACHE_KEY]: nextCache
-      })
-    } catch (error) {
-      setHeroSmsOperatorOptions([])
-      log.warn(
-        `[注册调试] HeroSMS 运营商列表加载失败：${
-          error instanceof Error ? error.message : "未知错误"
-        }`
-      )
-    } finally {
-      setIsHeroSmsOperatorsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    void loadHeroSmsCountryOptions()
-  }, [])
-
-  useEffect(() => {
-    if (!heroSmsSettings.mockEnabled && !heroSmsSettings.apiKey.trim()) {
-      setHeroSmsCountryOptions([])
-      setHeroSmsOperatorOptions([])
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      void loadHeroSmsCountryOptions()
-      void loadHeroSmsOperatorOptions(heroSmsSettings.countryId)
-    }, 600)
-
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [heroSmsSettings.apiKey, heroSmsSettings.mockEnabled])
-
-  useEffect(() => {
-    void loadHeroSmsOperatorOptions(heroSmsSettings.countryId)
-  }, [heroSmsSettings.countryId, heroSmsSettings.operator])
-
-  /**
-   * 组装 Step 6 使用的 HeroSMS 参数，并在发起扣费请求前做第一层价格校验。
-   *
-   * @return 参数合法时返回 HeroSMS 配置；缺少 API Key、价格上限或固定档位非法时返回 null。
-   */
-  const buildHeroSmsOptions = (
-    logPrefix = "注册调试",
-    onPhoneVerificationPhase?: HeroSmsPhoneVerificationOptions["onPhoneVerificationPhase"]
-  ): HeroSmsPhoneVerificationOptions | null => {
-    const apiKey = String(heroSmsSettings.apiKey || "").trim()
-    if (!heroSmsSettings.mockEnabled && !apiKey) {
-      setStatus("请先填写 HeroSMS 接码 API")
-      log.warn(`[${logPrefix}] Step 6 缺少 HeroSMS 接码 API`)
-      return null
-    }
-
-    const maxPrice = String(heroSmsSettings.maxPrice || "").trim()
-    if (
-      !maxPrice ||
-      !Number.isFinite(Number(maxPrice)) ||
-      Number(maxPrice) <= 0
-    ) {
-      setStatus("请先填写有效的 HeroSMS 价格上限")
-      log.warn(`[${logPrefix}] Step 6 缺少有效 HeroSMS 价格上限`)
-      return null
-    }
-
-    const country = heroSmsCountryOptions.find((item) => {
-      return item.value === heroSmsSettings.countryId
-    })
-    const countryId = normalizeHeroSmsCountryIdValue(country?.value)
-    if (countryId === "") {
-      setStatus("请先选择有效的 HeroSMS 国家")
-      log.warn(`[${logPrefix}] Step 6 HeroSMS 国家选项无效`)
-      return null
-    }
-    const fixedPrice = String(heroSmsSettings.fixedPrice || "").trim()
-
-    if (
-      fixedPrice &&
-      (!Number.isFinite(Number(fixedPrice)) || Number(fixedPrice) <= 0)
-    ) {
-      setStatus("请填写有效的 HeroSMS 固定价格档位")
-      log.warn(`[${logPrefix}] Step 6 HeroSMS 固定价格档位无效`)
-      return null
-    }
-
-    if (fixedPrice && Number(fixedPrice) > Number(maxPrice)) {
-      setStatus("HeroSMS 固定价格档位不能高于价格上限")
-      log.warn(`[${logPrefix}] Step 6 HeroSMS 固定价格档位高于价格上限`)
-      return null
-    }
-
-    return {
-      apiKey: heroSmsSettings.mockEnabled ? apiKey || "mock-api-key" : apiKey,
-      countryId: Number(countryId),
-      countryLabel: country?.countryLabel || `Country #${countryId}`,
-      operator: String(heroSmsSettings.operator || "any").trim() || "any",
-      mockEnabled: heroSmsSettings.mockEnabled,
-      maxPrice,
-      fixedPrice,
-      onLog: (level, message) => {
-        log[level](`[${logPrefix}] Step 6 ${message}`)
-      },
-      onPhoneVerificationPhase
-    }
-  }
 
   const handleOpenRegisterEntry = async () => {
     if (isDebugRunning) {
@@ -1075,7 +695,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleCompleteRegisterPhoneVerification = async () => {
-    const heroSmsOptions = buildHeroSmsOptions()
+    const heroSmsOptions = heroSms.buildOptions()
     if (!heroSmsOptions) {
       return
     }
@@ -1220,14 +840,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           normalizedCpaManagementKey
         )
         const step5Message = `${refreshResult.message}；${loginResult.message}`
-        if (
-          !loginResult.ok ||
-          typeof loginResult.targetTab?.id !== "number"
-        ) {
+        if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
           setStatus("OAuth 登录失败")
-          log.warn(
-            `[注册调试][${selectedDebugAccount.email}] ${step5Message}`
-          )
+          log.warn(`[注册调试][${selectedDebugAccount.email}] ${step5Message}`)
           patchAccountState(selectedDebugAccount.email, {
             status: "failed",
             lastMessage: step5Message
@@ -1318,7 +933,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       setDebugProgress(REGISTER_STEP_COUNT)
       setStatus("已完成 CPA 回填")
-      log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 ${result.message}`)
+      log.info(
+        `[注册调试][${selectedDebugAccount.email}] Step 7 ${result.message}`
+      )
       patchAccountState(selectedDebugAccount.email, {
         progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
         status: "done",
@@ -1369,7 +986,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const heroSmsOptions = buildHeroSmsOptions("注册执行", (phase) => {
+    const heroSmsOptions = heroSms.buildOptions("注册执行", (phase) => {
       isWaitingForPhoneCodeRef.current = phase === "phone_submitted"
     })
     if (!heroSmsOptions) {
@@ -1491,12 +1108,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         const currentState = workingAccounts[index]
         updateCurrentAccount({
           progress: isManualPhoneStopRef.current ? 6 : currentState.progress,
-          status:
-            isManualPhoneStopRef.current ? "needs_review" : "failed",
-          lastMessage:
-            isManualPhoneStopRef.current
-              ? "已直接停止，当前手机号验证码由人工负责"
-              : runResult.message || "已停止当前流程"
+          status: isManualPhoneStopRef.current ? "needs_review" : "failed",
+          lastMessage: isManualPhoneStopRef.current
+            ? "已直接停止，当前手机号验证码由人工负责"
+            : runResult.message || "已停止当前流程"
         })
         setStatus("已停止当前流程")
         log.warn(
@@ -1603,11 +1218,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
   const disabled = isBatchRunning || isDebugRunning
   const hasBatchConfig = Boolean(
-    cpaUrl.trim() &&
-      cpaManagementKey.trim() &&
-      (heroSmsSettings.mockEnabled || heroSmsSettings.apiKey.trim()) &&
-      heroSmsSettings.maxPrice.trim() &&
-      heroSmsSettings.countryId
+    cpaUrl.trim() && cpaManagementKey.trim() && heroSms.hasRequiredConfig
   )
 
   return (
@@ -1647,278 +1258,167 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             当前手机号已经提交，正在等待验证码。直接停止会把当前手机号后续处理交给你人工负责。
           </p>
           <p>
-            推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成 CPA 回填后停止。
+            推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成
+            CPA 回填后停止。
           </p>
         </div>
       </Modal>
-      <AccountWorkspace
-      {...accountPage}
-      disabled={disabled}
-      stepCount={REGISTER_STEP_COUNT}
-      onCpaUrlChange={accountPage.handleCpaUrlChange}
-      onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
-      onSubmitAccount={accountPage.handleSubmitAccount}
-      onCancelEdit={accountPage.handleCancelEdit}
-      onEditAccount={accountPage.handleEditAccount}
-      onRemoveAccount={accountPage.handleRemoveAccount}
-      onToggleAccountSelected={accountPage.handleToggleAccountSelected}
-      onToggleAllAccountsSelected={accountPage.handleToggleAllAccountsSelected}
-      onMoveSelectedAccount={accountPage.handleMoveSelectedAccount}
-      onMarkSelectedAccountsDone={accountPage.handleMarkSelectedAccountsDone}
-      accountToolbarActions={
-        isBatchRunning ? (
-          <Button
-            danger
-            disabled={isBatchStopping}
-            loading={isBatchStopping}
-            onClick={handleStopBatch}>
-            {isBatchStopping ? "正在停止" : "停止当前流程"}
-          </Button>
-        ) : (
-          <Button
-            type="primary"
-            disabled={!hasBatchConfig || selectedCount === 0}
-            onClick={() => {
-              void handleStartBatch()
-            }}>
-            执行
-          </Button>
-        )
-      }
-      extraContent={
-        <Collapse
-          className="panel-card"
-          items={[
-            {
-              key: "hero-sms",
-              label: "接码配置",
-              children: (
-                <div className="debug-grid debug-grid--two">
-                  <div className="debug-field">
-                    <span className="debug-label">国家选项</span>
-                    <Select
-                      value={
-                        heroSmsCountryOptions.length
-                          ? heroSmsSettings.countryId || undefined
-                          : undefined
-                      }
-                      placeholder="填写 API 后加载"
-                      showSearch
-                      filterOption={(input, option) => {
-                        const keyword = input.trim().toLowerCase()
-                        const searchText = String(
-                          option?.searchText || option?.label || option?.value || ""
-                        ).toLowerCase()
-                        return searchText.includes(keyword)
-                      }}
-                      loading={isHeroSmsCountriesLoading}
-                      options={heroSmsCountryOptions}
-                      onChange={(value) => {
-                        patchHeroSmsSettings({
-                          countryId: value,
-                          operator: "any"
-                        })
-                      }}
-                      disabled={
-                        isDebugRunning ||
-                        (!heroSmsSettings.mockEnabled &&
-                          !heroSmsSettings.apiKey.trim()) ||
-                        heroSmsCountryOptions.length === 0
-                      }
-                    />
-                  </div>
-                  <div className="debug-field">
-                    <span className="debug-label">运营商选项</span>
-                    <Select
-                      value={
-                        heroSmsOperatorOptions.length
-                          ? heroSmsSettings.operator || undefined
-                          : undefined
-                      }
-                      placeholder="选择国家后加载"
-                      showSearch
-                      loading={isHeroSmsOperatorsLoading}
-                      options={heroSmsOperatorOptions}
-                      onChange={(value) => {
-                        patchHeroSmsSettings({ operator: value })
-                      }}
-                      disabled={
-                        isDebugRunning ||
-                        (!heroSmsSettings.mockEnabled &&
-                          !heroSmsSettings.apiKey.trim()) ||
-                        heroSmsSettings.countryId === "" ||
-                        heroSmsOperatorOptions.length === 0
-                      }
-                    />
-                  </div>
-                  <div className="debug-field">
-                    <span className="debug-label">HeroSMS Mock</span>
-                    <Checkbox
-                      checked={heroSmsSettings.mockEnabled}
-                      onChange={(event) => {
-                        patchHeroSmsSettings({
-                          mockEnabled: event.target.checked,
-                          operator: "any"
-                        })
-                      }}
-                      disabled={isDebugRunning}>
-                      不请求 HeroSMS
-                    </Checkbox>
-                  </div>
-                  <div className="debug-field">
-                    <span className="debug-label">接码 API</span>
-                    <Input.Password
-                      value={heroSmsSettings.apiKey}
-                      placeholder="HeroSMS API key"
-                      allowClear
-                      onChange={(event) => {
-                        patchHeroSmsSettings({ apiKey: event.target.value })
-                      }}
-                      disabled={isDebugRunning || heroSmsSettings.mockEnabled}
-                    />
-                  </div>
-                  <div className="debug-field">
-                    <span className="debug-label">价格上限</span>
-                    <Input
-                      value={heroSmsSettings.maxPrice}
-                      placeholder="必填，例如 0.12"
-                      allowClear
-                      onChange={(event) => {
-                        patchHeroSmsSettings({ maxPrice: event.target.value })
-                      }}
-                      disabled={isDebugRunning}
-                    />
-                  </div>
-                  <div className="debug-field">
-                    <span className="debug-label">固定价格档位</span>
-                    <Input
-                      value={heroSmsSettings.fixedPrice}
-                      placeholder="可选，例如 0.08"
-                      allowClear
-                      onChange={(event) => {
-                        patchHeroSmsSettings({
-                          fixedPrice: event.target.value
-                        })
-                      }}
-                      disabled={isDebugRunning}
-                    />
-                  </div>
-                </div>
-              )
-            }
-          ]}
-        />
-      }
-      debugTitleExtra={
-        <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
-      }
-      debugContent={
-        <div className="debug-panel">
-          <DebugTabControl
-            disabled={isDebugRunning}
-            label="注册 tab"
-            leadingContent={
-              <div className="debug-field">
-                <span className="debug-label">账号</span>
-                <Select
-                  value={debugEmail || undefined}
-                  placeholder="选择账号"
-                  options={accounts.map((account) => {
-                    return {
-                      label: account.email,
-                      value: account.email
-                    }
-                  })}
-                  onChange={(value) => {
-                    setDebugEmail(value)
-                    setDebugProgress(0)
-                    setDebugVerificationRequestedAt(0)
-                    setDebugOAuthStartedAt(0)
-                    setDebugCpaOAuthState("")
-                    setDebugCallbackUrl("")
-                  }}
-                  disabled={isDebugRunning || accounts.length === 0}
-                />
-              </div>
-            }
-            value={debugRegisterTabId}
-            onChange={setDebugRegisterTabId}
-            onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
-            onClear={handleClearDebugState}
-          />
-
-          <Space size={8} wrap>
+      <AccountListPanel
+        accountPage={accountPage}
+        disabled={disabled}
+        stepCount={REGISTER_STEP_COUNT}
+        toolbarActions={
+          isBatchRunning ? (
+            <Button
+              danger
+              disabled={isBatchStopping}
+              loading={isBatchStopping}
+              onClick={handleStopBatch}>
+              {isBatchStopping ? "正在停止" : "停止当前流程"}
+            </Button>
+          ) : (
             <Button
               type="primary"
+              disabled={!hasBatchConfig || selectedCount === 0}
               onClick={() => {
-                void handleOpenRegisterEntry()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning}>
-              1 打开 GPT 页面
+                void handleStartBatch()
+              }}>
+              执行
             </Button>
-            <Button
-              onClick={() => {
-                void handleSubmitRegisterEmail()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning || !selectedDebugAccount}>
-              2 点击注册并提交邮箱
-            </Button>
-            <Button
-              onClick={() => {
-                void handleSubmitRegisterVerificationCode()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning || !selectedDebugAccount}>
-              3 提交验证码
-            </Button>
-            <Button
-              onClick={() => {
-                void handleSubmitRegisterProfile()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning || !selectedDebugAccount}>
-              4 完成账户创建并继续
-            </Button>
-            <Button
-              onClick={() => {
-                void handleCompleteRegisterOAuthLogin()
-              }}
-              loading={isDebugRunning}
-              disabled={
-                isDebugRunning ||
-                !selectedDebugAccount ||
-                !cpaUrl.trim() ||
-                !cpaManagementKey.trim()
-              }>
-              5 完成 OAuth 登录
-            </Button>
-            <Button
-              onClick={() => {
-                void handleCompleteRegisterPhoneVerification()
-              }}
-              loading={isDebugRunning}
-              disabled={isDebugRunning || !selectedDebugAccount}>
-              6 手机号验证
-            </Button>
-            <Button
-              onClick={() => {
-                void handleSubmitRegisterOAuthCallbackToCpa()
-              }}
-              loading={isDebugRunning}
-              disabled={
-                isDebugRunning ||
-                !selectedDebugAccount ||
-                !debugCallbackUrl ||
-                !cpaUrl.trim() ||
-                !cpaManagementKey.trim()
-              }>
-              7 回填 CPA
-            </Button>
-          </Space>
-        </div>
-      }
+          )
+        }
+      />
+
+      <HeroSmsConfigPanel heroSms={heroSms} disabled={isDebugRunning} />
+
+      <CpaConfigPanel
+        cpaUrl={cpaUrl}
+        cpaManagementKey={cpaManagementKey}
+        disabled={disabled}
+        onCpaUrlChange={accountPage.handleCpaUrlChange}
+        onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
+      />
+
+      <AccountFormPanel accountPage={accountPage} disabled={disabled} />
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "debug",
+            label: "调试控制台",
+            extra: (
+              <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
+            ),
+            children: (
+              <div className="debug-panel">
+                <DebugTabControl
+                  disabled={isDebugRunning}
+                  label="注册 tab"
+                  leadingContent={
+                    <div className="debug-field">
+                      <span className="debug-label">账号</span>
+                      <Select
+                        value={debugEmail || undefined}
+                        placeholder="选择账号"
+                        options={accounts.map((account) => {
+                          return {
+                            label: account.email,
+                            value: account.email
+                          }
+                        })}
+                        onChange={(value) => {
+                          setDebugEmail(value)
+                          setDebugProgress(0)
+                          setDebugVerificationRequestedAt(0)
+                          setDebugOAuthStartedAt(0)
+                          setDebugCpaOAuthState("")
+                          setDebugCallbackUrl("")
+                        }}
+                        disabled={isDebugRunning || accounts.length === 0}
+                      />
+                    </div>
+                  }
+                  value={debugRegisterTabId}
+                  onChange={setDebugRegisterTabId}
+                  onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
+                  onClear={handleClearDebugState}
+                />
+
+                <Space size={8} wrap>
+                  <Button
+                    type="primary"
+                    onClick={() => {
+                      void handleOpenRegisterEntry()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={isDebugRunning}>
+                    1 打开 GPT 页面
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleSubmitRegisterEmail()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    2 点击注册并提交邮箱
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleSubmitRegisterVerificationCode()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    3 提交验证码
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleSubmitRegisterProfile()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    4 完成账户创建并继续
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleCompleteRegisterOAuthLogin()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={
+                      isDebugRunning ||
+                      !selectedDebugAccount ||
+                      !cpaUrl.trim() ||
+                      !cpaManagementKey.trim()
+                    }>
+                    5 完成 OAuth 登录
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleCompleteRegisterPhoneVerification()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    6 手机号验证
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleSubmitRegisterOAuthCallbackToCpa()
+                    }}
+                    loading={isDebugRunning}
+                    disabled={
+                      isDebugRunning ||
+                      !selectedDebugAccount ||
+                      !debugCallbackUrl ||
+                      !cpaUrl.trim() ||
+                      !cpaManagementKey.trim()
+                    }>
+                    7 回填 CPA
+                  </Button>
+                </Space>
+              </div>
+            )
+          }
+        ]}
       />
     </>
   )

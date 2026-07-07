@@ -1,4 +1,4 @@
-import { Button, Dropdown, Select, Space, Tag } from "antd"
+import { Button, Collapse, Dropdown, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -10,7 +10,12 @@ import {
   submitCodexLoginPasswordAndWait,
   submitCodexOAuthCallbackToCpa
 } from "../background/codex-login"
-import { AccountWorkspace } from "./AccountWorkspace"
+import {
+  AccountFormPanel,
+  AccountListPanel,
+  useAccountPageState
+} from "./account-management"
+import { CpaConfigPanel } from "./cpa-config"
 import { DebugTabControl } from "./DebugTabControl"
 import {
   getFlowStepLabel,
@@ -27,7 +32,6 @@ import {
   type ManagedAccountStatus,
   type PageProps
 } from "./shared"
-import { useAccountPageState } from "./useAccountPageState"
 
 const runManagedAccountFlow = async (
   cpaUrl: string,
@@ -686,171 +690,187 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasCpaApiConfig = Boolean(cpaUrl.trim() && cpaManagementKey.trim())
 
   return (
-    <AccountWorkspace
-      {...accountPage}
-      disabled={disabled}
-      onCpaUrlChange={accountPage.handleCpaUrlChange}
-      onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
-      onSubmitAccount={accountPage.handleSubmitAccount}
-      onCancelEdit={accountPage.handleCancelEdit}
-      onEditAccount={accountPage.handleEditAccount}
-      onRemoveAccount={accountPage.handleRemoveAccount}
-      onToggleAccountSelected={accountPage.handleToggleAccountSelected}
-      onToggleAllAccountsSelected={accountPage.handleToggleAllAccountsSelected}
-      onMoveSelectedAccount={accountPage.handleMoveSelectedAccount}
-      onMarkSelectedAccountsDone={accountPage.handleMarkSelectedAccountsDone}
-      accountToolbarActions={
-        isBatchRunning ? (
-          <Button
-            danger
-            disabled={isBatchStopping}
-            loading={isBatchStopping}
-            onClick={handleStopBatch}>
-            {isBatchStopping ? "正在停止" : "停止当前流程"}
-          </Button>
-        ) : (
-          <Space.Compact>
+    <>
+      <AccountListPanel
+        accountPage={accountPage}
+        disabled={disabled}
+        toolbarActions={
+          isBatchRunning ? (
             <Button
-              type="primary"
-              disabled={!hasCpaApiConfig || selectedCount === 0}
-              onClick={() => {
-                void handleStartBatch("pending")
-              }}>
-              执行未完成
+              danger
+              disabled={isBatchStopping}
+              loading={isBatchStopping}
+              onClick={handleStopBatch}>
+              {isBatchStopping ? "正在停止" : "停止当前流程"}
             </Button>
-            <Dropdown
-              trigger={["click"]}
-              disabled={!hasCpaApiConfig || selectedCount === 0}
-              menu={{
-                items: [
-                  {
-                    key: "all",
-                    label: "全部执行"
-                  }
-                ],
-                onClick: () => {
-                  void handleStartBatch("all")
-                }
-              }}>
+          ) : (
+            <Space.Compact>
               <Button
                 type="primary"
                 disabled={!hasCpaApiConfig || selectedCount === 0}
-                aria-label="执行选项">
-                ▾
+                onClick={() => {
+                  void handleStartBatch("pending")
+                }}>
+                执行未完成
               </Button>
-            </Dropdown>
-          </Space.Compact>
-        )
-      }
-      debugTitleExtra={
-        <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
-      }
-      debugContent={
-        <div className="debug-panel">
-          <DebugTabControl
-            disabled={disabled}
-            label="Auth tab"
-            leadingContent={
-              <div className="debug-field">
-                <span className="debug-label">账号</span>
-                <Select
-                  value={debugEmail || undefined}
-                  placeholder="选择账号"
-                  options={accounts.map((account) => {
-                    return {
-                      label: account.email,
-                      value: account.email
+              <Dropdown
+                trigger={["click"]}
+                disabled={!hasCpaApiConfig || selectedCount === 0}
+                menu={{
+                  items: [
+                    {
+                      key: "all",
+                      label: "全部执行"
                     }
-                  })}
-                  onChange={(value) => {
-                    setDebugEmail(value)
-                    setDebugProgress(0)
-                    setDebugVerificationRequestedAt(0)
-                    setDebugCallbackUrl("")
-                    setDebugCpaOAuthState("")
-                  }}
-                  disabled={disabled || accounts.length === 0}
+                  ],
+                  onClick: () => {
+                    void handleStartBatch("all")
+                  }
+                }}>
+                <Button
+                  type="primary"
+                  disabled={!hasCpaApiConfig || selectedCount === 0}
+                  aria-label="执行选项">
+                  ▾
+                </Button>
+              </Dropdown>
+            </Space.Compact>
+          )
+        }
+      />
+
+      <CpaConfigPanel
+        cpaUrl={cpaUrl}
+        cpaManagementKey={cpaManagementKey}
+        disabled={disabled}
+        onCpaUrlChange={accountPage.handleCpaUrlChange}
+        onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
+      />
+
+      <AccountFormPanel accountPage={accountPage} disabled={disabled} />
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "debug",
+            label: "调试控制台",
+            extra: (
+              <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
+            ),
+            children: (
+              <div className="debug-panel">
+                <DebugTabControl
+                  disabled={disabled}
+                  label="Auth tab"
+                  leadingContent={
+                    <div className="debug-field">
+                      <span className="debug-label">账号</span>
+                      <Select
+                        value={debugEmail || undefined}
+                        placeholder="选择账号"
+                        options={accounts.map((account) => {
+                          return {
+                            label: account.email,
+                            value: account.email
+                          }
+                        })}
+                        onChange={(value) => {
+                          setDebugEmail(value)
+                          setDebugProgress(0)
+                          setDebugVerificationRequestedAt(0)
+                          setDebugCallbackUrl("")
+                          setDebugCpaOAuthState("")
+                        }}
+                        disabled={disabled || accounts.length === 0}
+                      />
+                    </div>
+                  }
+                  value={debugAuthTabId}
+                  onChange={setDebugAuthTabId}
+                  onUseActiveTab={handleUseActiveTabAsDebugAuthTab}
+                  onClear={handleClearDebugState}
                 />
+
+                <Space size={8} wrap>
+                  <Button
+                    type="primary"
+                    onClick={handleRunNextDebugStep}
+                    loading={isDebugRunning}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasCpaApiConfig
+                    }>
+                    下一步
+                  </Button>
+                </Space>
+
+                <Space size={8} wrap>
+                  <Button
+                    type="primary"
+                    onClick={() => {
+                      void handleRunDebugStep(1)
+                    }}
+                    loading={isDebugRunning && debugProgress === 0}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasCpaApiConfig
+                    }>
+                    {getFlowStepLabel(1)}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleRunDebugStep(2)
+                    }}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
+                    }>
+                    {getFlowStepLabel(2)}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleRunDebugStep(3)
+                    }}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
+                    }>
+                    {getFlowStepLabel(3)}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleRunDebugStep(4)
+                    }}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
+                    }>
+                    {getFlowStepLabel(4)}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleRunDebugStep(5)
+                    }}
+                    disabled={
+                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
+                    }>
+                    {getFlowStepLabel(5)}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      void handleRunDebugStep(6)
+                    }}
+                    disabled={
+                      disabled ||
+                      !selectedDebugAccount ||
+                      !hasDebugAuthTabId ||
+                      !debugCallbackUrl ||
+                      !hasCpaApiConfig
+                    }>
+                    {getFlowStepLabel(6)}
+                  </Button>
+                </Space>
               </div>
-            }
-            value={debugAuthTabId}
-            onChange={setDebugAuthTabId}
-            onUseActiveTab={handleUseActiveTabAsDebugAuthTab}
-            onClear={handleClearDebugState}
-          />
-
-          <Space size={8} wrap>
-            <Button
-              type="primary"
-              onClick={handleRunNextDebugStep}
-              loading={isDebugRunning}
-              disabled={disabled || !selectedDebugAccount || !hasCpaApiConfig}>
-              下一步
-            </Button>
-          </Space>
-
-          <Space size={8} wrap>
-            <Button
-              type="primary"
-              onClick={() => {
-                void handleRunDebugStep(1)
-              }}
-              loading={isDebugRunning && debugProgress === 0}
-              disabled={disabled || !selectedDebugAccount || !hasCpaApiConfig}>
-              {getFlowStepLabel(1)}
-            </Button>
-            <Button
-              onClick={() => {
-                void handleRunDebugStep(2)
-              }}
-              disabled={
-                disabled || !selectedDebugAccount || !hasDebugAuthTabId
-              }>
-              {getFlowStepLabel(2)}
-            </Button>
-            <Button
-              onClick={() => {
-                void handleRunDebugStep(3)
-              }}
-              disabled={
-                disabled || !selectedDebugAccount || !hasDebugAuthTabId
-              }>
-              {getFlowStepLabel(3)}
-            </Button>
-            <Button
-              onClick={() => {
-                void handleRunDebugStep(4)
-              }}
-              disabled={
-                disabled || !selectedDebugAccount || !hasDebugAuthTabId
-              }>
-              {getFlowStepLabel(4)}
-            </Button>
-            <Button
-              onClick={() => {
-                void handleRunDebugStep(5)
-              }}
-              disabled={
-                disabled || !selectedDebugAccount || !hasDebugAuthTabId
-              }>
-              {getFlowStepLabel(5)}
-            </Button>
-            <Button
-              onClick={() => {
-                void handleRunDebugStep(6)
-              }}
-              disabled={
-                disabled ||
-                !selectedDebugAccount ||
-                !hasDebugAuthTabId ||
-                !debugCallbackUrl ||
-                !hasCpaApiConfig
-              }>
-              {getFlowStepLabel(6)}
-            </Button>
-          </Space>
-        </div>
-      }
-    />
+            )
+          }
+        ]}
+      />
+    </>
   )
 }
