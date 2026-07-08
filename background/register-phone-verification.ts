@@ -150,7 +150,7 @@ const HERO_SMS_GET_NUMBER_V2_ERROR_MESSAGES: Record<number, string> = {
   401: "无效的 API 密钥",
   402: "资金不足",
   403: "访问被拒绝",
-  404: "方法未找到",
+  404: "未找到可用号码",
   422: "请求参数无效",
   500: "内部服务错误"
 }
@@ -264,9 +264,9 @@ const formatHeroSmsHttpError = (
   const statusMessage = statusMessages[status] || `HTTP ${status}`
   const payloadText =
     describeHeroSmsErrorPayload(payload) || describeHeroSmsPayload(payload)
-  return `${actionLabel}失败（${status} ${statusMessage}）${
-    payloadText ? `：${payloadText}` : ""
-  }`
+  return payloadText
+    ? `${actionLabel}失败：${payloadText}（HTTP ${status} ${statusMessage}）`
+    : `${actionLabel}失败（HTTP ${status} ${statusMessage}）`
 }
 
 /**
