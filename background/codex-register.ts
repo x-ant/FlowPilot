@@ -99,6 +99,27 @@ const isChatGptPageUrl = (rawUrl?: string) => {
   }
 }
 
+const isOpenAiAddPhoneUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    return url.origin === "https://auth.openai.com" && url.pathname === "/add-phone"
+  } catch {
+    return false
+  }
+}
+
+const isOpenAiPhoneVerificationUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    return (
+      url.origin === "https://auth.openai.com" &&
+      url.pathname === "/phone-verification"
+    )
+  } catch {
+    return false
+  }
+}
+
 const isHeroSmsCodeTimeoutError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "")
   return /^等待手机验证码超时/.test(message)
@@ -174,6 +195,78 @@ const waitForPhoneInputInPage = async () => {
   return {
     ok: false,
     message: "回退后未等到手机号输入框"
+  }
+}
+
+const getPhoneNumberSubmitFailureInPage = () => {
+  const selectors = [
+    "input[type='tel']",
+    "input[name*='phone' i]:not([type='hidden'])",
+    "input[id*='phone' i]:not([type='hidden'])",
+    "input[autocomplete='tel']"
+  ]
+  const isVisible = (element: Element | null) => {
+    if (!element) {
+      return false
+    }
+
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    )
+  }
+  const phoneInput = selectors
+    .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+    .find((element) => {
+      return element instanceof HTMLInputElement && isVisible(element)
+    })
+  const addPhoneForm =
+    phoneInput?.closest("form") ||
+    document.querySelector("form[action*='/add-phone' i]")
+  const messages: string[] = []
+  const errorSelectors = [
+    ".react-aria-FieldError",
+    "[slot='errorMessage']",
+    "[id$='-error']",
+    "[role='alert']",
+    "[aria-live='assertive']",
+    "[aria-live='polite']",
+    "[data-invalid='true'] + *",
+    "[aria-invalid='true'] + *",
+    "[class*='error' i]",
+    "[class*='danger' i]",
+    "[class*='alert' i]"
+  ]
+  const pushText = (value: unknown) => {
+    const text = String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+    if (text && !messages.includes(text)) {
+      messages.push(text)
+    }
+  }
+
+  errorSelectors.forEach((selector) => {
+    addPhoneForm?.querySelectorAll(selector).forEach((element) => {
+      pushText(element.textContent)
+    })
+  })
+
+  const invalidInput = addPhoneForm?.querySelector(
+    "input[aria-invalid='true'], input[data-invalid='true']"
+  )
+  if (invalidInput) {
+    pushText(invalidInput.closest("form, [data-rac], div")?.textContent)
+  }
+
+  return {
+    hasFailure: Boolean(phoneInput && messages.length > 0),
+    message: messages[0] || ""
   }
 }
 
@@ -971,9 +1064,23 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * 回到手机号页，就交给外层重新执行 Step 5 刷新 OAuth。
    *
    * @param tabId 当前手机号验证码页标签页 ID。
+   * @param canGoBack 回退保护回调；浏览器不允许读取 history 上一项，调用方可用闭包检查自己记录的 URL。
    * @return 是否重新看到手机号输入框。
    */
-  const returnToPhoneInputByHistoryBack = async (tabId: number) => {
+  const tryHistoryBackToPhoneInput = async (
+    tabId: number,
+    canGoBack: () => boolean = () => true
+  ) => {
+    if (!canGoBack()) {
+      const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+      return {
+        ok: false,
+        message: `当前页面状态不允许 history.back，已停止回退；当前 URL：${
+          currentTab?.url || "unknown"
+        }`
+      }
+    }
+
     const [backResult] = await chrome.scripting.executeScript({
       target: { tabId },
       func: requestHistoryBackInPage
@@ -1512,6 +1619,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         throwIfRunAborted()
 
         await waitForTabLoaded(tabId)
+        // 当前界面的URL
+        const phoneInputUrl = (await chrome.tabs.get(tabId).catch(() => null))?.url || ""
+        // 提交手机号，页面到获取验证码的页面
         const [phoneResult] = await chrome.scripting.executeScript({
           target: { tabId },
           func: submitPhoneNumberInPage,
@@ -1540,6 +1650,59 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           }
         }
 
+        // region ========== 等待跳转到验证码页面 ==========
+        const phoneVerificationUrl = await waitForTabMatchingUrl(
+          tabId,
+          isOpenAiPhoneVerificationUrl,
+          {
+            timeoutMs: 20000,
+            intervalMs: 300,
+            signal: getAbortSignal()
+          }
+        )
+        // 如果能在页面拿到信息说明手机号有问题，直接拿下一个手机号
+        if (!phoneVerificationUrl) {
+          let failureMessage = ""
+          try {
+            const [phoneFailureResult] = await chrome.scripting.executeScript({
+              target: { tabId },
+              func: getPhoneNumberSubmitFailureInPage
+            })
+            failureMessage = phoneFailureResult?.result?.message || ""
+          } catch {
+            // 页面可能正在切换，检测失败时只按未进入验证码页处理。
+          }
+          // 如果没拿到提示信息，并且也没有跳转到验证码页面，说明意外情况了，停止吧
+          if (failureMessage) {
+            options.onLog?.(
+              "warn",
+              `手机号提交失败：${failureMessage}；手机号 ${activation.phoneNumber} 未进入验证码页，不进入验证码轮询，准备更换手机号；${activationSummary}`
+            )
+            await releaseHeroSmsActivationQuietly(options, activation)
+            activation = null
+            continue
+          }
+          // 打印当前异常的页面，现在还不知道这个是啥情况，实际应该没有这种情况
+          const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+          options.onLog?.(
+            "error",
+            `手机号 ${activation.phoneNumber} 提交后未进入验证码页，不进入 HeroSMS 轮询；当前 URL：${
+              currentTab?.url || "unknown"
+            }；${activationSummary}`
+          )
+          await releaseHeroSmsActivationQuietly(options, activation)
+          activation = null
+          return {
+            ok: false,
+            message: `${phonePageResult.message}；手机号提交后未进入验证码页，已停止自动换号；${activationSummary}`,
+            targetTab: {
+              id: tabId,
+              url: currentTab?.url
+            }
+          }
+        }
+        // endregion
+
         options.onPhoneVerificationPhase?.("phone_submitted")
         let code = ""
         try {
@@ -1566,7 +1729,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           )
 
           if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
-            const backResult = await returnToPhoneInputByHistoryBack(tabId)
+            const backResult = await tryHistoryBackToPhoneInput(
+              tabId,
+              () => isOpenAiAddPhoneUrl(phoneInputUrl)
+            )
             if (backResult.ok) {
               options.onLog?.(
                 "warn",

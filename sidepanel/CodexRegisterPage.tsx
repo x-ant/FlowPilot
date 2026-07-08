@@ -34,7 +34,7 @@ import {
 } from "./shared"
 
 const REGISTER_STEP_COUNT = 7
-const REGISTER_PHONE_MAX_OAUTH_REFRESHES = 2
+const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
 
 type RegisterStepResult = {
   ok: boolean
@@ -176,7 +176,7 @@ const runManagedRegisterFlow = async (
     loginResult.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
   let cpaOAuthState =
     loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
-  let oauthRefreshCount = 0
+  let oauthAttemptCount = 1
   let phoneResult: RegisterStepResult
 
   while (true) {
@@ -213,14 +213,14 @@ const runManagedRegisterFlow = async (
       }
     }
 
-    if (oauthRefreshCount >= REGISTER_PHONE_MAX_OAUTH_REFRESHES) {
+    if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
       return {
         ok: false,
-        message: `${phoneResult.message}；已达到 OAuth 刷新上限 ${REGISTER_PHONE_MAX_OAUTH_REFRESHES} 次`
+        message: `${phoneResult.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次`
       }
     }
 
-    oauthRefreshCount += 1
+    oauthAttemptCount += 1
     const nextRefreshResult = await runner.refreshRegisterOAuthAndLogin(
       cpaUrl,
       cpaManagementKey,
@@ -724,7 +724,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     try {
       let tabId = parsedTabId
       let oauthStartedAt = debugOAuthStartedAt || Date.now()
-      let oauthRefreshCount = 0
+      let oauthAttemptCount = 1
 
       while (true) {
         const result = await completeRegisterPhoneVerification(
@@ -778,8 +778,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           return
         }
 
-        if (oauthRefreshCount >= REGISTER_PHONE_MAX_OAUTH_REFRESHES) {
-          const message = `${result.message}；已达到 OAuth 刷新上限 ${REGISTER_PHONE_MAX_OAUTH_REFRESHES} 次`
+        if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
+          const message = `${result.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次`
           setStatus("手机号验证失败")
           log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
           patchAccountState(selectedDebugAccount.email, {
@@ -802,10 +802,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           return
         }
 
-        oauthRefreshCount += 1
+        oauthAttemptCount += 1
         setStatus("OAuth 时间不足，正在重新执行 Step 5")
         log.warn(
-          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 5（${oauthRefreshCount}/${REGISTER_PHONE_MAX_OAUTH_REFRESHES}）`
+          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 5（OAuth URL ${oauthAttemptCount}/${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS}）`
         )
         patchAccountState(selectedDebugAccount.email, {
           progress: 5,

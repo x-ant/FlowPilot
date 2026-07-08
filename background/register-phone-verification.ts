@@ -18,7 +18,7 @@ export type HeroSmsPhoneVerificationOptions = {
   /** 固定价格档位；填写后直接按该价格买号，不再查询并选择最低档。 */
   fixedPrice?: string
   /** 将 HeroSMS 执行进度写入侧边栏执行日志。 */
-  onLog?: (level: "info" | "warn" | "debug", message: string) => void
+  onLog?: (level: "error" | "info" | "warn" | "debug", message: string) => void
   /** 通知侧边栏手机号已提交/等待验证码已结束，用于决定停止策略。 */
   onPhoneVerificationPhase?: (
     phase: "phone_submitted" | "phone_wait_finished"
@@ -345,7 +345,7 @@ const logHeroSmsRawSample = (
 
 const logHeroSmsProgress = (
   options: HeroSmsPhoneVerificationOptions,
-  level: "info" | "warn" | "debug",
+  level: "error" | "info" | "warn" | "debug",
   message: string
 ) => {
   options.onLog?.(level, message)
