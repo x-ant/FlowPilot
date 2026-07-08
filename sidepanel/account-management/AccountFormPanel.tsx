@@ -1,5 +1,5 @@
 import { Button, Collapse, Form, Input, Space, Tag } from "antd"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 import { EMPTY_ACCOUNT_FORM, type AccountFormValues } from "../shared"
 import type { AccountPageState } from "./useAccountPageState"
@@ -20,6 +20,8 @@ type AccountFormPanelProps = {
   disabled: boolean
 }
 
+const ACCOUNT_PANEL_KEY = "account"
+
 export function AccountFormPanel({
   accountPage,
   disabled
@@ -34,6 +36,7 @@ export function AccountFormPanel({
     handleCancelEdit: cancelEdit
   } = accountPage
   const [form] = Form.useForm<AccountFormValues>()
+  const [activeKeys, setActiveKeys] = useState<string[]>([])
 
   useEffect(() => {
     if (!editingAccount) {
@@ -44,7 +47,12 @@ export function AccountFormPanel({
       email: editingAccount.email,
       password: editingAccount.password
     })
+    setActiveKeys([ACCOUNT_PANEL_KEY])
   }, [form, editingAccount])
+
+  const handleCollapseChange = (keys: string | string[]) => {
+    setActiveKeys(Array.isArray(keys) ? keys : [keys])
+  }
 
   const handleCancelEdit = () => {
     cancelEdit()
@@ -55,9 +63,11 @@ export function AccountFormPanel({
   return (
     <Collapse
       className="panel-card"
+      activeKey={activeKeys}
+      onChange={handleCollapseChange}
       items={[
         {
-          key: "account",
+          key: ACCOUNT_PANEL_KEY,
           label: "账号管理",
           extra: (
             <Space size={8}>
