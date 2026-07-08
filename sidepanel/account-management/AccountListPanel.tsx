@@ -14,7 +14,8 @@ import {
   getAccountProgressSummary,
   normalizeEmail,
   STATUS_META,
-  STEP_COUNT
+  STEP_COUNT,
+  type AccountProgressStepMeta
 } from "../shared"
 import type { AccountPageState } from "./useAccountPageState"
 
@@ -38,6 +39,7 @@ type AccountListPanelProps = {
   accountPage: AccountListPanelAccountPage
   disabled: boolean
   stepCount?: number
+  stepLabels?: Partial<Record<number, AccountProgressStepMeta>>
   toolbarActions?: ReactNode
 }
 
@@ -45,6 +47,7 @@ export function AccountListPanel({
   accountPage,
   disabled,
   stepCount = STEP_COUNT,
+  stepLabels,
   toolbarActions
 }: AccountListPanelProps) {
   const {
@@ -151,7 +154,10 @@ export function AccountListPanel({
                     </Space>
                   </div>
                   <div className="account-meta">
-                    {getAccountProgressSummary(account)}
+                    {getAccountProgressSummary(account, {
+                      stepCount,
+                      stepLabels
+                    })}
                   </div>
                 </div>
 

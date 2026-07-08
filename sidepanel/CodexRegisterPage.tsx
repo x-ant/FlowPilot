@@ -34,7 +34,30 @@ import {
 } from "./shared"
 
 const REGISTER_STEP_COUNT = 7
-const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 2
+const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
+const REGISTER_FLOW_STEPS = {
+  1: {
+    label: "1 打开 GPT 页面"
+  },
+  2: {
+    label: "2 点击注册并提交邮箱"
+  },
+  3: {
+    label: "3 提交验证码"
+  },
+  4: {
+    label: "4 完成账户创建并继续"
+  },
+  5: {
+    label: "5 完成 OAuth 登录"
+  },
+  6: {
+    label: "6 手机号验证"
+  },
+  7: {
+    label: "7 回填 CPA"
+  }
+}
 
 type RegisterStepResult = {
   ok: boolean
@@ -1286,6 +1309,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         accountPage={accountPage}
         disabled={disabled}
         stepCount={REGISTER_STEP_COUNT}
+        stepLabels={REGISTER_FLOW_STEPS}
         toolbarActions={
           isBatchRunning ? (
             <Button

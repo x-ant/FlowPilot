@@ -155,7 +155,27 @@ export const getFlowStepLabel = (step: DebugStep) => {
   return FLOW_STEPS[step].label
 }
 
-export const getAccountProgressSummary = (account: ManagedAccount) => {
+export type AccountProgressStepMeta = {
+  label: string
+}
+
+const getAccountProgressStepLabel = (
+  step: number,
+  stepLabels: Partial<Record<number, AccountProgressStepMeta>>
+) => {
+  return stepLabels[step]?.label || `${step}`
+}
+
+export const getAccountProgressSummary = (
+  account: ManagedAccount,
+  options: {
+    stepCount?: number
+    stepLabels?: Partial<Record<number, AccountProgressStepMeta>>
+  } = {}
+) => {
+  const stepCount = options.stepCount || STEP_COUNT
+  const stepLabels = options.stepLabels || FLOW_STEPS
+
   if (account.status === "done") {
     return "已完成全部步骤"
   }
@@ -165,13 +185,13 @@ export const getAccountProgressSummary = (account: ManagedAccount) => {
   }
 
   const nextStep = Math.min(
-    STEP_COUNT,
+    stepCount,
     Math.max(1, account.progress + 1)
-  ) as DebugStep
+  )
   const stepLabel =
-    account.progress >= STEP_COUNT
-      ? getFlowStepLabel(STEP_COUNT)
-      : getFlowStepLabel(nextStep)
+    account.progress >= stepCount
+      ? getAccountProgressStepLabel(stepCount, stepLabels)
+      : getAccountProgressStepLabel(nextStep, stepLabels)
 
   if (account.status === "failed") {
     return `停在：${stepLabel}`
@@ -181,7 +201,7 @@ export const getAccountProgressSummary = (account: ManagedAccount) => {
     return `当前：${stepLabel}`
   }
 
-  return `待执行：${getFlowStepLabel(1)}`
+  return `待执行：${getAccountProgressStepLabel(1, stepLabels)}`
 }
 
 export const getStorage = () => {

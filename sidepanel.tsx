@@ -30,10 +30,42 @@ import {
   type FlowPage
 } from "./sidepanel/shared"
 
+const EXECUTION_LOG_STORAGE_KEY = "codex-login:execution-logs"
+const EXECUTION_LOG_LIMIT = 6000
+
+const normalizeStoredLogs = (value: unknown): LogItem[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item) => {
+      const record = item as Partial<LogItem>
+      if (
+        typeof record.id !== "string" ||
+        typeof record.time !== "string" ||
+        typeof record.message !== "string" ||
+        !["error", "warn", "info", "debug"].includes(String(record.level))
+      ) {
+        return null
+      }
+
+      return {
+        id: record.id,
+        time: record.time,
+        level: record.level as LogItem["level"],
+        message: record.message
+      }
+    })
+    .filter((item): item is LogItem => Boolean(item))
+    .slice(-EXECUTION_LOG_LIMIT)
+}
+
 function SidePanel() {
   const [activePage, setActivePage] = useState<FlowPage>("codex-login")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [logsLoaded, setLogsLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
   const logListRef = useRef<HTMLDivElement | null>(null)
 
@@ -48,7 +80,7 @@ function SidePanel() {
             level,
             message
           }
-        ]
+        ].slice(-EXECUTION_LOG_LIMIT)
       })
     })
   }, [])
@@ -72,14 +104,26 @@ function SidePanel() {
 
   useEffect(() => {
     const storage = getStorage()
-    storage?.get([ACTIVE_PAGE_STORAGE_KEY], (result) => {
+    storage?.get([ACTIVE_PAGE_STORAGE_KEY, EXECUTION_LOG_STORAGE_KEY], (result) => {
       setActivePage(
         result?.[ACTIVE_PAGE_STORAGE_KEY] === "codex-register"
           ? "codex-register"
           : "codex-login"
       )
+      setLogs(normalizeStoredLogs(result?.[EXECUTION_LOG_STORAGE_KEY]))
+      setLogsLoaded(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (!logsLoaded) {
+      return
+    }
+
+    getStorage()?.set({
+      [EXECUTION_LOG_STORAGE_KEY]: logs.slice(-EXECUTION_LOG_LIMIT)
+    })
+  }, [logs, logsLoaded])
 
   const handleActivePageChange = (value: string) => {
     const nextPage: FlowPage =
@@ -93,6 +137,9 @@ function SidePanel() {
 
   const handleClearLogs = () => {
     setLogs([])
+    getStorage()?.set({
+      [EXECUTION_LOG_STORAGE_KEY]: []
+    })
     setStatus("日志已清空")
   }
 
