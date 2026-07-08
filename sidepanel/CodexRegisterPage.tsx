@@ -65,6 +65,19 @@ type RegisterDebugStepOptions = {
   beforeRun?: () => void
 }
 
+const closeTabQuietly = async (tabId?: number) => {
+  if (typeof tabId !== "number") {
+    return false
+  }
+
+  try {
+    await chrome.tabs.remove(tabId)
+    return true
+  } catch {
+    return false
+  }
+}
+
 type RegisterStopStrategy =
   | "none"
   | "immediate"
@@ -214,9 +227,12 @@ const runManagedRegisterFlow = async (
     }
 
     if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
+      const closedAuthTab = await closeTabQuietly(phoneTabId)
       return {
         ok: false,
-        message: `${phoneResult.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次`
+        message: `${phoneResult.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次；${
+          closedAuthTab ? "已关闭当前 OAuth 页面" : "当前 OAuth 页面未关闭或已不存在"
+        }`
       }
     }
 
@@ -779,7 +795,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
-          const message = `${result.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次`
+          const closedAuthTab = await closeTabQuietly(tabId)
+          const message = `${result.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次；${
+            closedAuthTab ? "已关闭当前 OAuth 页面" : "当前 OAuth 页面未关闭或已不存在"
+          }`
           setStatus("手机号验证失败")
           log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
           patchAccountState(selectedDebugAccount.email, {
