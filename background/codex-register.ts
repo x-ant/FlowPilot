@@ -941,7 +941,11 @@ const detectRegisterEmailSubmittedInPage = () => {
  */
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
-  const { openCodexAuthLink, submitCodexOAuthCallbackToCpa } =
+  const {
+    openCodexAuthLink,
+    confirmCodexOAuthConsent,
+    submitCodexOAuthCallbackToCpa
+  } =
     createCodexLoginRunner(context)
   /**
    * 获取当前流程的中断信号。
@@ -964,7 +968,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   /**
    * 等待手机验证码提交后的页面结果。
    *
-   * 只把进入 localhost 回调当成成功；如果已经离开验证码页但不是回调页，
+   * 只把进入 localhost 回调当成成功；如果进入 OAuth 授权确认页，
+   * 复用登录流程点击继续并等待回调；如果已经离开验证码页但不是回调页，
    * 停止自动重试，交给人工判断手机号是否已经验证完成。
    *
    * @param tabId 当前 OpenAI 授权页标签页 ID。
@@ -1021,12 +1026,21 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
 
       if (lastState.state === "oauth_consent_ready") {
+        const consentResult = await confirmCodexOAuthConsent(tabId)
+        if (consentResult.ok) {
+          return {
+            ok: true,
+            state: "callback",
+            message: `手机验证码已通过；${consentResult.message}`,
+            url: consentResult.callbackUrl
+          }
+        }
+
         return {
           ...lastState,
           ok: false,
           releaseActivation: false,
-          message:
-            "手机验证码提交后已离开验证码页，但还没有到 localhost 回调地址，请人工判断是否已验证成功"
+          message: `手机验证码已通过并进入授权确认页，但未能完成授权继续：${consentResult.message}`
         }
       }
 
