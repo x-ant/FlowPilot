@@ -1083,10 +1083,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
 
       if (lastState.state === "verification_invalid_code") {
-        return {
-          ...lastState,
-          releaseActivation: true
-        }
+        return lastState
       }
 
       if (lastState.state !== "verification_pending") {
