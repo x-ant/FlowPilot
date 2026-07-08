@@ -353,9 +353,13 @@ export const detectCodexAuthPageStateInPage =
       )
     }) as HTMLElement | undefined
 
-    const verificationCodeInput = document.querySelector(
-      "input[name='code'], input[name='otp'], input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text'][maxlength='6'], input[type='tel'][maxlength='6']"
-    )
+    const verificationCodeInput = Array.from(
+      document.querySelectorAll(
+        "input[name='code'], input[name='otp'], input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text'][maxlength='6'], input[type='tel'][maxlength='6']"
+      )
+    ).find((element) => {
+      return isVisible(element)
+    })
     const verificationForm = document.querySelector(
       'form[action*="email-verification" i]'
     )
@@ -369,17 +373,13 @@ export const detectCodexAuthPageStateInPage =
         )
       )
     })
-    const verificationPagePattern =
-      /检查您的收件箱|输入我们刚刚向|重新发送电子邮件|重新发送验证码|代码不正确|验证码|email\s+verification|check\s+your\s+inbox|enter\s+the\s+code|we\s+just\s+sent|we\s+emailed|resend/i
     const invalidVerificationCodePattern =
       /代码不正确|验证码不正确|验证码错误|验证码无效|无效的验证码|code\s+(?:is\s+)?incorrect|incorrect\s+code|invalid\s+code|wrong\s+code|try\s+again|コードが正しくありません|無効なコード|認証コードが正しくありません/i
     const verificationPage =
       Boolean(verificationForm) ||
       Boolean(resendAction) ||
-      (Boolean(verificationCodeInput) &&
-        verificationPagePattern.test(pageText)) ||
-      (/\/email-verification(?:[/?#]|$)/i.test(location.href) &&
-        verificationPagePattern.test(pageText))
+      Boolean(verificationCodeInput) ||
+      /\/email-verification(?:[/?#]|$)/i.test(location.href)
     const passwordInput = document.querySelector(
       "input[type='password'], input[autocomplete='current-password'], input[name='password']"
     )
@@ -396,11 +396,10 @@ export const detectCodexAuthPageStateInPage =
         pageText
       )
     const oauthConsentPage =
-      /使用\s*ChatGPT\s*登录到\s*Codex|sign\s+in\s+to\s+codex(?:\s+with\s+chatgpt)?|login\s+to\s+codex|log\s+in\s+to\s+codex|authorize|授权/i.test(
-        pageText
-      ) ||
       Boolean(consentForm) ||
-      (/\bcodex\b/i.test(pageText) && /\bchatgpt\b/i.test(pageText))
+      /\/sign-in-with-chatgpt\/[^/?#]+\/consent(?:[/?#]|$)/i.test(
+        location.pathname
+      )
 
     if (verificationPage && invalidVerificationCodePattern.test(pageText)) {
       return {

@@ -52,6 +52,14 @@ function SidePanel() {
       })
     })
   }, [])
+  const scopedLog = useMemo(() => {
+    const prefix =
+      activePage === "codex-register" ? "[codex-register]" : "[codex-login]"
+
+    return createUiLogger((level, message) => {
+      log[level](`${prefix} ${message}`)
+    })
+  }, [activePage, log])
 
   useEffect(() => {
     const element = logListRef.current
@@ -123,13 +131,13 @@ function SidePanel() {
 
           {activePage === "codex-register" ? (
             <CodexRegisterPage
-              log={log}
+              log={scopedLog}
               setStatus={setStatus}
               onBusyChange={setBusy}
             />
           ) : (
             <CodexLoginPage
-              log={log}
+              log={scopedLog}
               setStatus={setStatus}
               onBusyChange={setBusy}
             />
