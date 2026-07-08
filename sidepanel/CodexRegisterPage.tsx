@@ -34,7 +34,7 @@ import {
 } from "./shared"
 
 const REGISTER_STEP_COUNT = 7
-const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
+const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 2
 
 type RegisterStepResult = {
   ok: boolean
