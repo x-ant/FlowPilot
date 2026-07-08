@@ -43,7 +43,7 @@ export const pollMail2925VerificationCodeInPage = async (
   // 允许60秒误差，实际可能还剩59秒，但是已经是下一分钟了
   const staleToleranceMs = 60 * 1000
   // 如果是不是0，就取传入的时间往前一分钟，如果是0，就当前时间往前找10分钟
-  const filterAfter = requestTimestamp
+  let filterAfter = requestTimestamp
     ? Math.max(0, requestTimestamp - staleToleranceMs - clockToleranceMs)
     : startedAt - 10 * 60 * 1000
   const excludedCodes = new Set(
@@ -439,6 +439,7 @@ export const pollMail2925VerificationCodeInPage = async (
 
   while (Date.now() - startedAt < timeoutMs) {
     await refreshInbox()
+    let currentScanMaxTimestamp = 0
 
     for (let itemIndex = 0; itemIndex < 8; itemIndex += 1) {
       // 打开邮件再返回列表时，2925 可能重新加载列表；如果新邮件插入顶部，
@@ -450,6 +451,9 @@ export const pollMail2925VerificationCodeInPage = async (
       }
 
       const timestamp = parseMailItemTimestamp(item)
+      if (timestamp > currentScanMaxTimestamp) {
+        currentScanMaxTimestamp = timestamp
+      }
       const previewText = getText(item)
       const matchedPreview =
         /openai|chatgpt|login|verification|code|验证码|登录|認証|確認/i.test(
@@ -545,6 +549,19 @@ export const pollMail2925VerificationCodeInPage = async (
           message: `已打开 2925 邮件并读取验证码（${validation.message}）`
         }
       }
+    }
+
+    if (currentScanMaxTimestamp > filterAfter) {
+      const previousFilterAfter = filterAfter
+      filterAfter = currentScanMaxTimestamp
+      debugLog("扫描后推进邮件时间过滤基准", {
+        previousFilterAfter,
+        previousFilterAfterTime: formatDebugTime(previousFilterAfter),
+        currentScanMaxTimestamp,
+        currentScanMaxTime: formatDebugTime(currentScanMaxTimestamp),
+        nextFilterAfter: filterAfter,
+        nextFilterAfterTime: formatDebugTime(filterAfter)
+      })
     }
 
     await wait(5000)
