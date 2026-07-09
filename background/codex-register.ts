@@ -151,6 +151,12 @@ const isHeroSmsCodeTimeoutError = (error: unknown) => {
   return /^等待手机验证码超时/.test(message)
 }
 
+const isOpenAiPhoneVerificationRateLimited = (message: string) => {
+  return /请求手机验证的次数过多|手机验证.*次数过多|too many.*phone.*verification|phone verification.*too many|try again later|稍后再试/i.test(
+    String(message || "")
+  )
+}
+
 const formatDurationSeconds = (ms: number) => {
   return `${Math.max(0, Math.floor(ms / 1000))} 秒`
 }
@@ -254,11 +260,14 @@ const getPhoneNumberSubmitFailureInPage = () => {
   const addPhoneForm =
     phoneInput?.closest("form") ||
     document.querySelector("form[action*='/add-phone' i]")
+  const errorRoot = addPhoneForm || document
   const messages: string[] = []
   const errorSelectors = [
     ".react-aria-FieldError",
     "[slot='errorMessage']",
     "[id$='-error']",
+    "ul[class*='errors' i]",
+    "li[class*='error' i]",
     "[role='alert']",
     "[aria-live='assertive']",
     "[aria-live='polite']",
@@ -278,20 +287,41 @@ const getPhoneNumberSubmitFailureInPage = () => {
   }
 
   errorSelectors.forEach((selector) => {
-    addPhoneForm?.querySelectorAll(selector).forEach((element) => {
+    errorRoot.querySelectorAll(selector).forEach((element) => {
       pushText(element.textContent)
     })
   })
 
-  const invalidInput = addPhoneForm?.querySelector(
-    "input[aria-invalid='true'], input[data-invalid='true']"
-  )
-  if (invalidInput) {
-    pushText(invalidInput.closest("form, [data-rac], div")?.textContent)
-  }
+  const invalidElements = [
+    ...(addPhoneForm?.matches("[aria-invalid='true'], [data-invalid='true']")
+      ? [addPhoneForm]
+      : []),
+    ...Array.from(
+      errorRoot.querySelectorAll("[aria-invalid='true'], [data-invalid='true']")
+    )
+  ]
+  invalidElements.forEach((element) => {
+    const describedIds = [
+      element.getAttribute("aria-describedby"),
+      element.getAttribute("aria-errormessage")
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(/\s+/))
+
+    describedIds.forEach((id) => {
+      const describedElement = document.getElementById(id)
+      if (describedElement) {
+        pushText(describedElement.textContent)
+      }
+    })
+
+    if (element instanceof HTMLInputElement) {
+      pushText(element.closest("form, [data-rac], div")?.textContent)
+    }
+  })
 
   return {
-    hasFailure: Boolean(phoneInput && messages.length > 0),
+    hasFailure: messages.length > 0,
     message: messages[0] || ""
   }
 }
@@ -982,6 +1012,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const {
     openCodexAuthLink,
     confirmCodexOAuthConsent,
+    submitCodexLoginEmailAndWait,
+    submitCodexLoginPasswordAndWait,
+    fetchAndSubmitCodexVerificationCode,
     submitCodexOAuthCallbackToCpa
   } =
     createCodexLoginRunner(context)
@@ -1721,12 +1754,33 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
               target: { tabId },
               func: getPhoneNumberSubmitFailureInPage
             })
-            failureMessage = phoneFailureResult?.result?.message || ""
+            const phoneFailure = phoneFailureResult?.result
+            failureMessage = phoneFailure?.hasFailure
+              ? phoneFailure.message || ""
+              : ""
           } catch {
             // 页面可能正在切换，检测失败时只按未进入验证码页处理。
           }
           // 如果没拿到提示信息，并且也没有跳转到验证码页面，说明意外情况了，停止吧
           if (failureMessage) {
+            if (isOpenAiPhoneVerificationRateLimited(failureMessage)) {
+              options.onLog?.(
+                "error",
+                `手机号提交失败：${failureMessage}；OpenAI 已限制当前账号的手机验证请求次数，停止当前账号，不再继续换号；${activationSummary}`
+              )
+              await releaseHeroSmsActivationQuietly(options, activation)
+              activation = null
+              options.onPhoneVerificationPhase?.("phone_wait_finished")
+              return {
+                ok: false,
+                message: `${phonePageResult.message}；${failureMessage}；OpenAI 已限制当前账号的手机验证请求次数，已停止当前账号，不再继续换号；${activationSummary}`,
+                targetTab: {
+                  id: tabId,
+                  url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+                }
+              }
+            }
+
             options.onLog?.(
               "warn",
               `手机号提交失败：${failureMessage}；手机号 ${activation.phoneNumber} 未进入验证码页，不进入验证码轮询，准备更换手机号；${activationSummary}`
@@ -2072,20 +2126,57 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    const verificationRequestedAt = Date.now()
-    const loginResult = await clickLoginAndSubmitEmail(
-      email,
-      openResult.targetTab.id
+    const entryResult = await runPageActionInTab(openResult.targetTab.id, {
+      button: {
+        texts: LOGIN_ENTRY_BUTTON_TEXTS
+      },
+      timeoutMs: 10000,
+      successMessage: "已点击 GPT 登录入口",
+      failureMessage: "未找到 GPT 页面上的登录入口"
+    })
+    const buildFallbackMessage = (...messages: Array<string | undefined>) => {
+      return [
+        firstChoice.message,
+        openResult.message,
+        entryResult.ok ? entryResult.message : "",
+        ...messages
+      ]
+        .filter(Boolean)
+        .join("；")
+    }
+
+    const loginResult = await submitCodexLoginEmailAndWait(
+      openResult.targetTab.id,
+      email
     )
     if (!loginResult.ok) {
       return {
         ok: false,
-        message: `${firstChoice.message}；${loginResult.message}`,
+        message: buildFallbackMessage(loginResult.message),
         targetTab: loginResult.targetTab
       }
     }
 
-    const codeResult = await fetchAndSubmitRegisterVerificationCode(
+    const passwordResult = await submitCodexLoginPasswordAndWait(
+      openResult.targetTab.id,
+      password
+    )
+    if (!passwordResult.ok) {
+      return {
+        ok: false,
+        message: buildFallbackMessage(
+          loginResult.message,
+          passwordResult.message
+        ),
+        targetTab: passwordResult.targetTab
+      }
+    }
+
+    const verificationRequestedAt =
+      passwordResult.verificationRequestedAt ||
+      loginResult.verificationRequestedAt ||
+      Date.now()
+    const codeResult = await fetchAndSubmitCodexVerificationCode(
       openResult.targetTab.id,
       email,
       password,
@@ -2094,7 +2185,11 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (!codeResult.ok) {
       return {
         ok: false,
-        message: `${firstChoice.message}；${loginResult.message}；${codeResult.message}`,
+        message: buildFallbackMessage(
+          loginResult.message,
+          passwordResult.message,
+          codeResult.message
+        ),
         targetTab: codeResult.targetTab
       }
     }
@@ -2113,7 +2208,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
       return {
         ok: false,
-        message: `${firstChoice.message}；${openResult.message}；${loginResult.message}；${codeResult.message}；${refreshResult.message}`,
+        message: buildFallbackMessage(
+          loginResult.message,
+          passwordResult.message,
+          codeResult.message,
+          refreshResult.message
+        ),
         targetTab: refreshResult.targetTab
       }
     }
@@ -2124,16 +2224,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     )
     return {
       ok: secondChoice.ok,
-      message: [
-        firstChoice.message,
-        openResult.message,
+      message: buildFallbackMessage(
         loginResult.message,
+        passwordResult.message,
         codeResult.message,
         refreshResult.message,
         secondChoice.message
-      ]
-        .filter(Boolean)
-        .join("；"),
+      ),
       oauthStartedAt: refreshResult.oauthStartedAt,
       cpaOAuthState: refreshResult.cpaOAuthState,
       targetTab: secondChoice.targetTab
