@@ -76,6 +76,29 @@ type RegisterPhoneVerificationSubmitState = {
   releaseActivation?: boolean
 }
 
+type HistoryBackGuardResult =
+  | boolean
+  | {
+      ok: boolean
+      message?: string
+    }
+
+const normalizeHistoryBackGuardResult = (
+  result: HistoryBackGuardResult
+): { ok: boolean; message: string } => {
+  if (typeof result === "boolean") {
+    return {
+      ok: result,
+      message: result ? "" : "回退保护条件未通过"
+    }
+  }
+
+  return {
+    ok: Boolean(result.ok),
+    message: result.message || (result.ok ? "" : "回退保护条件未通过")
+  }
+}
+
 /**
  * 汇总 HeroSMS 买号结果里的扣费和号码信息。
  *
@@ -366,12 +389,19 @@ const SIGNUP_ENTRY_BUTTON_TEXTS = [
   "免费注册",
   "立即注册",
   "注册",
+  "登录",
+  "登入",
   "sign up",
+  "log in",
+  "login",
+  "sign in",
   "register",
   "create account",
   "create an account",
   "アカウントを作成",
   "サインアップ",
+  "サインイン",
+  "ログイン",
   "新規登録"
 ]
 
@@ -1146,18 +1176,19 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * 回到手机号页，就交给外层重新执行 Step 5 刷新 OAuth。
    *
    * @param tabId 当前手机号验证码页标签页 ID。
-   * @param canGoBack 回退保护回调；浏览器不允许读取 history 上一项，调用方可用闭包检查自己记录的 URL。
+   * @param canGoBack 回退保护回调；浏览器不允许读取 history 上一项，调用方可用闭包检查自己记录的 URL，并返回具体失败原因。
    * @return 是否重新看到手机号输入框。
    */
   const tryHistoryBackToPhoneInput = async (
     tabId: number,
-    canGoBack: () => boolean = () => true
+    canGoBack: () => HistoryBackGuardResult = () => true
   ) => {
-    if (!canGoBack()) {
+    const guardResult = normalizeHistoryBackGuardResult(canGoBack())
+    if (!guardResult.ok) {
       const currentTab = await chrome.tabs.get(tabId).catch(() => null)
       return {
         ok: false,
-        message: `当前页面状态不允许 history.back，已停止回退；当前 URL：${
+        message: `${guardResult.message}，已停止 history.back；当前 URL：${
           currentTab?.url || "unknown"
         }`
       }
@@ -1242,7 +1273,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 2：点击 GPT 注册入口，并提交注册邮箱。
+   * Step 2：点击 GPT 注册/登录入口，并提交注册邮箱。
    *
    * 该步骤只处理“注册”入口；如果页面已经进入密码页或验证码页，会视为已完成。
    *
@@ -1278,8 +1309,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         texts: SIGNUP_ENTRY_BUTTON_TEXTS
       },
       timeoutMs: 10000,
-      successMessage: "已点击 GPT 注册入口",
-      failureMessage: "未找到 GPT 页面上的注册入口"
+      successMessage: "已点击 GPT 注册/登录入口",
+      failureMessage: "未找到 GPT 页面上的注册/登录入口"
     })
 
     throwIfRunAborted()
@@ -1725,6 +1756,16 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         const phoneInputTab = await chrome.tabs.get(tabId).catch(() => null)
         const phoneInputUrl = phoneInputTab?.url || ""
         const canHistoryBackToPhoneInput = isOpenAiAddPhoneUrl(phoneInputUrl)
+        const getPhoneInputHistoryBackGuard = () => {
+          return {
+            ok: canHistoryBackToPhoneInput,
+            message: canHistoryBackToPhoneInput
+              ? ""
+              : `手机号提交前页面不是 https://auth.openai.com/add-phone，而是 ${
+                  phoneInputUrl || "unknown"
+                }`
+          }
+        }
         options.onLog?.(
           "info",
           `手机号提交前页面 URL：${phoneInputUrl || "unknown"}；${
@@ -1870,7 +1911,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
               const backResult = await tryHistoryBackToPhoneInput(
                 tabId,
-                () => canHistoryBackToPhoneInput
+                getPhoneInputHistoryBackGuard
               )
               if (backResult.ok) {
                 options.onLog?.(
@@ -2018,7 +2059,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
               const backResult = await tryHistoryBackToPhoneInput(
                 tabId,
-                () => canHistoryBackToPhoneInput
+                getPhoneInputHistoryBackGuard
               )
               if (backResult.ok) {
                 options.onLog?.(
