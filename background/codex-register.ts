@@ -1170,6 +1170,69 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
+   * Step 6 开始前检查手机号验证是否已被 OpenAI 跳过。
+   *
+   * 有些账号在完成 OAuth 登录后会直接进入 Codex 授权确认页，不再要求手机号。
+   * 这种情况下不能继续买 HeroSMS 号码，只需要点击授权确认页继续并把回调地址交给 Step 7。
+   *
+   * @param tabId 当前 OpenAI 授权页标签页 ID。
+   * @return 已处理时返回 Step 6 结果；不属于跳过手机号场景时返回 null。
+   */
+  const completeOAuthConsentIfReady = async (
+    tabId: number
+  ): Promise<CodexRegisterStepResponse | null> => {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+    const currentUrl = String(currentTab?.url || "")
+    if (isCodexOAuthCallbackUrl(currentUrl)) {
+      return {
+        ok: true,
+        message: "当前账号不需要手机号验证，页面已跳转到 localhost 回调地址",
+        callbackUrl: currentUrl,
+        targetTab: {
+          id: tabId,
+          url: currentUrl
+        }
+      }
+    }
+
+    try {
+      await waitForTabLoaded(tabId)
+      const [detectResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: detectCodexAuthPageStateInPage
+      })
+      const detected = detectResult?.result
+      if (detected?.state !== "oauth_consent_ready") {
+        return null
+      }
+    } catch {
+      return null
+    }
+
+    const consentResult = await confirmCodexOAuthConsent(tabId)
+    if (!consentResult.ok) {
+      return {
+        ok: false,
+        message: `当前账号不需要手机号验证，已进入 OAuth 授权确认页，但未能点击继续并捕获回调地址：${consentResult.message}`,
+        targetTab: consentResult.targetTab || {
+          id: tabId,
+          url: currentUrl
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      message: `当前账号不需要手机号验证，已跳过 Step 6；${consentResult.message}`,
+      callbackUrl: consentResult.callbackUrl,
+      targetTab: consentResult.targetTab || {
+        id: tabId,
+        url: consentResult.callbackUrl
+      }
+    }
+  }
+
+  /**
    * 手机验证码超时后回退到手机号输入页。
    *
    * 这里按用户要求使用浏览器历史回退，不直接跳转 /add-phone；如果历史栈无法
@@ -1739,6 +1802,11 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         ok: false,
         message: "未找到手机号验证页面 tab，请先执行 Step 5 或使用当前标签页"
       }
+    }
+
+    const skippedPhoneResult = await completeOAuthConsentIfReady(tabId)
+    if (skippedPhoneResult) {
+      return skippedPhoneResult
     }
 
     let activation: HeroSmsActivation | null = null
