@@ -149,7 +149,10 @@ const runManagedRegisterFlow = async (
       registerTabId,
       account.email,
       account.password,
-      verificationRequestedAt
+      verificationRequestedAt,
+      (message) => {
+        onStage(2, message)
+      }
     )
     if (!step3Result.ok) {
       return {
@@ -1258,6 +1261,49 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     )
   }
 
+  const handleMarkSelectedRegisterStage = (stage: "start" | "phone") => {
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要标记阶段的账号")
+      log.warn("请先选择要标记阶段的账号")
+      return
+    }
+
+    const selectedSet = new Set(
+      selectedEmails.map((email) => normalizeEmail(email))
+    )
+    const nextProgress = stage === "phone" ? 5 : 0
+    const nextMessage =
+      stage === "phone"
+        ? "已手动标记为从第 6 步手机号验证开始"
+        : "已手动标记为从第 1 步开始"
+    let changedCount = 0
+    const now = Date.now()
+    const nextAccounts = accounts.map((account) => {
+      if (!selectedSet.has(normalizeEmail(account.email))) {
+        return account
+      }
+
+      changedCount += 1
+      return {
+        ...account,
+        progress: nextProgress as ManagedAccountProgress,
+        status: "idle" as const,
+        lastMessage: nextMessage,
+        updatedAt: now
+      }
+    })
+
+    if (changedCount === 0) {
+      setStatus("未找到选中的账号")
+      log.warn("未找到选中的账号，无法标记阶段")
+      return
+    }
+
+    syncAccounts(nextAccounts, cpaUrl, cpaManagementKey)
+    setStatus(`已标记 ${changedCount} 个账号阶段`)
+    log.info(`已标记 ${changedCount} 个账号：${nextMessage}`)
+  }
+
   const disabled = isBatchRunning || isDebugRunning
   const hasBatchConfig = Boolean(
     cpaUrl.trim() && cpaManagementKey.trim() && heroSms.hasRequiredConfig
@@ -1310,6 +1356,29 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         disabled={disabled}
         stepCount={REGISTER_STEP_COUNT}
         stepLabels={REGISTER_FLOW_STEPS}
+        extraMoreItems={[
+          {
+            key: "register-stage-start",
+            label: "标记：从第 1 步开始"
+          },
+          {
+            key: "register-stage-phone",
+            label: "标记：从第 6 步开始"
+          }
+        ]}
+        onExtraMoreClick={(key) => {
+          if (
+            key !== "register-stage-start" &&
+            key !== "register-stage-phone"
+          ) {
+            return false
+          }
+
+          handleMarkSelectedRegisterStage(
+            key === "register-stage-phone" ? "phone" : "start"
+          )
+          return true
+        }}
         toolbarActions={
           isBatchRunning ? (
             <Button

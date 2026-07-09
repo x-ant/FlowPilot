@@ -1422,7 +1422,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     tabId: number,
     email: string,
     password: string,
-    verificationRequestedAt = 0
+    verificationRequestedAt = 0,
+    onProgress?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -1446,9 +1447,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         targetTab: mailResult.mailTab
       }
     }
+    onProgress?.(mailResult.message)
 
     await chrome.tabs.update(tabId, { active: true })
-    const submitResult = await runPageActionInTab(tabId, {
+    const fillResult = await runPageActionInTab(tabId, {
       fields: [
         {
           selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
@@ -1456,26 +1458,42 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           allowSplitInput: true
         }
       ],
+      timeoutMs: 15000,
+      successMessage: "已填写注册验证码",
+      failureMessage: "未找到验证码输入框"
+    })
+
+    if (!fillResult.ok) {
+      return {
+        ok: false,
+        message: `${mailResult.message}；${fillResult.message}`,
+        targetTab: fillResult.tab
+      }
+    }
+    onProgress?.(fillResult.message)
+
+    const submitResult = await runPageActionInTab(tabId, {
       button: {
         texts: OPENAI_CONTINUE_BUTTON_TEXTS,
         triggerMode: "requestSubmit"
       },
       timeoutMs: 15000,
-      successMessage: "已填写注册验证码并点击继续",
-      failureMessage: "未找到验证码输入框或继续按钮"
+      successMessage: "已点击注册验证码页继续按钮",
+      failureMessage: "未找到验证码页继续按钮"
     })
 
     if (!submitResult.ok) {
       return {
         ok: false,
-        message: `${mailResult.message}；${submitResult.message}`,
+        message: `${mailResult.message}；${fillResult.message}；${submitResult.message}`,
         targetTab: submitResult.tab
       }
     }
+    onProgress?.(submitResult.message)
 
     return {
       ok: true,
-      message: `${mailResult.message}；${submitResult.message}`,
+      message: `${mailResult.message}；${fillResult.message}；${submitResult.message}`,
       targetTab: submitResult.tab
     }
   }
@@ -1540,7 +1558,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
 
     const readyUrl = await waitForTabMatchingUrl(tabId, isChatGptPageUrl, {
-      timeoutMs: 15000,
+      timeoutMs: 30000,
       intervalMs: 300,
       signal: getAbortSignal()
     })
@@ -1548,7 +1566,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       const currentTab = await chrome.tabs.get(tabId)
       return {
         ok: false,
-        message: "未等到准备就绪页跳转到 ChatGPT 页面",
+        message: "30 秒内未等到准备就绪页跳转到 ChatGPT 页面",
         targetTab: {
           id: tabId,
           url: currentTab.url

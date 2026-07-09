@@ -1357,30 +1357,18 @@ export const submitPhoneNumberInPage = (
   /**
    * 点击继续按钮。
    *
-   * 有表单时优先 requestSubmit，保证页面的 submit 监听和校验正常触发。
+   * 这里优先模拟真实点击，保证页面挂在按钮 click 上的校验和通道逻辑会执行。
    *
    * @param button 继续按钮。
-   * @param input 手机号输入框。
    */
-  const clickButton = (button: HTMLElement, input: HTMLInputElement) => {
-    const form =
-      (button instanceof HTMLButtonElement || button instanceof HTMLInputElement
-        ? button.form
-        : null) ||
-      input.form ||
-      (button.closest("form") as HTMLFormElement | null)
-
-    if (form && typeof form.requestSubmit === "function") {
-      form.requestSubmit(
-        button instanceof HTMLButtonElement ||
-          button instanceof HTMLInputElement
-          ? button
-          : undefined
-      )
-      return
-    }
-
-    button.click()
+  const clickButton = (button: HTMLElement) => {
+    button.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      })
+    )
   }
 
   return (async () => {
@@ -1418,6 +1406,7 @@ export const submitPhoneNumberInPage = (
       setInputValue(hiddenInput, `+${digits}`)
     }
 
+    await waitForDelay(300)
     const button = findContinueButton()
     if (!button) {
       return {
@@ -1426,7 +1415,7 @@ export const submitPhoneNumberInPage = (
       }
     }
 
-    clickButton(button, phoneInput)
+    clickButton(button)
 
     return {
       ok: true,

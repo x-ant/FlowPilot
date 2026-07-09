@@ -201,7 +201,7 @@ export const getAccountProgressSummary = (
     return `当前：${stepLabel}`
   }
 
-  return `待执行：${getAccountProgressStepLabel(1, stepLabels)}`
+  return `待执行：${stepLabel}`
 }
 
 export const getStorage = () => {

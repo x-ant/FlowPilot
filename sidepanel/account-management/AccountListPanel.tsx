@@ -8,6 +8,7 @@ import {
   Tag,
   Typography
 } from "antd"
+import type { MenuProps } from "antd"
 import type { ReactNode } from "react"
 
 import {
@@ -41,6 +42,8 @@ type AccountListPanelProps = {
   stepCount?: number
   stepLabels?: Partial<Record<number, AccountProgressStepMeta>>
   toolbarActions?: ReactNode
+  extraMoreItems?: MenuProps["items"]
+  onExtraMoreClick?: (key: string) => boolean
 }
 
 export function AccountListPanel({
@@ -48,7 +51,9 @@ export function AccountListPanel({
   disabled,
   stepCount = STEP_COUNT,
   stepLabels,
-  toolbarActions
+  toolbarActions,
+  extraMoreItems = [],
+  onExtraMoreClick
 }: AccountListPanelProps) {
   const {
     accounts,
@@ -98,12 +103,24 @@ export function AccountListPanel({
                   {
                     type: "divider"
                   },
+                  ...extraMoreItems,
+                  ...(extraMoreItems.length > 0
+                    ? [
+                        {
+                          type: "divider" as const
+                        }
+                      ]
+                    : []),
                   {
                     key: "mark-done",
                     label: "标为已完成"
                   }
                 ],
                 onClick: ({ key }) => {
+                  if (onExtraMoreClick?.(String(key))) {
+                    return
+                  }
+
                   if (key === "mark-done") {
                     handleMarkSelectedAccountsDone()
                     return

@@ -141,7 +141,22 @@ export const useAccountPageState = ({
       return
     }
 
-    const nextAccount = createManagedAccount(email, password)
+    const previousEditingEmail = normalizeEmail(editingEmail)
+    const existingAccount =
+      accounts.find((account) => {
+        return normalizeEmail(account.email) === email
+      }) || null
+    const shouldPreserveAccountState =
+      existingAccount &&
+      (!previousEditingEmail || previousEditingEmail === email)
+    const nextAccount = shouldPreserveAccountState
+      ? {
+          ...existingAccount,
+          email,
+          password,
+          updatedAt: Date.now()
+        }
+      : createManagedAccount(email, password)
     const nextAccounts = upsertManagedAccount(
       accounts,
       nextAccount,
