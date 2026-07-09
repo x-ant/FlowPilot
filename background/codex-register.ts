@@ -1721,8 +1721,18 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         throwIfRunAborted()
 
         await waitForTabLoaded(tabId)
-        // 当前界面的URL
-        const phoneInputUrl = (await chrome.tabs.get(tabId).catch(() => null))?.url || ""
+        // 只在确认本轮手机号是从 /add-phone 提交时，才允许后续 history.back 换号。
+        const phoneInputTab = await chrome.tabs.get(tabId).catch(() => null)
+        const phoneInputUrl = phoneInputTab?.url || ""
+        const canHistoryBackToPhoneInput = isOpenAiAddPhoneUrl(phoneInputUrl)
+        options.onLog?.(
+          "info",
+          `手机号提交前页面 URL：${phoneInputUrl || "unknown"}；${
+            canHistoryBackToPhoneInput
+              ? "后续验证码超时允许 history.back 换号"
+              : "后续验证码超时不允许 history.back，将刷新 OAuth"
+          }`
+        )
         // 提交手机号，页面到获取验证码的页面
         const [phoneResult] = await chrome.scripting.executeScript({
           target: { tabId },
@@ -1860,7 +1870,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
               const backResult = await tryHistoryBackToPhoneInput(
                 tabId,
-                () => isOpenAiAddPhoneUrl(phoneInputUrl)
+                () => canHistoryBackToPhoneInput
               )
               if (backResult.ok) {
                 options.onLog?.(
@@ -2008,7 +2018,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
               const backResult = await tryHistoryBackToPhoneInput(
                 tabId,
-                () => isOpenAiAddPhoneUrl(phoneInputUrl)
+                () => canHistoryBackToPhoneInput
               )
               if (backResult.ok) {
                 options.onLog?.(

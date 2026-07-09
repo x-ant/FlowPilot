@@ -1172,6 +1172,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           lastMessage: runResult.message
         })
         log.info(`[${currentAccount.email}] ${runResult.message}`)
+        log.info(`========== 流程成功完成：${currentAccount.email} ==========`)
         if (batchStopStrategyRef.current !== "none") {
           break
         }
