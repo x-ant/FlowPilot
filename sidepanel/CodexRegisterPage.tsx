@@ -1266,7 +1266,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   return (
     <>
       <Modal
-        title="当前正在等待手机号验证码"
+        title="当前手机号已进入验证流程"
         open={isStopStrategyModalOpen}
         closable={false}
         mask={{ closable: false }}
@@ -1297,7 +1297,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ]}>
         <div>
           <p>
-            当前手机号已经提交，正在等待验证码。直接停止会把当前手机号后续处理交给你人工负责。
+            当前手机号已经获取并可能已经提交到 OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
           </p>
           <p>
             推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成

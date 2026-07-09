@@ -1666,6 +1666,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         activation = await requestHeroSmsActivation(options)
         assertHeroSmsActivationCostWithinExpected(activation)
         const activationSummary = formatHeroSmsActivationSummary(activation)
+        options.onPhoneVerificationPhase?.("phone_submitted")
         throwIfRunAborted()
 
         await waitForTabLoaded(tabId)
@@ -1683,6 +1684,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         })
         const phonePageResult = phoneResult?.result
         if (!phonePageResult?.ok) {
+          options.onPhoneVerificationPhase?.("phone_wait_finished")
           options.onLog?.(
             "warn",
             `手机号 ${activation.phoneNumber} 页面提交失败，HeroSMS 订单 ${activation.activationId} 未取消；新订单未满 2 分钟通常无法取消，等待平台自动回收`
@@ -1710,6 +1712,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             signal: getAbortSignal()
           }
         )
+        throwIfRunAborted()
         // 如果能在页面拿到信息说明手机号有问题，直接拿下一个手机号
         if (!phoneVerificationUrl) {
           let failureMessage = ""
@@ -1742,6 +1745,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           )
           await releaseHeroSmsActivationQuietly(options, activation)
           activation = null
+          options.onPhoneVerificationPhase?.("phone_wait_finished")
           return {
             ok: false,
             message: `${phonePageResult.message}；手机号提交后未进入验证码页，已停止自动换号；${activationSummary}`,
@@ -1752,8 +1756,6 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           }
         }
         // endregion
-
-        options.onPhoneVerificationPhase?.("phone_submitted")
         for (
           let codeAttempt = 1;
           codeAttempt <= REGISTER_PHONE_CODE_MAX_SUBMIT_ATTEMPTS;
