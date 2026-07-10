@@ -114,7 +114,8 @@ const runManagedRegisterFlow = async (
   heroSmsOptions: HeroSmsPhoneVerificationOptions,
   runner: ReturnType<typeof createCodexRegisterRunner>,
   getStopStrategy: () => RegisterStopStrategy,
-  onStage: (progress: ManagedAccountProgress, message: string) => void
+  onStage: (progress: ManagedAccountProgress, message: string) => void,
+  onProgressLog?: (message: string) => void
 ): Promise<AccountRunResult> => {
   const messages: string[] = []
   const startFromStep = account.progress >= 4 ? 5 : 1
@@ -198,7 +199,8 @@ const runManagedRegisterFlow = async (
     account.email,
     account.password,
     cpaUrl,
-    cpaManagementKey
+    cpaManagementKey,
+    onProgressLog
   )
   const step5Message = `${refreshResult.message}；${loginResult.message}`
   if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
@@ -283,7 +285,8 @@ const runManagedRegisterFlow = async (
       account.email,
       account.password,
       cpaUrl,
-      cpaManagementKey
+      cpaManagementKey,
+      onProgressLog
     )
     if (
       !nextLoginResult.ok ||
@@ -686,7 +689,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         selectedDebugAccount.email,
         selectedDebugAccount.password,
         normalizedCpaUrl,
-        normalizedCpaManagementKey
+        normalizedCpaManagementKey,
+        (message) => {
+          log.info(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+        }
       )
       const message = `${refreshResult.message}；${result.message}`
 
@@ -882,7 +888,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           selectedDebugAccount.email,
           selectedDebugAccount.password,
           normalizedCpaUrl,
-          normalizedCpaManagementKey
+          normalizedCpaManagementKey,
+          (message) => {
+            log.info(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+          }
         )
         const step5Message = `${refreshResult.message}；${loginResult.message}`
         if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
@@ -1093,12 +1102,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         continue
       }
 
+      const resumeStep = currentAccount.progress >= 4 ? 5 : 1
       currentRunnableIndex += 1
       setRunningEmail(currentAccount.email)
       setStatus(
         `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
       )
       log.info(`开始处理账号 ${currentAccount.email}`)
+      log.info(
+        `[${currentAccount.email}] 当前标记进度 ${currentAccount.progress}/${REGISTER_STEP_COUNT}，将从 Step ${resumeStep} 开始执行`
+      )
 
       const updateCurrentAccount = (
         patch: Partial<ManagedAccount>
@@ -1117,7 +1130,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       updateCurrentAccount({
         status: "running",
-        lastMessage: "正在打开 GPT 注册页"
+        lastMessage:
+          resumeStep === 1
+            ? "正在打开 GPT 注册页"
+            : "正在刷新 OAuth 并进入手机号验证阶段"
       })
 
       let runResult: AccountRunResult
@@ -1138,6 +1154,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               lastMessage: message
             })
             setStatus(`账号 ${currentAccount.email} 已完成 Step ${progress}`)
+            log.info(`[${currentAccount.email}] ${message}`)
+          },
+          (message) => {
+            updateCurrentAccount({
+              status: "running",
+              lastMessage: message
+            })
             log.info(`[${currentAccount.email}] ${message}`)
           }
         )
@@ -1272,11 +1295,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const selectedSet = new Set(
       selectedEmails.map((email) => normalizeEmail(email))
     )
-    const nextProgress = stage === "phone" ? 5 : 0
+    const nextProgress = stage === "phone" ? 4 : 0
     const nextMessage =
       stage === "phone"
-        ? "已手动标记为从第 6 步手机号验证开始"
-        : "已手动标记为从第 1 步开始"
+        ? "已手动标记为从手机号验证开始（下一步从 Step 5 刷新 OAuth 开始）"
+        : "已手动标记为从头开始"
     let changedCount = 0
     const now = Date.now()
     const nextAccounts = accounts.map((account) => {
@@ -1360,11 +1383,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         extraMoreItems={[
           {
             key: "register-stage-start",
-            label: "标记：从第 1 步开始"
+            label: "标记：从头开始"
           },
           {
             key: "register-stage-phone",
-            label: "标记：从第 6 步开始"
+            label: "标记：从手机号验证开始"
           }
         ]}
         onExtraMoreClick={(key) => {

@@ -2227,7 +2227,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     email: string,
     password: string,
     targetUrl: string,
-    managementKey: string
+    managementKey: string,
+    onFallbackLog?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -2235,6 +2236,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (firstChoice.ok) {
       return firstChoice
     }
+    onFallbackLog?.(
+      `${firstChoice.message}；开始执行登录兜底流程 1、2、3`
+    )
 
     const normalizedTargetUrl = String(targetUrl || "").trim()
     const normalizedManagementKey = String(managementKey || "").trim()
@@ -2254,6 +2258,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    onFallbackLog?.("登录兜底 Step 1：正在打开 GPT 页面")
     const openResult = await openChatGptRegisterEntry(tabId)
     if (!openResult.ok || typeof openResult.targetTab?.id !== "number") {
       return {
@@ -2262,7 +2267,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         targetTab: openResult.targetTab
       }
     }
+    onFallbackLog?.(`登录兜底 Step 1：${openResult.message}`)
 
+    onFallbackLog?.("登录兜底 Step 2：正在点击登录入口")
     const entryResult = await runPageActionInTab(openResult.targetTab.id, {
       button: {
         texts: LOGIN_ENTRY_BUTTON_TEXTS
@@ -2271,6 +2278,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       successMessage: "已点击 GPT 登录入口",
       failureMessage: "未找到 GPT 页面上的登录入口"
     })
+    onFallbackLog?.(`登录兜底 Step 2：${entryResult.message}`)
     const buildFallbackMessage = (...messages: Array<string | undefined>) => {
       return [
         firstChoice.message,
@@ -2282,10 +2290,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         .join("；")
     }
 
+    onFallbackLog?.("登录兜底 Step 2：正在填写登录邮箱并等待下一页")
     const loginResult = await submitCodexLoginEmailAndWait(
       openResult.targetTab.id,
       email
     )
+    onFallbackLog?.(`登录兜底 Step 2：${loginResult.message}`)
     if (!loginResult.ok) {
       return {
         ok: false,
@@ -2294,10 +2304,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    onFallbackLog?.("登录兜底 Step 2：正在处理密码页")
     const passwordResult = await submitCodexLoginPasswordAndWait(
       openResult.targetTab.id,
       password
     )
+    onFallbackLog?.(`登录兜底 Step 2：${passwordResult.message}`)
     if (!passwordResult.ok) {
       return {
         ok: false,
@@ -2313,12 +2325,14 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       passwordResult.verificationRequestedAt ||
       loginResult.verificationRequestedAt ||
       Date.now()
+    onFallbackLog?.("登录兜底 Step 3：正在读取并提交登录验证码")
     const codeResult = await fetchAndSubmitCodexVerificationCode(
       openResult.targetTab.id,
       email,
       password,
       verificationRequestedAt
     )
+    onFallbackLog?.(`登录兜底 Step 3：${codeResult.message}`)
     if (!codeResult.ok) {
       return {
         ok: false,
@@ -2335,13 +2349,16 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     await waitForTabLoaded(codeTabId, undefined, 30000)
 
     // 验证码提交后给页面一点时间写入登录缓存，再重新打开 OAuth。
+    onFallbackLog?.("登录兜底：验证码已提交，等待 OpenAI 写入登录状态")
     await abortableSleep(15000, getAbortSignal())
 
+    onFallbackLog?.("登录兜底：正在重新刷新 OAuth")
     const refreshResult = await refreshRegisterOAuthAndLogin(
       normalizedTargetUrl,
       normalizedManagementKey,
       codeTabId
     )
+    onFallbackLog?.(`登录兜底：${refreshResult.message}`)
     if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
       return {
         ok: false,
@@ -2355,10 +2372,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    onFallbackLog?.("登录兜底：正在重新选择目标账号卡片")
     const secondChoice = await chooseRegisterLoginAccount(
       refreshResult.targetTab.id,
       email
     )
+    onFallbackLog?.(`登录兜底：${secondChoice.message}`)
     return {
       ok: secondChoice.ok,
       message: buildFallbackMessage(
