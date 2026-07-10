@@ -1,11 +1,11 @@
-import {
+﻿import {
   createConsoleLogger,
   EXECUTION_LOG_LIMIT,
   EXECUTION_LOG_STORAGE_KEY,
   getTimeLabel,
   normalizeStoredLogs,
   type LogLevel
-} from "../shared/logging"
+} from "../../shared/logging"
 import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   loadAccountPageState,
@@ -19,13 +19,12 @@ import {
   saveAccountPageState,
   type RegisterAlarmConfig,
   type RegisterRunLock
-} from "../sidepanel/shared"
+} from "../../shared/account-state"
 import {
   runRegisterBatch,
   type RegisterStopStrategy
-} from "./register-batch-runner"
-import type { HeroSmsPhoneVerificationOptions } from "./register-phone-verification"
-
+} from "./batch-runner"
+import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
 
 const log = createConsoleLogger("register-alarm")

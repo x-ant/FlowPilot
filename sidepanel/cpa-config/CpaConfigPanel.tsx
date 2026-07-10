@@ -1,7 +1,7 @@
-import { Collapse, Form, Input } from "antd"
+﻿import { Collapse, Form, Input } from "antd"
 import { useEffect } from "react"
 
-import type { LoginFormValues } from "../shared"
+import type { LoginFormValues } from "../../shared/account-state"
 
 type CpaConfigPanelProps = {
   cpaUrl: string

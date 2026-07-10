@@ -1,12 +1,12 @@
-import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
+﻿import { pollMail2925VerificationCodeInPage } from "./mail-2925-page-code"
 import {
   ensureMail2925SessionInPage,
   type EnsureMail2925SessionPayload
 } from "./mail-2925-page-session"
-import type { BrowserTabInfo } from "./types"
-import { raceWithAbort, throwIfAborted } from "./utils/abort"
-import type { RunContext } from "./utils/run-context"
-import { findOrOpenMatchedTab, waitForTabLoaded } from "./utils/tab-utils"
+import type { BrowserTabInfo } from "../types"
+import { raceWithAbort, throwIfAborted } from "../utils/abort"
+import type { RunContext } from "../utils/run-context"
+import { findOrOpenMatchedTab, waitForTabLoaded } from "../utils/tab-utils"
 
 const MAIL2925_MAILBOX_URL = "https://2925.com/#/mailList"
 const MAIL2925_HOSTNAMES = ["2925.com", "www.2925.com"]

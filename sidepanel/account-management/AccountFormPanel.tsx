@@ -1,7 +1,7 @@
-import { Button, Collapse, Form, Input, Space, Tag } from "antd"
+﻿import { Button, Collapse, Form, Input, Space, Tag } from "antd"
 import { useEffect, useState } from "react"
 
-import { EMPTY_ACCOUNT_FORM, type AccountFormValues } from "../shared"
+import { EMPTY_ACCOUNT_FORM, type AccountFormValues } from "../../shared/account-state"
 import type { AccountPageState } from "./useAccountPageState"
 
 type AccountFormPanelAccountPage = Pick<

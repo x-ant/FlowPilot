@@ -1,4 +1,4 @@
-import { performPageActionInPage, type PageActionConfig } from "../page-script"
+﻿import { performPageActionInPage, type PageActionConfig } from "../page-scripts/page-script"
 import type { BrowserTabInfo } from "../types"
 import {
   findOrOpenTab,

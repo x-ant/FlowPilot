@@ -1,5 +1,5 @@
-import { createCodexRegisterRunner } from "./codex-register"
-import type { HeroSmsPhoneVerificationOptions } from "./register-phone-verification"
+﻿import { createCodexRegisterRunner } from "./steps"
+import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 import {
   normalizeEmail,
   resetManagedAccountState,
@@ -7,7 +7,7 @@ import {
   type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus
-} from "../sidepanel/shared"
+} from "../../shared/account-state"
 
 export const REGISTER_STEP_COUNT = 7
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3

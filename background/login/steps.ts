@@ -1,28 +1,28 @@
-import {
+﻿import {
   requestCpaOAuthUrl,
   submitCpaOAuthCallback
-} from "./cpa-management-api"
-import { createMail2925Runner } from "./mail-2925"
+} from "../integrations/cpa-management-api"
+import { createMail2925Runner } from "../integrations/mail-2925"
 import {
   detectCodexAuthPageStateInPage,
   type DetectCodexAuthPageState
-} from "./page-script"
+} from "../page-scripts/page-script"
 import type {
   CodexAuthProgressStepResponse,
   ConfirmCodexOAuthConsentResponse,
   FetchAndSubmitCodexVerificationCodeResponse,
   OpenCodexAuthLinkApiResponse,
   SubmitCodexOAuthCallbackResponse
-} from "./types"
-import { abortableSleep, raceWithAbort, throwIfAborted } from "./utils/abort"
+} from "../types"
+import { abortableSleep, raceWithAbort, throwIfAborted } from "../utils/abort"
 import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
-} from "./utils/browser-session-cleanup"
-import { runAuthPageAction } from "./utils/page-action-runner"
-import type { RunContext } from "./utils/run-context"
-import { waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils"
+} from "../utils/browser-session-cleanup"
+import { runAuthPageAction } from "../utils/page-action-runner"
+import type { RunContext } from "../utils/run-context"
+import { waitForTabLoaded, waitForTabMatchingUrl } from "../utils/tab-utils"
 
 type OpenCodexAuthLinkOptions = {
   cleanupSession?: boolean

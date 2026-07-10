@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react"
+﻿import { useEffect, useState } from "react"
 
 import {
   fetchHeroSmsCountries,
   fetchHeroSmsOperators,
   type HeroSmsCountryOption,
   type HeroSmsPhoneVerificationOptions
-} from "../../background/register-phone-verification"
+} from "../../background/register/phone-verification"
 import type { UiLogger } from "../../shared/logging"
 
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"

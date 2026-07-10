@@ -1,4 +1,4 @@
-import {
+﻿import {
   Button,
   Card,
   Checkbox,
@@ -17,7 +17,7 @@ import {
   STATUS_META,
   STEP_COUNT,
   type AccountProgressStepMeta
-} from "../shared"
+} from "../../shared/account-state"
 import type { AccountPageState } from "./useAccountPageState"
 
 type AccountListPanelAccountPage = Pick<

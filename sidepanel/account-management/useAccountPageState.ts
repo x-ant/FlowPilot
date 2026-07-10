@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+﻿import { useEffect, useMemo, useState } from "react"
 
 import type { UiLogger } from "../../shared/logging"
 import {
@@ -16,7 +16,7 @@ import {
   type AccountPageStorageKeys,
   type ManagedAccount,
   type ManagedAccountProgress
-} from "../shared"
+} from "../../shared/account-state"
 
 type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys

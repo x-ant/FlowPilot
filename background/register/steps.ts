@@ -1,6 +1,6 @@
-import { createCodexLoginRunner } from "./codex-login"
-import { createMail2925Runner } from "./mail-2925"
-import { detectCodexAuthPageStateInPage } from "./page-script"
+﻿import { createCodexLoginRunner } from "../login/steps"
+import { createMail2925Runner } from "../integrations/mail-2925"
+import { detectCodexAuthPageStateInPage } from "../page-scripts/page-script"
 import {
   assertHeroSmsActivationCostWithinExpected,
   pollHeroSmsCode,
@@ -9,20 +9,20 @@ import {
   submitPhoneNumberInPage,
   type HeroSmsActivation,
   type HeroSmsPhoneVerificationOptions
-} from "./register-phone-verification"
-import { abortableSleep } from "./utils/abort"
+} from "./phone-verification"
+import { abortableSleep } from "../utils/abort"
 import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
-} from "./utils/browser-session-cleanup"
-import { runPageActionInTab } from "./utils/page-action-runner"
-import type { RunContext } from "./utils/run-context"
+} from "../utils/browser-session-cleanup"
+import { runPageActionInTab } from "../utils/page-action-runner"
+import type { RunContext } from "../utils/run-context"
 import {
   findOrOpenTab,
   waitForTabLoaded,
   waitForTabMatchingUrl
-} from "./utils/tab-utils"
+} from "../utils/tab-utils"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [

@@ -1,4 +1,4 @@
-import type { PageActionResult } from "./types"
+import type { PageActionResult } from "../types"
 
 export type ExtractCodexOAuthUrlResult = {
   ok: boolean

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Alert,
   Button,
   Collapse,
@@ -24,19 +24,19 @@ import {
   submitRegisterOAuthCallbackToCpa,
   submitRegisterProfile,
   type CodexRegisterStepResponse
-} from "../background/codex-register"
+} from "../../background/register/steps"
 import {
   REGISTER_STEP_COUNT,
   type RegisterStopStrategy
-} from "../background/register-batch-runner"
+} from "../../background/register/batch-runner"
 import {
   AccountFormPanel,
   AccountListPanel,
   useAccountPageState
-} from "./account-management"
-import { CpaConfigPanel } from "./cpa-config"
-import { DebugTabControl } from "./DebugTabControl"
-import { HeroSmsConfigPanel, useHeroSmsConfig } from "./hero-sms-config"
+} from "../account-management"
+import { CpaConfigPanel } from "../cpa-config"
+import { DebugTabControl } from "../components/DebugTabControl"
+import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
 import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   normalizeEmail,
@@ -52,7 +52,7 @@ import {
   type PageProps,
   type RegisterAlarmConfig,
   type RegisterRunLock
-} from "./shared"
+} from "../../shared/account-state"
 
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
 const REGISTER_FLOW_STEPS = {

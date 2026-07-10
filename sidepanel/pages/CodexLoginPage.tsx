@@ -1,4 +1,4 @@
-import { Button, Collapse, Dropdown, Select, Space, Tag } from "antd"
+﻿import { Button, Collapse, Dropdown, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -9,14 +9,14 @@ import {
   submitCodexLoginEmailAndWait,
   submitCodexLoginPasswordAndWait,
   submitCodexOAuthCallbackToCpa
-} from "../background/codex-login"
+} from "../../background/login/steps"
 import {
   AccountFormPanel,
   AccountListPanel,
   useAccountPageState
-} from "./account-management"
-import { CpaConfigPanel } from "./cpa-config"
-import { DebugTabControl } from "./DebugTabControl"
+} from "../account-management"
+import { CpaConfigPanel } from "../cpa-config"
+import { DebugTabControl } from "../components/DebugTabControl"
 import {
   getFlowStepLabel,
   getFlowStepName,
@@ -31,7 +31,7 @@ import {
   type ManagedAccount,
   type ManagedAccountStatus,
   type PageProps
-} from "./shared"
+} from "../../shared/account-state"
 
 const runManagedAccountFlow = async (
   cpaUrl: string,

@@ -1,4 +1,4 @@
-import type { UiLogger } from "../shared/logging"
+﻿import type { UiLogger } from "./logging"
 
 export type LoginFormValues = {
   cpaUrl?: string

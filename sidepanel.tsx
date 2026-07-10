@@ -1,4 +1,4 @@
-import {
+﻿import {
   Button,
   Card,
   ConfigProvider,
@@ -25,14 +25,14 @@ import {
   normalizeStoredLogs,
   type LogItem
 } from "./shared/logging"
-import { CodexLoginPage } from "./sidepanel/CodexLoginPage"
-import { CodexRegisterPage } from "./sidepanel/CodexRegisterPage"
+import { CodexLoginPage } from "./sidepanel/pages/CodexLoginPage"
+import { CodexRegisterPage } from "./sidepanel/pages/CodexRegisterPage"
 import {
   ACTIVE_PAGE_STORAGE_KEY,
   FLOW_PAGE_ITEMS,
   getStorage,
   type FlowPage
-} from "./sidepanel/shared"
+} from "./shared/account-state"
 
 /**
  * Chrome 扩展侧边栏入口。
