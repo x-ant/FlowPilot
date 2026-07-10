@@ -1,5 +1,3 @@
-﻿import type { UiLogger } from "./logging"
-
 export type LoginFormValues = {
   cpaUrl?: string
   cpaManagementKey?: string
@@ -44,8 +42,6 @@ export type DebugStep = 1 | 2 | 3 | 4 | 5 | 6
 
 export type BatchRunMode = "pending" | "all"
 
-export type FlowPage = "codex-login" | "codex-register"
-
 export type RegisterAlarmMode = "interval" | "daily"
 
 export type RegisterAlarmConfig = {
@@ -74,15 +70,8 @@ export type AccountRunResult = {
   needsReview?: boolean
 }
 
-export type PageProps = {
-  log: UiLogger
-  setStatus: (status: string) => void
-  onBusyChange?: (busy: boolean) => void
-}
-
 export const STEP_COUNT = 6
 
-export const ACTIVE_PAGE_STORAGE_KEY = "codex-login:active-page"
 export const LOGIN_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaUrl: "codex-login:cpa-url",
   cpaManagementKey: "codex-login:cpa-management-key",
@@ -104,17 +93,6 @@ export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
   dailyTime: "02:00",
   selectedEmails: []
 }
-
-export const FLOW_PAGE_ITEMS: Array<{ key: FlowPage; label: string }> = [
-  {
-    key: "codex-login",
-    label: "codex-login"
-  },
-  {
-    key: "codex-register",
-    label: "codex-register"
-  }
-]
 
 export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
   email: "",

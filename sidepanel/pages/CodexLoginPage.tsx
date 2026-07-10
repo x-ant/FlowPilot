@@ -17,6 +17,7 @@ import {
 } from "../account-management"
 import { CpaConfigPanel } from "../cpa-config"
 import { DebugTabControl } from "../components/DebugTabControl"
+import type { PageProps } from "./types"
 import {
   getFlowStepLabel,
   getFlowStepName,
@@ -29,8 +30,7 @@ import {
   type BatchRunMode,
   type DebugStep,
   type ManagedAccount,
-  type ManagedAccountStatus,
-  type PageProps
+  type ManagedAccountStatus
 } from "../../shared/account-state"
 
 const runManagedAccountFlow = async (

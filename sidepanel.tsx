@@ -25,14 +25,14 @@ import {
   normalizeStoredLogs,
   type LogItem
 } from "./shared/logging"
-import { CodexLoginPage } from "./sidepanel/pages/CodexLoginPage"
-import { CodexRegisterPage } from "./sidepanel/pages/CodexRegisterPage"
 import {
   ACTIVE_PAGE_STORAGE_KEY,
+  CodexLoginPage,
+  CodexRegisterPage,
   FLOW_PAGE_ITEMS,
-  getStorage,
   type FlowPage
-} from "./shared/account-state"
+} from "./sidepanel/pages"
+import { getStorage } from "./shared/account-state"
 
 /**
  * Chrome 扩展侧边栏入口。

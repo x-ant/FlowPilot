@@ -37,6 +37,7 @@ import {
 import { CpaConfigPanel } from "../cpa-config"
 import { DebugTabControl } from "../components/DebugTabControl"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
+import type { PageProps } from "./types"
 import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   normalizeEmail,
@@ -49,7 +50,6 @@ import {
   type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus,
-  type PageProps,
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../../shared/account-state"
