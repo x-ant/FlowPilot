@@ -22,9 +22,13 @@ import {
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
   submitRegisterOAuthCallbackToCpa,
-  submitRegisterProfile
+  submitRegisterProfile,
+  type CodexRegisterStepResponse
 } from "../background/codex-register"
-import { type RegisterStopStrategy } from "../background/register-batch-runner"
+import {
+  REGISTER_STEP_COUNT,
+  type RegisterStopStrategy
+} from "../background/register-batch-runner"
 import {
   AccountFormPanel,
   AccountListPanel,
@@ -50,7 +54,6 @@ import {
   type RegisterRunLock
 } from "./shared"
 
-const REGISTER_STEP_COUNT = 7
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
 const REGISTER_FLOW_STEPS = {
   1: {
@@ -76,26 +79,12 @@ const REGISTER_FLOW_STEPS = {
   }
 }
 
-type RegisterStepResult = {
-  ok: boolean
-  message: string
-  needRefreshOAuth?: boolean
-  needsManualReview?: boolean
-  oauthStartedAt?: number
-  cpaOAuthState?: string
-  callbackUrl?: string
-  targetTab?: {
-    id?: number
-    url?: string
-  }
-}
-
 type RegisterDebugStepOptions = {
   step: number
   runningStatus: string
   runningMessage: string
   runningProgress: ManagedAccountProgress
-  action: (tabId: number) => Promise<RegisterStepResult>
+  action: (tabId: number) => Promise<CodexRegisterStepResponse>
   failureStatus: string
   successStatus: string
   successProgress: ManagedAccountProgress
@@ -238,9 +227,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
       setRegisterRunLock(response.lock)
     } catch (error) {
-      log.warn(
-        error instanceof Error ? error.message : "读取注册任务状态失败"
-      )
+      log.warn(error instanceof Error ? error.message : "读取注册任务状态失败")
     }
   }
 
@@ -699,7 +686,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
           const closedAuthTab = await closeTabQuietly(tabId)
           const message = `${result.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次；${
-            closedAuthTab ? "已关闭当前 OAuth 页面" : "当前 OAuth 页面未关闭或已不存在"
+            closedAuthTab
+              ? "已关闭当前 OAuth 页面"
+              : "当前 OAuth 页面未关闭或已不存在"
           }`
           setStatus("手机号验证失败")
           log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
@@ -1182,7 +1171,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ]}>
         <div>
           <p>
-            当前手机号已经获取并可能已经提交到 OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
+            当前手机号已经获取并可能已经提交到
+            OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
           </p>
           <p>
             推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成

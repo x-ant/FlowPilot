@@ -24,6 +24,18 @@ type UseAccountPageStateOptions = {
   setStatus: (status: string) => void
 }
 
+/**
+ * 管理一个功能页的账号、CPA 配置和账号选择状态。
+ *
+ * 登录页和注册页都复用这个 hook；差异只通过 storageKeys 分开保存，
+ * 避免两套页面各自维护一份相同的账号列表逻辑。
+ *
+ * @param options 页面状态初始化选项。
+ * @param options.storageKeys 当前功能页使用的本地存储 key。
+ * @param options.log 写入侧边栏执行日志的对象。
+ * @param options.setStatus 更新顶部状态标签的函数。
+ * @return 页面组件需要读取和调用的账号状态与操作方法。
+ */
 export const useAccountPageState = ({
   storageKeys,
   log,
@@ -36,6 +48,13 @@ export const useAccountPageState = ({
   const [runningEmail, setRunningEmail] = useState("")
   const [selectedEmails, setSelectedEmails] = useState<string[]>([])
 
+  /**
+   * 按当前页面的存储 key 保存完整页面状态。
+   *
+   * @param nextCpaUrl 要保存的 CPA 地址，默认使用当前状态。
+   * @param nextAccounts 要保存的账号列表，默认使用当前状态。
+   * @param nextCpaManagementKey 要保存的 CPA 管理密钥，默认使用当前状态。
+   */
   const persistState = (
     nextCpaUrl = cpaUrl,
     nextAccounts = accounts,
@@ -48,6 +67,13 @@ export const useAccountPageState = ({
     })
   }
 
+  /**
+   * 同步账号列表到 React 状态和浏览器本地存储。
+   *
+   * @param nextAccounts 下一份账号列表。
+   * @param nextCpaUrl 可选的新 CPA 地址。
+   * @param nextCpaManagementKey 可选的新 CPA 管理密钥。
+   */
   const syncAccounts = (
     nextAccounts: ManagedAccount[],
     nextCpaUrl = cpaUrl,
@@ -133,7 +159,9 @@ export const useAccountPageState = ({
       }
 
       if (changes[storageKeys.accounts]) {
-        const rawAccounts = Array.isArray(changes[storageKeys.accounts].newValue)
+        const rawAccounts = Array.isArray(
+          changes[storageKeys.accounts].newValue
+        )
           ? (changes[storageKeys.accounts].newValue as unknown[])
           : []
         setAccountsState(
@@ -169,6 +197,13 @@ export const useAccountPageState = ({
     setCpaManagementKey(nextCpaManagementKey)
   }
 
+  /**
+   * 保存账号表单。
+   *
+   * 新增时创建初始账号；编辑同一邮箱时保留执行进度，只更新邮箱和密码。
+   *
+   * @param values 表单提交的邮箱和密码。
+   */
   const handleSubmitAccount = (values: AccountFormValues) => {
     const email = normalizeEmail(String(values.email || ""))
     const password = String(values.password || "")
@@ -207,6 +242,11 @@ export const useAccountPageState = ({
     log.info(`已保存账号 ${email}`)
   }
 
+  /**
+   * 进入账号编辑状态。
+   *
+   * @param account 要编辑的账号。
+   */
   const handleEditAccount = (account: ManagedAccount) => {
     setEditingEmail(account.email)
     setStatus(`正在编辑 ${account.email}`)
@@ -217,6 +257,11 @@ export const useAccountPageState = ({
     setStatus("已取消编辑")
   }
 
+  /**
+   * 删除指定账号。
+   *
+   * @param email 要删除的账号邮箱。
+   */
   const handleRemoveAccount = (email: string) => {
     const nextEmail = normalizeEmail(email)
     const nextAccounts = accounts.filter((account) => {
@@ -232,6 +277,12 @@ export const useAccountPageState = ({
     log.warn(`已删除账号 ${email}`)
   }
 
+  /**
+   * 勾选或取消勾选单个账号。
+   *
+   * @param email 要切换选择状态的账号邮箱。
+   * @param checked 是否选中。
+   */
   const handleToggleAccountSelected = (email: string, checked: boolean) => {
     const normalizedEmail = normalizeEmail(email)
     setSelectedEmails((currentSelectedEmails) => {
@@ -257,6 +308,11 @@ export const useAccountPageState = ({
     )
   }
 
+  /**
+   * 移动当前唯一选中的账号。
+   *
+   * @param direction -1 表示上移，1 表示下移。
+   */
   const handleMoveSelectedAccount = (direction: -1 | 1) => {
     if (selectedEmails.length !== 1) {
       setStatus("上移或下移时只能选择一条账号")
@@ -287,6 +343,9 @@ export const useAccountPageState = ({
     syncAccounts(nextAccounts)
   }
 
+  /**
+   * 把选中的账号手动标记为已完成。
+   */
   const handleMarkSelectedAccountsDone = () => {
     if (selectedEmails.length === 0) {
       setStatus("请先选择要标记的账号")
@@ -325,6 +384,12 @@ export const useAccountPageState = ({
     log.info(`已标记 ${changedCount} 个账号为已完成`)
   }
 
+  /**
+   * 更新单个账号的执行状态。
+   *
+   * @param email 要更新的账号邮箱。
+   * @param patch 要合并到账号上的局部状态。
+   */
   const patchAccountState = (email: string, patch: Partial<ManagedAccount>) => {
     const targetEmail = normalizeEmail(email)
     setAccounts((currentAccounts) => {

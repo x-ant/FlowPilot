@@ -184,6 +184,12 @@ export const getFlowStepName = (step: DebugStep) => {
   return FLOW_STEPS[step].name
 }
 
+/**
+ * 获取登录调试步骤的展示文案。
+ *
+ * @param step 登录流程步骤编号。
+ * @return 适合按钮和状态展示的步骤文案。
+ */
 export const getFlowStepLabel = (step: DebugStep) => {
   return FLOW_STEPS[step].label
 }
@@ -199,6 +205,13 @@ const getAccountProgressStepLabel = (
   return stepLabels[step]?.label || `${step}`
 }
 
+/**
+ * 根据账号执行状态生成一句进度摘要。
+ *
+ * @param account 要展示的账号。
+ * @param options 可选的总步骤数和步骤文案。
+ * @return 账号列表中展示的当前进度说明。
+ */
 export const getAccountProgressSummary = (
   account: ManagedAccount,
   options: {
@@ -217,10 +230,7 @@ export const getAccountProgressSummary = (
     return account.lastMessage || "需要人工判断后再处理"
   }
 
-  const nextStep = Math.min(
-    stepCount,
-    Math.max(1, account.progress + 1)
-  )
+  const nextStep = Math.min(stepCount, Math.max(1, account.progress + 1))
   const stepLabel =
     account.progress >= stepCount
       ? getAccountProgressStepLabel(stepCount, stepLabels)
@@ -237,6 +247,11 @@ export const getAccountProgressSummary = (
   return `待执行：${stepLabel}`
 }
 
+/**
+ * 获取 Chrome 本地存储对象。
+ *
+ * @return 扩展环境中返回 `chrome.storage.local`；普通网页环境中返回 null。
+ */
 export const getStorage = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) {
     return null
@@ -245,12 +260,24 @@ export const getStorage = () => {
   return chrome.storage.local
 }
 
+/**
+ * 统一邮箱格式，避免大小写和首尾空格导致账号重复。
+ *
+ * @param value 原始邮箱文本。
+ * @return 小写并去除首尾空格后的邮箱。
+ */
 export const normalizeEmail = (value: string) => {
   return String(value || "")
     .trim()
     .toLowerCase()
 }
 
+/**
+ * 规范化浏览器存储里的注册自动触发配置。
+ *
+ * @param value 从 `chrome.storage.local` 读取到的原始值。
+ * @return 带默认值和安全边界的自动触发配置。
+ */
 export const normalizeRegisterAlarmConfig = (
   value: unknown
 ): RegisterAlarmConfig => {
@@ -272,7 +299,9 @@ export const normalizeRegisterAlarmConfig = (
     intervalMinutes,
     dailyTime,
     selectedEmails: Array.isArray(record.selectedEmails)
-      ? record.selectedEmails.map((email) => normalizeEmail(String(email))).filter(Boolean)
+      ? record.selectedEmails
+          .map((email) => normalizeEmail(String(email)))
+          .filter(Boolean)
       : [],
     lastTriggeredAt: Number(record.lastTriggeredAt) || 0,
     lastMessage: String(record.lastMessage || ""),
@@ -280,6 +309,12 @@ export const normalizeRegisterAlarmConfig = (
   }
 }
 
+/**
+ * 规范化后台注册任务锁。
+ *
+ * @param value 从本地存储读取到的原始任务锁。
+ * @return 任务锁有效时返回规范化对象；无效时返回 null。
+ */
 export const normalizeRegisterRunLock = (
   value: unknown
 ): RegisterRunLock | null => {
@@ -308,6 +343,12 @@ export const normalizeRegisterRunLock = (
   }
 }
 
+/**
+ * 规范化本地保存的账号数据。
+ *
+ * @param value 从浏览器本地存储读取到的单个账号。
+ * @return 账号有效时返回规范化对象；缺少邮箱时返回 null。
+ */
 export const normalizeStoredAccount = (
   value: unknown
 ): ManagedAccount | null => {
@@ -343,6 +384,13 @@ export const normalizeStoredAccount = (
   }
 }
 
+/**
+ * 创建新的账号记录。
+ *
+ * @param email 账号邮箱，同时也是 2925 邮箱。
+ * @param password 账号密码。
+ * @return 初始状态为待执行的账号对象。
+ */
 export const createManagedAccount = (
   email: string,
   password: string
@@ -357,6 +405,12 @@ export const createManagedAccount = (
   }
 }
 
+/**
+ * 重置账号的执行状态，保留邮箱和密码。
+ *
+ * @param account 要重置的账号。
+ * @return 状态回到待执行的账号对象。
+ */
 export const resetManagedAccountState = (
   account: ManagedAccount
 ): ManagedAccount => {
@@ -368,10 +422,24 @@ export const resetManagedAccountState = (
   }
 }
 
+/**
+ * 判断账号是否已经完成当前流程。
+ *
+ * @param account 要判断的账号。
+ * @return 完成状态或进度达到总步数时返回 true。
+ */
 export const isManagedAccountDone = (account: ManagedAccount) => {
   return account.status === "done" || account.progress >= STEP_COUNT
 }
 
+/**
+ * 新增或更新账号，并尽量保持原来的列表顺序。
+ *
+ * @param accounts 当前账号列表。
+ * @param nextAccount 要写入的新账号。
+ * @param previousEmail 编辑账号时的旧邮箱；新增账号时不用传。
+ * @return 更新后的账号列表。
+ */
 export const upsertManagedAccount = (
   accounts: ManagedAccount[],
   nextAccount: ManagedAccount,
@@ -414,6 +482,12 @@ export const upsertManagedAccount = (
   return nextAccounts
 }
 
+/**
+ * 从浏览器本地存储加载某个页面的账号配置。
+ *
+ * @param keys 当前页面使用的存储 key。
+ * @return 页面状态，包括 CPA 配置和账号列表。
+ */
 export const loadAccountPageState = async (
   keys: AccountPageStorageKeys
 ): Promise<AccountPageState> => {
@@ -445,6 +519,12 @@ export const loadAccountPageState = async (
   })
 }
 
+/**
+ * 保存某个页面的账号配置到浏览器本地存储。
+ *
+ * @param keys 当前页面使用的存储 key。
+ * @param state 要保存的页面状态。
+ */
 export const saveAccountPageState = (
   keys: AccountPageStorageKeys,
   state: AccountPageState

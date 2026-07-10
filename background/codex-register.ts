@@ -1,13 +1,28 @@
-import { createCodexLoginRunner } from "./codex-login";
-import { createMail2925Runner } from "./mail-2925";
-import { detectCodexAuthPageStateInPage } from "./page-script";
-import { assertHeroSmsActivationCostWithinExpected, pollHeroSmsCode, requestHeroSmsActivation, setHeroSmsActivationStatus, submitPhoneNumberInPage, type HeroSmsActivation, type HeroSmsPhoneVerificationOptions } from "./register-phone-verification";
-import { abortableSleep } from "./utils/abort";
-import { clearOpenTabSiteStorageForUrls, clearSessionCookiesForUrls, clearSiteStorageInTab } from "./utils/browser-session-cleanup";
-import { runPageActionInTab } from "./utils/page-action-runner";
-import type { RunContext } from "./utils/run-context";
-import { findOrOpenTab, waitForTabLoaded, waitForTabMatchingUrl } from "./utils/tab-utils";
-
+import { createCodexLoginRunner } from "./codex-login"
+import { createMail2925Runner } from "./mail-2925"
+import { detectCodexAuthPageStateInPage } from "./page-script"
+import {
+  assertHeroSmsActivationCostWithinExpected,
+  pollHeroSmsCode,
+  requestHeroSmsActivation,
+  setHeroSmsActivationStatus,
+  submitPhoneNumberInPage,
+  type HeroSmsActivation,
+  type HeroSmsPhoneVerificationOptions
+} from "./register-phone-verification"
+import { abortableSleep } from "./utils/abort"
+import {
+  clearOpenTabSiteStorageForUrls,
+  clearSessionCookiesForUrls,
+  clearSiteStorageInTab
+} from "./utils/browser-session-cleanup"
+import { runPageActionInTab } from "./utils/page-action-runner"
+import type { RunContext } from "./utils/run-context"
+import {
+  findOrOpenTab,
+  waitForTabLoaded,
+  waitForTabMatchingUrl
+} from "./utils/tab-utils"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [
@@ -54,7 +69,7 @@ const findReusableOpenAiTabId = async () => {
   })?.id
 }
 
-type CodexRegisterStepResponse = {
+export type CodexRegisterStepResponse = {
   ok: boolean
   message: string
   needRefreshOAuth?: boolean
@@ -151,7 +166,9 @@ const isChatGptPageUrl = (rawUrl?: string) => {
 const isOpenAiAddPhoneUrl = (rawUrl?: string) => {
   try {
     const url = new URL(String(rawUrl || ""))
-    return url.origin === "https://auth.openai.com" && url.pathname === "/add-phone"
+    return (
+      url.origin === "https://auth.openai.com" && url.pathname === "/add-phone"
+    )
   } catch {
     return false
   }
@@ -231,7 +248,11 @@ const waitForPhoneInputInPage = async () => {
       .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
       .find((element) => {
         const input = element as HTMLInputElement
-        return input instanceof HTMLInputElement && !input.disabled && isVisible(input)
+        return (
+          input instanceof HTMLInputElement &&
+          !input.disabled &&
+          isVisible(input)
+        )
       })
   }
 
@@ -1046,8 +1067,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     submitCodexLoginPasswordAndWait,
     fetchAndSubmitCodexVerificationCode,
     submitCodexOAuthCallbackToCpa
-  } =
-    createCodexLoginRunner(context)
+  } = createCodexLoginRunner(context)
   /**
    * 获取当前流程的中断信号。
    *
@@ -2236,9 +2256,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     if (firstChoice.ok) {
       return firstChoice
     }
-    onFallbackLog?.(
-      `${firstChoice.message}；开始执行登录兜底流程 1、2、3`
-    )
+    onFallbackLog?.(`${firstChoice.message}；开始执行登录兜底流程 1、2、3`)
 
     const normalizedTargetUrl = String(targetUrl || "").trim()
     const normalizedManagementKey = String(managementKey || "").trim()
