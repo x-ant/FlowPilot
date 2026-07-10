@@ -4,7 +4,6 @@ import type { UiLogger } from "../../shared/logging"
 import {
   createManagedAccount,
   EMPTY_PAGE_STATE,
-  isManagedAccountDone,
   loadAccountPageState,
   normalizeEmail,
   normalizeStoredAccount,
@@ -115,15 +114,6 @@ export const useAccountPageState = ({
     accounts.length > 0 && selectedCount === accounts.length
   const isSomeAccountsSelected =
     selectedCount > 0 && selectedCount < accounts.length
-  const completedCount = accounts.filter((account) =>
-    isManagedAccountDone(account)
-  ).length
-  const runningCount = accounts.filter(
-    (account) => account.status === "running"
-  ).length
-  const failedCount = accounts.filter(
-    (account) => account.status === "failed"
-  ).length
   const editingAccount =
     accounts.find((account) => {
       return normalizeEmail(account.email) === normalizeEmail(editingEmail)
@@ -419,9 +409,6 @@ export const useAccountPageState = ({
     selectedCount,
     isAllAccountsSelected,
     isSomeAccountsSelected,
-    completedCount,
-    runningCount,
-    failedCount,
     setCpaUrl,
     setCpaManagementKey,
     setAccounts,
@@ -430,7 +417,6 @@ export const useAccountPageState = ({
     setSelectedEmails,
     setEditingEmail,
     resetManagedAccountState,
-    isManagedAccountDone,
     handleCpaUrlChange,
     handleCpaManagementKeyChange,
     handleSubmitAccount,

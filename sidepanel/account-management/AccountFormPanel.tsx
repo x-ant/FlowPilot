@@ -1,16 +1,16 @@
-﻿import { Button, Collapse, Form, Input, Space, Tag } from "antd"
+﻿import { Button, Collapse, Form, Input, Space } from "antd"
 import { useEffect, useState } from "react"
 
-import { EMPTY_ACCOUNT_FORM, type AccountFormValues } from "../../shared/account-state"
+import {
+  EMPTY_ACCOUNT_FORM,
+  type AccountFormValues
+} from "../../shared/account-state"
 import type { AccountPageState } from "./useAccountPageState"
 
 type AccountFormPanelAccountPage = Pick<
   AccountPageState,
   | "editingAccount"
   | "editingEmail"
-  | "completedCount"
-  | "runningCount"
-  | "failedCount"
   | "handleSubmitAccount"
   | "handleCancelEdit"
 >
@@ -29,9 +29,6 @@ export function AccountFormPanel({
   const {
     editingAccount,
     editingEmail,
-    completedCount,
-    runningCount,
-    failedCount,
     handleSubmitAccount,
     handleCancelEdit: cancelEdit
   } = accountPage
@@ -69,13 +66,6 @@ export function AccountFormPanel({
         {
           key: ACCOUNT_PANEL_KEY,
           label: "账号管理",
-          extra: (
-            <Space size={8}>
-              <Tag color="success">已完成 {completedCount}</Tag>
-              <Tag color="processing">执行中 {runningCount}</Tag>
-              <Tag color="error">失败 {failedCount}</Tag>
-            </Space>
-          ),
           children: (
             <Form
               form={form}
@@ -120,3 +110,4 @@ export function AccountFormPanel({
     />
   )
 }
+
