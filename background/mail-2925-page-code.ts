@@ -187,14 +187,24 @@ export const pollMail2925VerificationCodeInPage = async (
     const normalized = normalizeText(text)
     const now = new Date()
     const date = new Date(now)
+    // 2925时钟可能慢2分钟， “刚刚/几秒前/几分钟前”这种描述，实际是20分，但是2925认为是18分，
+    // 导致过滤时间时推到真实时间20分，2925时钟上19分到达的邮件就被错过了，
+    // 已2925邮箱为准，刚刚/几秒前/几分钟前 就不能取Date.now()，要以传入的发送验证码的时间为基准处理
+    // 传入的发送验证码的时间 是已经兼容时钟错误的时间，往前推了几分钟
+    // 同时更新过滤时间的时候，采用2925邮箱的错误时间往前推进，
+    // 刚刚/几秒前/几分钟前 这种就取不断推进的 传入的发送验证码的时间（filterAfter）
+    const capRelativeTimestamp = (timestamp: number) => {
+      return filterAfter ? Math.min(timestamp, filterAfter) : timestamp
+    }
     let match = normalized.match(/(\d+)\s*分钟前/)
     if (match) {
-      return Date.now() - Number(match[1]) * 60 * 1000
+      return capRelativeTimestamp(Date.now() - Number(match[1]) * 60 * 1000)
     }
 
     match = normalized.match(/(\d+)\s*秒前|刚刚/)
     if (match || /刚刚/.test(normalized)) {
-      return Date.now()
+      const secondsAgo = match?.[1] ? Number(match[1]) : 0
+      return capRelativeTimestamp(Date.now() - secondsAgo * 1000)
     }
 
     match = normalized.match(
