@@ -165,6 +165,7 @@ export const runManagedRegisterFlow = async (
   }
   messages.push(step5Message)
   onStage(5, step5Message)
+  onProgressLog?.("Step 5 已完成，准备开始 Step 6 手机号验证")
 
   let phoneTabId = loginResult.targetTab.id
   let oauthStartedAt =
@@ -175,6 +176,7 @@ export const runManagedRegisterFlow = async (
   let phoneResult: RegisterStepResult
 
   while (true) {
+    onProgressLog?.(`Step 6 第 ${oauthAttemptCount} 轮：开始手机号验证`)
     phoneResult = await runner.completeRegisterPhoneVerification(
       phoneTabId,
       heroSmsOptions,
@@ -431,10 +433,12 @@ export const runRegisterBatch = async ({
         }
       )
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "账号自动注册时发生异常"
+      onLog?.("warn", `[${currentAccount.email}] 账号自动注册异常：${message}`)
       runResult = {
         ok: false,
-        message:
-          error instanceof Error ? error.message : "账号自动注册时发生异常"
+        message
       }
     }
 

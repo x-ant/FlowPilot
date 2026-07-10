@@ -153,6 +153,43 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     }
   }
 
+  type CodexAuthTabStateResult = {
+    ok: boolean
+    state: DetectCodexAuthPageState | "callback"
+    message: string
+    url: string
+  }
+
+  /**
+   * 判断当前页面是否已经回到 ChatGPT 普通登录后的页面。
+   *
+   * @param rawUrl 浏览器标签页当前 URL。
+   * @return 位于 chatgpt.com 站点时返回 true。
+   */
+  const isChatGptLoggedInUrl = (rawUrl?: string) => {
+    try {
+      return new URL(String(rawUrl || "")).origin === "https://chatgpt.com"
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 判断普通 ChatGPT 登录是否已经离开认证输入页。
+   *
+   * @param state 当前认证页状态。
+   * @return 已回到 ChatGPT 页面且不再停留在验证码/密码/额外验证状态时返回 true。
+   */
+  const isChatGptLoginCompletedState = (state: CodexAuthTabStateResult) => {
+    return (
+      isChatGptLoggedInUrl(state.url) &&
+      state.state !== "verification_pending" &&
+      state.state !== "verification_invalid_code" &&
+      state.state !== "password" &&
+      state.state !== "extra_verification"
+    )
+  }
+
   /**
    * 激活指定标签页，并切把当前浏览器也放前面。
    *
@@ -171,13 +208,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     }
 
     return tab
-  }
-
-  type CodexAuthTabStateResult = {
-    ok: boolean
-    state: DetectCodexAuthPageState | "callback"
-    message: string
-    url: string
   }
 
   /**
@@ -311,6 +341,66 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         stopStates: ["extra_verification"]
       }
     )
+  }
+
+  /**
+   * 等待普通 ChatGPT 登录验证码提交后的页面结果。
+   *
+   * @param tabId 当前 ChatGPT 登录页标签页 id。
+   * @return 验证码提交后的状态。
+   */
+  const waitForChatGptLoginVerificationSubmitStateInTab = async (
+    tabId: number
+  ): Promise<CodexAuthTabStateResult> => {
+    const abortSignal = getAbortSignal()
+    const startedAt = Date.now()
+    const timeoutMs = 45000
+    const intervalMs = 500
+    let lastState: CodexAuthTabStateResult = {
+      ok: false,
+      state: "other",
+      message: "45 秒内未确认普通登录后的页面状态",
+      url: ""
+    }
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      throwIfAborted(abortSignal)
+      lastState = await detectCodexAuthTabState(tabId)
+
+      if (lastState.state === "verification_invalid_code") {
+        return lastState
+      }
+
+      if (
+        lastState.state === "oauth_consent_ready" ||
+        lastState.state === "callback"
+      ) {
+        return {
+          ...lastState,
+          ok: true
+        }
+      }
+
+      if (isChatGptLoginCompletedState(lastState)) {
+        return {
+          ...lastState,
+          ok: true,
+          message: "普通登录已完成，当前页面已进入 ChatGPT"
+        }
+      }
+
+      if (lastState.state === "extra_verification") {
+        return lastState
+      }
+
+      await abortableSleep(intervalMs, abortSignal)
+    }
+
+    return {
+      ...lastState,
+      ok: false,
+      message: `${lastState.message}；45 秒内未确认普通登录后的页面状态`
+    }
   }
 
   /**
@@ -611,27 +701,32 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     }
   }
 
+  type SubmitVerificationCodeOptions = {
+    isCurrentStateCompleted: (state: CodexAuthTabStateResult) => boolean
+    waitForSubmitState: (tabId: number) => Promise<CodexAuthTabStateResult>
+    isSubmitSuccess: (state: CodexAuthTabStateResult) => boolean
+  }
+
   /**
-   * 在 OpenAI 邮箱验证码页读取 2925 验证码，并回填到当前 tab。
+   * 读取 2925 验证码并提交到当前 OpenAI 验证码页。
    *
    * @param tabId 要操作的验证码页标签页 id。
    * @param email 2925 邮箱地址。
    * @param password 2925 邮箱密码。
-   * @param verificationRequestedAt 验证码发送时间
-   * @return 返回给侧边栏展示的执行结果。
+   * @param verificationRequestedAt 验证码发送时间。
+   * @param options 提交后的状态判断逻辑。
+   * @return 验证码读取、提交和页面状态确认结果。
    */
-  const fetchAndSubmitCodexVerificationCode = async (
+  const fetchAndSubmitVerificationCode = async (
     tabId: number,
     email: string,
     password: string,
-    verificationRequestedAt = 0
+    verificationRequestedAt = 0,
+    options: SubmitVerificationCodeOptions
   ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
     throwIfAborted(getAbortSignal())
     const currentState = await detectCodexAuthTabState(tabId)
-    if (
-      currentState.state === "oauth_consent_ready" ||
-      currentState.state === "callback"
-    ) {
+    if (options.isCurrentStateCompleted(currentState)) {
       return {
         ok: true,
         message: `当前不需要填写验证码；${currentState.message}`,
@@ -711,13 +806,10 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         }
       }
 
-      const submitState = await waitForCodexVerificationSubmitStateInTab(tabId)
+      const submitState = await options.waitForSubmitState(tabId)
       const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
 
-      if (
-        submitState.state === "oauth_consent_ready" ||
-        submitState.state === "callback"
-      ) {
+      if (options.isSubmitSuccess(submitState)) {
         return {
           ok: true,
           message: currentAttemptMessage,
@@ -761,6 +853,82 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       },
       mailTab: latestMailTab
     }
+  }
+
+  /**
+   * 在 OAuth 邮箱验证码页读取 2925 验证码并回填。
+   *
+   * @param tabId 要操作的验证码页标签页 id。
+   * @param email 2925 邮箱地址。
+   * @param password 2925 邮箱密码。
+   * @param verificationRequestedAt 验证码发送时间。
+   * @return 返回给侧边栏展示的执行结果。
+   */
+  const fetchAndSubmitCodexVerificationCode = async (
+    tabId: number,
+    email: string,
+    password: string,
+    verificationRequestedAt = 0
+  ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
+    return fetchAndSubmitVerificationCode(
+      tabId,
+      email,
+      password,
+      verificationRequestedAt,
+      {
+        isCurrentStateCompleted: (state) => {
+          return (
+            state.state === "oauth_consent_ready" || state.state === "callback"
+          )
+        },
+        waitForSubmitState: waitForCodexVerificationSubmitStateInTab,
+        isSubmitSuccess: (state) => {
+          return (
+            state.state === "oauth_consent_ready" || state.state === "callback"
+          )
+        }
+      }
+    )
+  }
+
+  /**
+   * 在普通 ChatGPT 登录验证码页读取 2925 验证码并回填。
+   *
+   * @param tabId 要操作的验证码页标签页 id。
+   * @param email 2925 邮箱地址。
+   * @param password 2925 邮箱密码。
+   * @param verificationRequestedAt 验证码发送时间。
+   * @return 返回给注册兜底流程展示的执行结果。
+   */
+  const fetchAndSubmitChatGptLoginVerificationCode = async (
+    tabId: number,
+    email: string,
+    password: string,
+    verificationRequestedAt = 0
+  ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
+    return fetchAndSubmitVerificationCode(
+      tabId,
+      email,
+      password,
+      verificationRequestedAt,
+      {
+        isCurrentStateCompleted: (state) => {
+          return (
+            isChatGptLoginCompletedState(state) ||
+            state.state === "oauth_consent_ready" ||
+            state.state === "callback"
+          )
+        },
+        waitForSubmitState: waitForChatGptLoginVerificationSubmitStateInTab,
+        isSubmitSuccess: (state) => {
+          return (
+            isChatGptLoginCompletedState(state) ||
+            state.state === "oauth_consent_ready" ||
+            state.state === "callback"
+          )
+        }
+      }
+    )
   }
 
   /**
@@ -961,6 +1129,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     submitCodexLoginEmailAndWait,
     submitCodexLoginPasswordAndWait,
     fetchAndSubmitCodexVerificationCode,
+    fetchAndSubmitChatGptLoginVerificationCode,
     confirmCodexOAuthConsent,
     submitCodexOAuthCallbackToCpa
   }
@@ -973,6 +1142,7 @@ export const {
   submitCodexLoginEmailAndWait,
   submitCodexLoginPasswordAndWait,
   fetchAndSubmitCodexVerificationCode,
+  fetchAndSubmitChatGptLoginVerificationCode,
   confirmCodexOAuthConsent,
   submitCodexOAuthCallbackToCpa
 } = defaultCodexLoginRunner

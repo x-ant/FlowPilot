@@ -83,6 +83,52 @@ export const normalizeStoredLogs = (value: unknown): LogItem[] => {
 }
 
 /**
+ * 合并多份日志，按日志 id 里的时间戳保持大致顺序，并去掉重复项。
+ *
+ * @param sources 需要合并的日志列表。
+ * @return 合并后的日志列表，最多保留 `EXECUTION_LOG_LIMIT` 条。
+ */
+export const mergeLogLists = (...sources: LogItem[][]): LogItem[] => {
+  const records = new Map<
+    string,
+    {
+      item: LogItem
+      order: number
+      timestamp: number
+    }
+  >()
+
+  sources.flat().forEach((item) => {
+    const existing = records.get(item.id)
+    const timestamp = Number(item.id.split("-")[0])
+    if (existing) {
+      existing.item = item
+      return
+    }
+
+    records.set(item.id, {
+      item,
+      order: records.size,
+      timestamp: Number.isFinite(timestamp) ? timestamp : records.size
+    })
+  })
+
+  return Array.from(records.values())
+    .sort((left, right) => {
+      if (left.timestamp !== right.timestamp) {
+        return left.timestamp - right.timestamp
+      }
+
+      const idOrder = left.item.id.localeCompare(right.item.id)
+      return idOrder || left.order - right.order
+    })
+    .map((record) => {
+      return record.item
+    })
+    .slice(-EXECUTION_LOG_LIMIT)
+}
+
+/**
  * 生成当前时间字符串，用于日志显示。
  *
  * @return 按 `HH:mm:ss` 格式生成的当前时间字符串。

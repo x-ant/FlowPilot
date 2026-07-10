@@ -10,7 +10,7 @@ import {
   Typography
 } from "antd"
 import zhCN from "antd/locale/zh_CN"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import "antd/dist/reset.css"
 import "./sidepanel.css"
@@ -21,6 +21,7 @@ import {
   EXECUTION_LOG_STORAGE_KEY,
   getTimeLabel,
   LOG_LEVEL_META,
+  mergeLogLists,
   normalizeStoredLogs,
   type LogItem
 } from "./shared/logging"
@@ -50,9 +51,10 @@ function SidePanel() {
   const [isLogAtBottom, setIsLogAtBottom] = useState(true)
   const logListRef = useRef<HTMLDivElement | null>(null)
   const shouldFollowLogsRef = useRef(true)
+  const logWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   /**
-   * 判断两份日志是否完全一致。
+   * 判断两份日志是否完全一致，避免 storage 同步时重复写入。
    *
    * @param left 第一份日志。
    * @param right 第二份日志。
@@ -73,21 +75,59 @@ function SidePanel() {
     )
   }
 
+  /**
+   * 把侧边栏自己产生的一条日志追加到持久化存储。
+   *
+   * @param item 新增日志。
+   */
+  const appendLogToStorage = useCallback(
+    (item: LogItem) => {
+      const storage = getStorage()
+      if (!storage) {
+        return
+      }
+
+      logWriteQueueRef.current = logWriteQueueRef.current
+        .catch(() => undefined)
+        .then(() => {
+          return new Promise<void>((resolve) => {
+            storage.get([EXECUTION_LOG_STORAGE_KEY], (result) => {
+              const storedLogs = normalizeStoredLogs(
+                result?.[EXECUTION_LOG_STORAGE_KEY]
+              )
+              const mergedLogs = mergeLogLists(storedLogs, [item])
+              if (isSameLogList(storedLogs, mergedLogs)) {
+                resolve()
+                return
+              }
+
+              storage.set(
+                {
+                  [EXECUTION_LOG_STORAGE_KEY]: mergedLogs
+                },
+                resolve
+              )
+            })
+          })
+        })
+    },
+    []
+  )
+
   const log = useMemo(() => {
     return createUiLogger((level, message) => {
+      const item = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        time: getTimeLabel(),
+        level,
+        message
+      }
+      appendLogToStorage(item)
       setLogs((current) => {
-        return [
-          ...current,
-          {
-            id: `${Date.now()}-${current.length}`,
-            time: getTimeLabel(),
-            level,
-            message
-          }
-        ].slice(-EXECUTION_LOG_LIMIT)
+        return mergeLogLists(current, [item])
       })
     })
-  }, [])
+  }, [appendLogToStorage])
   const scopedLog = useMemo(() => {
     const prefix =
       activePage === "codex-register" ? "[codex-register]" : "[codex-login]"
@@ -128,16 +168,6 @@ function SidePanel() {
       return
     }
 
-    getStorage()?.set({
-      [EXECUTION_LOG_STORAGE_KEY]: logs.slice(-EXECUTION_LOG_LIMIT)
-    })
-  }, [logs, logsLoaded])
-
-  useEffect(() => {
-    if (!logsLoaded) {
-      return
-    }
-
     const handleStorageChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string
@@ -150,7 +180,9 @@ function SidePanel() {
         changes[EXECUTION_LOG_STORAGE_KEY].newValue
       )
       setLogs((current) => {
-        return isSameLogList(current, nextLogs) ? current : nextLogs
+        const mergedLogs =
+          nextLogs.length === 0 ? [] : mergeLogLists(current, nextLogs)
+        return isSameLogList(current, mergedLogs) ? current : mergedLogs
       })
     }
 

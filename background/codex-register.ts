@@ -1080,7 +1080,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     confirmCodexOAuthConsent,
     submitCodexLoginEmailAndWait,
     submitCodexLoginPasswordAndWait,
-    fetchAndSubmitCodexVerificationCode,
+    fetchAndSubmitChatGptLoginVerificationCode,
     submitCodexOAuthCallbackToCpa
   } = createCodexLoginRunner(context)
   /**
@@ -2361,12 +2361,41 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       loginResult.verificationRequestedAt ||
       Date.now()
     onFallbackLog?.("登录兜底 Step 3：正在读取并提交登录验证码")
-    const codeResult = await fetchAndSubmitCodexVerificationCode(
-      openResult.targetTab.id,
-      email,
-      password,
-      verificationRequestedAt
-    )
+    let codeResult: Awaited<
+      ReturnType<typeof fetchAndSubmitChatGptLoginVerificationCode>
+    >
+    try {
+      codeResult = await fetchAndSubmitChatGptLoginVerificationCode(
+        openResult.targetTab.id,
+        email,
+        password,
+        verificationRequestedAt
+      )
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "登录验证码提交异常"
+      const currentTab = await chrome.tabs
+        .get(openResult.targetTab.id)
+        .catch(() => undefined)
+      const currentUrl = String(currentTab?.url || "")
+      const message = currentUrl
+        ? `登录兜底 Step 3：异常：${errorMessage}；当前页：${currentUrl}`
+        : `登录兜底 Step 3：异常：${errorMessage}`
+      onFallbackLog?.(message)
+
+      return {
+        ok: false,
+        message: buildFallbackMessage(
+          loginResult.message,
+          passwordResult.message,
+          message
+        ),
+        targetTab: {
+          id: openResult.targetTab.id,
+          url: currentUrl || undefined
+        }
+      }
+    }
     onFallbackLog?.(`登录兜底 Step 3：${codeResult.message}`)
     if (!codeResult.ok) {
       return {

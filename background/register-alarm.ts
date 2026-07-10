@@ -68,27 +68,38 @@ const removeStorage = (keys: string[]) => {
   })
 }
 
+let registerExecutionLogWriteQueue: Promise<void> = Promise.resolve()
+
 /**
  * 把后台注册任务日志写入统一执行日志。
+ *
+ * 多个后台步骤可能同时写日志；这里串行化读写，避免后写入的旧快照覆盖前一条日志。
  *
  * @param level 日志级别。
  * @param message 日志内容。
  */
-const writeRegisterExecutionLog = async (level: LogLevel, message: string) => {
-  const result = await readStorage([EXECUTION_LOG_STORAGE_KEY])
-  const currentLogs = normalizeStoredLogs(result[EXECUTION_LOG_STORAGE_KEY])
+const writeRegisterExecutionLog = (level: LogLevel, message: string) => {
+  const writeTask = async () => {
+    const result = await readStorage([EXECUTION_LOG_STORAGE_KEY])
+    const currentLogs = normalizeStoredLogs(result[EXECUTION_LOG_STORAGE_KEY])
 
-  await writeStorage({
-    [EXECUTION_LOG_STORAGE_KEY]: [
-      ...currentLogs,
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        time: getTimeLabel(),
-        level,
-        message: `[后台] ${message}`
-      }
-    ].slice(-EXECUTION_LOG_LIMIT)
-  })
+    await writeStorage({
+      [EXECUTION_LOG_STORAGE_KEY]: [
+        ...currentLogs,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          time: getTimeLabel(),
+          level,
+          message: `[后台] ${message}`
+        }
+      ].slice(-EXECUTION_LOG_LIMIT)
+    })
+  }
+
+  registerExecutionLogWriteQueue = registerExecutionLogWriteQueue
+    .catch(() => undefined)
+    .then(writeTask)
+  return registerExecutionLogWriteQueue
 }
 
 /**
