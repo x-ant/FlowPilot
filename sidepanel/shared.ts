@@ -46,6 +46,28 @@ export type BatchRunMode = "pending" | "all"
 
 export type FlowPage = "codex-login" | "codex-register"
 
+export type RegisterAlarmMode = "interval" | "daily"
+
+export type RegisterAlarmConfig = {
+  enabled: boolean
+  mode: RegisterAlarmMode
+  intervalMinutes: number
+  dailyTime: string
+  selectedEmails: string[]
+  lastTriggeredAt?: number
+  lastMessage?: string
+  runningStartedAt?: number
+}
+
+export type RegisterRunLock = {
+  runId: string
+  source: "alarm" | "manual"
+  startedAt: number
+  currentEmail: string
+  message: string
+  phonePhase?: "phone_submitted" | "phone_wait_finished" | ""
+}
+
 export type AccountRunResult = {
   ok: boolean
   message: string
@@ -70,6 +92,17 @@ export const REGISTER_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaUrl: "codex-register:cpa-url",
   cpaManagementKey: "codex-register:cpa-management-key",
   accounts: "codex-register:accounts"
+}
+export const REGISTER_ALARM_NAME = "codex-register:auto-run"
+export const REGISTER_ALARM_STORAGE_KEY = "codex-register:alarm-config"
+export const REGISTER_RUN_LOCK_STORAGE_KEY = "codex-register:run-lock"
+export const REGISTER_RUN_LOCK_STALE_MS = 2 * 60 * 60 * 1000
+export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
+  enabled: false,
+  mode: "interval",
+  intervalMinutes: 30,
+  dailyTime: "02:00",
+  selectedEmails: []
 }
 
 export const FLOW_PAGE_ITEMS: Array<{ key: FlowPage; label: string }> = [
@@ -218,6 +251,63 @@ export const normalizeEmail = (value: string) => {
     .toLowerCase()
 }
 
+export const normalizeRegisterAlarmConfig = (
+  value: unknown
+): RegisterAlarmConfig => {
+  const record =
+    value && typeof value === "object"
+      ? (value as Partial<RegisterAlarmConfig>)
+      : {}
+  const intervalMinutes = Math.max(
+    1,
+    Math.floor(Number(record.intervalMinutes || 30))
+  )
+  const dailyTime = /^\d{2}:\d{2}$/.test(String(record.dailyTime || ""))
+    ? String(record.dailyTime)
+    : "02:00"
+
+  return {
+    enabled: Boolean(record.enabled),
+    mode: record.mode === "daily" ? "daily" : "interval",
+    intervalMinutes,
+    dailyTime,
+    selectedEmails: Array.isArray(record.selectedEmails)
+      ? record.selectedEmails.map((email) => normalizeEmail(String(email))).filter(Boolean)
+      : [],
+    lastTriggeredAt: Number(record.lastTriggeredAt) || 0,
+    lastMessage: String(record.lastMessage || ""),
+    runningStartedAt: Number(record.runningStartedAt) || 0
+  }
+}
+
+export const normalizeRegisterRunLock = (
+  value: unknown
+): RegisterRunLock | null => {
+  if (!value || typeof value !== "object") {
+    return null
+  }
+
+  const record = value as Partial<RegisterRunLock>
+  const runId = String(record.runId || "").trim()
+  const startedAt = Number(record.startedAt || 0)
+  if (!runId || !startedAt) {
+    return null
+  }
+
+  return {
+    runId,
+    source: record.source === "manual" ? "manual" : "alarm",
+    startedAt,
+    currentEmail: normalizeEmail(String(record.currentEmail || "")),
+    message: String(record.message || ""),
+    phonePhase:
+      record.phonePhase === "phone_submitted" ||
+      record.phonePhase === "phone_wait_finished"
+        ? record.phonePhase
+        : ""
+  }
+}
+
 export const normalizeStoredAccount = (
   value: unknown
 ): ManagedAccount | null => {
@@ -234,7 +324,8 @@ export const normalizeStoredAccount = (
   const status =
     record.status === "running" ||
     record.status === "done" ||
-    record.status === "failed"
+    record.status === "failed" ||
+    record.status === "needs_review"
       ? record.status
       : "idle"
 

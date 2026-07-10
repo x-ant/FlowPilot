@@ -1,19 +1,30 @@
-import { Button, Collapse, Modal, Select, Space, Tag } from "antd"
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  Alert,
+  Button,
+  Collapse,
+  Input,
+  InputNumber,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Switch,
+  Tag
+} from "antd"
+import { useEffect, useMemo, useState } from "react"
 
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
   completeRegisterOAuthLogin,
   completeRegisterPhoneVerification,
-  createCodexRegisterRunner,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
   refreshRegisterOAuthAndLogin,
   submitRegisterOAuthCallbackToCpa,
   submitRegisterProfile
 } from "../background/codex-register"
-import { type HeroSmsPhoneVerificationOptions } from "../background/register-phone-verification"
+import { type RegisterStopStrategy } from "../background/register-batch-runner"
 import {
   AccountFormPanel,
   AccountListPanel,
@@ -23,14 +34,20 @@ import { CpaConfigPanel } from "./cpa-config"
 import { DebugTabControl } from "./DebugTabControl"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "./hero-sms-config"
 import {
+  DEFAULT_REGISTER_ALARM_CONFIG,
   normalizeEmail,
+  normalizeRegisterAlarmConfig,
+  normalizeRegisterRunLock,
+  REGISTER_ALARM_STORAGE_KEY,
+  REGISTER_RUN_LOCK_STALE_MS,
+  REGISTER_RUN_LOCK_STORAGE_KEY,
   REGISTER_STORAGE_KEYS,
-  resetManagedAccountState,
-  type AccountRunResult,
   type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus,
-  type PageProps
+  type PageProps,
+  type RegisterAlarmConfig,
+  type RegisterRunLock
 } from "./shared"
 
 const REGISTER_STEP_COUNT = 7
@@ -88,6 +105,12 @@ type RegisterDebugStepOptions = {
   beforeRun?: () => void
 }
 
+type RegisterRunStatus = {
+  lock: RegisterRunLock | null
+  activeInMemory: boolean
+  stale: boolean
+}
+
 const closeTabQuietly = async (tabId?: number) => {
   if (typeof tabId !== "number") {
     return false
@@ -101,260 +124,22 @@ const closeTabQuietly = async (tabId?: number) => {
   }
 }
 
-type RegisterStopStrategy =
-  | "none"
-  | "immediate"
-  | "after_phone"
-  | "finish_current_if_phone_success"
-
-const runManagedRegisterFlow = async (
-  cpaUrl: string,
-  cpaManagementKey: string,
-  account: ManagedAccount,
-  heroSmsOptions: HeroSmsPhoneVerificationOptions,
-  runner: ReturnType<typeof createCodexRegisterRunner>,
-  getStopStrategy: () => RegisterStopStrategy,
-  onStage: (progress: ManagedAccountProgress, message: string) => void,
-  onProgressLog?: (message: string) => void
-): Promise<AccountRunResult> => {
-  const messages: string[] = []
-  const startFromStep = account.progress >= 4 ? 5 : 1
-
-  if (startFromStep === 1) {
-    const step1Result = await runner.openChatGptRegisterEntry()
-    if (!step1Result.ok || !step1Result.targetTab?.id) {
-      return {
-        ok: false,
-        message: step1Result.message || "步骤 1 执行失败"
-      }
-    }
-    messages.push(step1Result.message)
-    onStage(1, step1Result.message)
-
-    const registerTabId = step1Result.targetTab.id
-    const verificationRequestedAt = Date.now()
-    const step2Result = await runner.clickRegisterAndSubmitEmail(
-      account.email,
-      registerTabId
-    )
-    if (!step2Result.ok) {
-      return {
-        ok: false,
-        message: step2Result.message || "步骤 2 执行失败"
-      }
-    }
-    messages.push(step2Result.message)
-    onStage(2, step2Result.message)
-
-    const step3Result = await runner.fetchAndSubmitRegisterVerificationCode(
-      registerTabId,
-      account.email,
-      account.password,
-      verificationRequestedAt,
-      (message) => {
-        onStage(2, message)
-      }
-    )
-    if (!step3Result.ok) {
-      return {
-        ok: false,
-        message: step3Result.message || "步骤 3 执行失败"
-      }
-    }
-    messages.push(step3Result.message)
-    onStage(3, step3Result.message)
-
-    const profileResult = await runner.submitRegisterProfile(registerTabId)
-    if (!profileResult.ok) {
-      return {
-        ok: false,
-        message: profileResult.message || "步骤 4 执行失败"
-      }
-    }
-    const continueResult =
-      await runner.clickRegisterReadyContinue(registerTabId)
-    if (!continueResult.ok) {
-      return {
-        ok: false,
-        message: `${profileResult.message}；${continueResult.message || "步骤 4 执行失败"}`
-      }
-    }
-    const step4Message = `${profileResult.message}；${continueResult.message}`
-    messages.push(step4Message)
-    onStage(4, step4Message)
-  }
-
-  const refreshResult = await runner.refreshRegisterOAuthAndLogin(
-    cpaUrl,
-    cpaManagementKey
-  )
-  if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
-    return {
-      ok: false,
-      message: refreshResult.message || "步骤 5 执行失败"
-    }
-  }
-  const loginResult = await runner.completeRegisterOAuthLogin(
-    refreshResult.targetTab.id,
-    account.email,
-    account.password,
-    cpaUrl,
-    cpaManagementKey,
-    onProgressLog
-  )
-  const step5Message = `${refreshResult.message}；${loginResult.message}`
-  if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
-    return {
-      ok: false,
-      message: step5Message || "步骤 5 执行失败"
-    }
-  }
-  messages.push(step5Message)
-  onStage(5, step5Message)
-
-  let phoneTabId = loginResult.targetTab.id
-  let oauthStartedAt =
-    loginResult.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
-  let cpaOAuthState =
-    loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
-  let oauthAttemptCount = 1
-  let phoneResult: RegisterStepResult
-
-  while (true) {
-    phoneResult = await runner.completeRegisterPhoneVerification(
-      phoneTabId,
-      heroSmsOptions,
-      oauthStartedAt
-    )
-
-    if (phoneResult.ok) {
-      break
-    }
-
-    if (!phoneResult.needRefreshOAuth) {
-      if (phoneResult.needsManualReview) {
-        onStage(6, phoneResult.message)
-        return {
-          ok: false,
-          needsReview: true,
-          message: `${phoneResult.message}；手机号验证码已经提交但跳转结果无法判断，为避免重复浪费手机号，请人工检查`
-        }
-      }
-
-      return {
-        ok: false,
-        message: phoneResult.message || "步骤 6 执行失败"
-      }
-    }
-
-    if (getStopStrategy() !== "none") {
-      return {
-        ok: false,
-        message: `${phoneResult.message}；已按停止策略在当前手机号结束后停止`
-      }
-    }
-
-    if (oauthAttemptCount >= REGISTER_PHONE_MAX_OAUTH_ATTEMPTS) {
-      const closedAuthTab = await closeTabQuietly(phoneTabId)
-      return {
-        ok: false,
-        message: `${phoneResult.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次；${
-          closedAuthTab ? "已关闭当前 OAuth 页面" : "当前 OAuth 页面未关闭或已不存在"
-        }`
-      }
-    }
-
-    oauthAttemptCount += 1
-    const nextRefreshResult = await runner.refreshRegisterOAuthAndLogin(
-      cpaUrl,
-      cpaManagementKey,
-      phoneTabId
-    )
-    if (
-      !nextRefreshResult.ok ||
-      typeof nextRefreshResult.targetTab?.id !== "number"
-    ) {
-      return {
-        ok: false,
-        message: `${phoneResult.message}；${nextRefreshResult.message}`
-      }
-    }
-
-    const nextLoginResult = await runner.completeRegisterOAuthLogin(
-      nextRefreshResult.targetTab.id,
-      account.email,
-      account.password,
-      cpaUrl,
-      cpaManagementKey,
-      onProgressLog
-    )
-    if (
-      !nextLoginResult.ok ||
-      typeof nextLoginResult.targetTab?.id !== "number"
-    ) {
-      return {
-        ok: false,
-        message: `${phoneResult.message}；${nextRefreshResult.message}；${nextLoginResult.message}`
-      }
-    }
-
-    phoneTabId = nextLoginResult.targetTab.id
-    oauthStartedAt =
-      nextLoginResult.oauthStartedAt ||
-      nextRefreshResult.oauthStartedAt ||
-      Date.now()
-    cpaOAuthState =
-      nextLoginResult.cpaOAuthState || nextRefreshResult.cpaOAuthState || ""
-  }
-
-  const callbackUrl =
-    phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
-  if (!callbackUrl) {
-    onStage(6, phoneResult.message)
-    return {
-      ok: false,
-      needsReview: true,
-      message: `${phoneResult.message}；步骤 6 未返回 OAuth 回调地址，无法判断手机号验证结果；为避免重复消耗手机号，请人工检查`
-    }
-  }
-  messages.push(phoneResult.message)
-  onStage(6, phoneResult.message)
-
-  if (getStopStrategy() === "after_phone") {
-    return {
-      ok: false,
-      needsReview: true,
-      message:
-        "当前手机号验证已结束并按停止策略停止；手机号可能已经验证成功，但 CPA 尚未回填，请人工处理"
-    }
-  }
-
-  const step7Result = await runner.submitRegisterOAuthCallbackToCpa(
-    cpaUrl,
-    cpaManagementKey,
-    callbackUrl,
-    phoneTabId,
-    cpaOAuthState
-  )
-  if (!step7Result.ok) {
-    onStage(7, step7Result.message || "CPA 回填失败")
-    return {
-      ok: false,
-      needsReview: true,
-      message: `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${step7Result.message || "步骤 7 执行失败"}`
-    }
-  }
-  messages.push(step7Result.message)
-  onStage(7, step7Result.message)
-
-  return {
-    ok: true,
-    message: messages.filter(Boolean).join("；")
-  }
-}
-
 const isRegisterAccountDone = (account: ManagedAccount) => {
   return account.status === "done" || account.progress >= REGISTER_STEP_COUNT
+}
+
+const sendRegisterAlarmMessage = <T,>(message: unknown) => {
+  return new Promise<T>((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError
+      if (error) {
+        reject(new Error(error.message))
+        return
+      }
+
+      resolve(response as T)
+    })
+  })
 }
 
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
@@ -370,7 +155,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     selectedEmails,
     selectedEmailSet,
     selectedCount,
-    setAccounts,
     syncAccounts,
     patchAccountState,
     setRunningEmail
@@ -385,14 +169,18 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const heroSms = useHeroSmsConfig({ log, setStatus })
-  const [isBatchRunning, setIsBatchRunning] = useState(false)
+  const [alarmConfig, setAlarmConfig] = useState<RegisterAlarmConfig>(
+    DEFAULT_REGISTER_ALARM_CONFIG
+  )
+  const [registerRunLock, setRegisterRunLock] =
+    useState<RegisterRunLock | null>(null)
+  const [registerRunStatus, setRegisterRunStatus] =
+    useState<RegisterRunStatus | null>(null)
+  const [isClearingRunLock, setIsClearingRunLock] = useState(false)
+  const [isAlarmSaving, setIsAlarmSaving] = useState(false)
+  const [isAlarmTesting, setIsAlarmTesting] = useState(false)
   const [isBatchStopping, setIsBatchStopping] = useState(false)
   const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
-  const batchCancelRef = useRef(false)
-  const batchAbortControllerRef = useRef<AbortController | null>(null)
-  const batchStopStrategyRef = useRef<RegisterStopStrategy>("none")
-  const isWaitingForPhoneCodeRef = useRef(false)
-  const isManualPhoneStopRef = useRef(false)
 
   const selectedDebugAccount = useMemo(() => {
     const normalizedDebugEmail = normalizeEmail(debugEmail)
@@ -402,6 +190,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }) || null
     )
   }, [accounts, debugEmail])
+  const isRegisterRunLockFresh = Boolean(
+    registerRunLock &&
+      Date.now() - registerRunLock.startedAt < REGISTER_RUN_LOCK_STALE_MS
+  )
+  const isBatchRunning = registerRunStatus
+    ? registerRunStatus.activeInMemory
+    : isRegisterRunLockFresh
+  const hasOrphanRegisterRunLock = Boolean(
+    registerRunLock && registerRunStatus && !registerRunStatus.activeInMemory
+  )
 
   useEffect(() => {
     if (accounts.length === 0) {
@@ -425,6 +223,78 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onBusyChange?.(false)
     }
   }, [isBatchRunning, isDebugRunning, onBusyChange])
+
+  const refreshRegisterRunStatus = async () => {
+    try {
+      const response = await sendRegisterAlarmMessage<
+        RegisterRunStatus & { ok: boolean }
+      >({
+        type: "codex-register:run-status"
+      })
+      setRegisterRunStatus({
+        lock: response.lock,
+        activeInMemory: Boolean(response.activeInMemory),
+        stale: Boolean(response.stale)
+      })
+      setRegisterRunLock(response.lock)
+    } catch (error) {
+      log.warn(
+        error instanceof Error ? error.message : "读取注册任务状态失败"
+      )
+    }
+  }
+
+  useEffect(() => {
+    chrome.storage.local.get(
+      [REGISTER_ALARM_STORAGE_KEY, REGISTER_RUN_LOCK_STORAGE_KEY],
+      (result) => {
+        setAlarmConfig(
+          normalizeRegisterAlarmConfig(result[REGISTER_ALARM_STORAGE_KEY])
+        )
+        setRegisterRunLock(
+          normalizeRegisterRunLock(result[REGISTER_RUN_LOCK_STORAGE_KEY])
+        )
+        void refreshRegisterRunStatus()
+      }
+    )
+  }, [])
+
+  useEffect(() => {
+    const handleStorageChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName !== "local") {
+        return
+      }
+
+      if (changes[REGISTER_ALARM_STORAGE_KEY]) {
+        setAlarmConfig(
+          normalizeRegisterAlarmConfig(
+            changes[REGISTER_ALARM_STORAGE_KEY].newValue
+          )
+        )
+      }
+
+      if (changes[REGISTER_RUN_LOCK_STORAGE_KEY]) {
+        setRegisterRunLock(
+          normalizeRegisterRunLock(
+            changes[REGISTER_RUN_LOCK_STORAGE_KEY].newValue
+          )
+        )
+        void refreshRegisterRunStatus()
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChanged)
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChanged)
+    }
+  }, [])
+
+  useEffect(() => {
+    setRunningEmail(isBatchRunning ? registerRunLock?.currentEmail || "" : "")
+  }, [isBatchRunning, registerRunLock?.currentEmail, setRunningEmail])
 
   const handleOpenRegisterEntry = async () => {
     if (isDebugRunning) {
@@ -1009,6 +879,92 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
+  const handleSaveAlarmConfig = async () => {
+    const nextConfig = normalizeRegisterAlarmConfig({
+      ...alarmConfig,
+      selectedEmails
+    })
+    if (nextConfig.enabled && selectedEmails.length === 0) {
+      setStatus("请先选择要自动执行的账号")
+      log.warn("自动触发未保存：未选择账号")
+      return
+    }
+
+    setIsAlarmSaving(true)
+    try {
+      const response = await sendRegisterAlarmMessage<{
+        ok: boolean
+        message: string
+        config?: RegisterAlarmConfig
+      }>({
+        type: "codex-register:alarm-save",
+        config: nextConfig
+      })
+      const savedConfig = normalizeRegisterAlarmConfig(
+        response.config || nextConfig
+      )
+      setAlarmConfig(savedConfig)
+      setStatus(response.message)
+      log.info(
+        `${response.message}；账号数 ${savedConfig.selectedEmails.length}；模式 ${
+          savedConfig.mode === "interval"
+            ? `${savedConfig.intervalMinutes} 分钟间隔`
+            : `每天 ${savedConfig.dailyTime}`
+        }`
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "保存自动触发配置失败"
+      setStatus("保存自动触发配置失败")
+      log.warn(message)
+    } finally {
+      setIsAlarmSaving(false)
+    }
+  }
+
+  const handleTestAlarmRun = async () => {
+    setIsAlarmTesting(true)
+    try {
+      const response = await sendRegisterAlarmMessage<{
+        ok: boolean
+        message: string
+      }>({
+        type: "codex-register:alarm-run-now"
+      })
+      setStatus(response.message)
+      log.info(response.message)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "触发自动注册测试失败"
+      setStatus("触发自动注册测试失败")
+      log.warn(message)
+    } finally {
+      setIsAlarmTesting(false)
+    }
+  }
+
+  const handleClearRegisterRunLock = async () => {
+    setIsClearingRunLock(true)
+    try {
+      const response = await sendRegisterAlarmMessage<{
+        ok: boolean
+        message: string
+      }>({
+        type: "codex-register:clear-run-lock"
+      })
+      setStatus(response.message)
+      log[response.ok ? "info" : "warn"](response.message)
+      await refreshRegisterRunStatus()
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "清除注册任务锁失败"
+      setStatus("清除注册任务锁失败")
+      log.warn(message)
+    } finally {
+      setIsClearingRunLock(false)
+    }
+  }
+
   const handleStartBatch = async () => {
     const normalizedCpaUrl = String(cpaUrl || "").trim()
     const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
@@ -1030,7 +986,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    if (isBatchRunning || isDebugRunning) {
+    if (isBatchRunning && registerRunLock) {
+      setStatus("注册任务正在后台执行")
+      log.warn(registerRunLock.message || "注册任务正在后台执行")
+      return
+    }
+
+    if (isDebugRunning) {
       return
     }
 
@@ -1040,21 +1002,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const heroSmsOptions = heroSms.buildOptions("注册执行", (phase) => {
-      isWaitingForPhoneCodeRef.current = phase === "phone_submitted"
-    })
-    if (!heroSmsOptions) {
+    if (!heroSms.hasRequiredConfig) {
+      setStatus("请先填写 HeroSMS 接码配置")
+      log.warn("注册执行缺少 HeroSMS 接码配置")
       return
     }
 
-    const isTargetAccount = (account: ManagedAccount) => {
+    const runnableCount = accounts.filter((account) => {
       return (
         selectedEmailSet.has(normalizeEmail(account.email)) &&
         !isRegisterAccountDone(account) &&
         account.status !== "needs_review"
       )
-    }
-    const runnableCount = accounts.filter(isTargetAccount).length
+    }).length
     if (runnableCount === 0) {
       const emptyMessage = "选中的账号没有可执行项"
       setStatus(emptyMessage)
@@ -1062,186 +1022,54 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    batchCancelRef.current = false
-    batchStopStrategyRef.current = "none"
-    isWaitingForPhoneCodeRef.current = false
-    isManualPhoneStopRef.current = false
     setIsBatchStopping(false)
     setIsStopStrategyModalOpen(false)
-    const batchAbortController = new AbortController()
-    batchAbortControllerRef.current = batchAbortController
-    const registerRunner = createCodexRegisterRunner({
-      abortSignal: batchAbortController.signal
-    })
-    setIsBatchRunning(true)
-    setRunningEmail("")
-
-    let workingAccounts = accounts.map((account) => {
-      if (!isTargetAccount(account)) {
-        return account
-      }
-
-      return account.progress < 4 ? resetManagedAccountState(account) : account
-    })
-    syncAccounts(workingAccounts, normalizedCpaUrl, normalizedCpaManagementKey)
 
     const batchLabel = "选中账号"
-    setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
-    log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
-
-    let currentRunnableIndex = 0
-    for (let index = 0; index < workingAccounts.length; index += 1) {
-      if (batchCancelRef.current) {
-        setStatus("已停止批量执行")
-        log.warn("批量执行已停止")
-        break
-      }
-
-      const currentAccount = workingAccounts[index]
-      if (!isTargetAccount(currentAccount)) {
-        continue
-      }
-
-      const resumeStep = currentAccount.progress >= 4 ? 5 : 1
-      currentRunnableIndex += 1
-      setRunningEmail(currentAccount.email)
-      setStatus(
-        `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
-      )
-      log.info(`开始处理账号 ${currentAccount.email}`)
-      log.info(
-        `[${currentAccount.email}] 当前标记进度 ${currentAccount.progress}/${REGISTER_STEP_COUNT}，将从 Step ${resumeStep} 开始执行`
-      )
-
-      const updateCurrentAccount = (
-        patch: Partial<ManagedAccount>
-      ): ManagedAccount[] => {
-        const nextAccounts = [...workingAccounts]
-        nextAccounts[index] = {
-          ...nextAccounts[index],
-          ...patch,
-          updatedAt: Date.now()
-        }
-        workingAccounts = nextAccounts
-        setAccounts(nextAccounts)
-        syncAccounts(nextAccounts, normalizedCpaUrl, normalizedCpaManagementKey)
-        return nextAccounts
-      }
-
-      updateCurrentAccount({
-        status: "running",
-        lastMessage:
-          resumeStep === 1
-            ? "正在打开 GPT 注册页"
-            : "正在刷新 OAuth 并进入手机号验证阶段"
+    try {
+      const response = await sendRegisterAlarmMessage<{
+        ok: boolean
+        message: string
+      }>({
+        type: "codex-register:batch-start",
+        selectedEmails
       })
+      setStatus(response.message)
+      log[response.ok ? "info" : "warn"](
+        `${response.message}；计划执行 ${runnableCount} 个${batchLabel}`
+      )
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "提交注册任务到后台失败"
+      setStatus("提交注册任务到后台失败")
+      log.warn(message)
+    }
+  }
 
-      let runResult: AccountRunResult
-      try {
-        runResult = await runManagedRegisterFlow(
-          normalizedCpaUrl,
-          normalizedCpaManagementKey,
-          currentAccount,
-          heroSmsOptions,
-          registerRunner,
-          () => batchStopStrategyRef.current,
-          (progress, message) => {
-            const nextStatus: ManagedAccountStatus =
-              progress === REGISTER_STEP_COUNT ? "done" : "running"
-            updateCurrentAccount({
-              progress,
-              status: nextStatus,
-              lastMessage: message
-            })
-            setStatus(`账号 ${currentAccount.email} 已完成 Step ${progress}`)
-            log.info(`[${currentAccount.email}] ${message}`)
-          },
-          (message) => {
-            updateCurrentAccount({
-              status: "running",
-              lastMessage: message
-            })
-            log.info(`[${currentAccount.email}] ${message}`)
-          }
-        )
-      } catch (error) {
-        runResult = {
-          ok: false,
-          message:
-            error instanceof Error ? error.message : "账号自动注册时发生异常"
-        }
-      }
-
-      if (batchCancelRef.current) {
-        const currentState = workingAccounts[index]
-        updateCurrentAccount({
-          progress: isManualPhoneStopRef.current ? 6 : currentState.progress,
-          status: isManualPhoneStopRef.current ? "needs_review" : "failed",
-          lastMessage: isManualPhoneStopRef.current
-            ? "已直接停止，当前手机号验证码由人工负责"
-            : runResult.message || "已停止当前流程"
-        })
-        setStatus("已停止当前流程")
-        log.warn(
-          `[${currentAccount.email}] ${runResult.message || "已停止当前流程"}`
-        )
-        break
-      }
-
-      if (runResult.ok) {
-        updateCurrentAccount({
-          progress: REGISTER_STEP_COUNT,
-          status: "done",
-          lastMessage: runResult.message
-        })
-        log.info(`[${currentAccount.email}] ${runResult.message}`)
-        log.info(`========== 流程成功完成：${currentAccount.email} ==========`)
-        if (batchStopStrategyRef.current !== "none") {
-          break
-        }
-        continue
-      }
-
-      const currentState = workingAccounts[index]
-      if (runResult.needsReview) {
-        updateCurrentAccount({
-          progress: currentState.progress,
-          status: "needs_review",
-          lastMessage: runResult.message
-        })
-        setStatus(`账号 ${currentAccount.email} 需要人工判断`)
-        log.warn(`[${currentAccount.email}] ${runResult.message}`)
-        if (batchStopStrategyRef.current !== "none") {
-          break
-        }
-        continue
-      }
-
-      updateCurrentAccount({
-        progress: currentState.progress,
-        status: "failed",
-        lastMessage: runResult.message
-      })
-      setStatus(`账号 ${currentAccount.email} 执行失败`)
-      log.warn(`[${currentAccount.email}] ${runResult.message}`)
-      if (batchStopStrategyRef.current !== "none") {
-        break
-      }
+  const requestStopBatch = async (strategy: RegisterStopStrategy) => {
+    if (isBatchStopping) {
+      return
     }
 
-    setRunningEmail("")
-    setIsBatchRunning(false)
-    setIsBatchStopping(false)
-    setIsStopStrategyModalOpen(false)
-    isWaitingForPhoneCodeRef.current = false
-    isManualPhoneStopRef.current = false
-    batchAbortControllerRef.current = null
-    setStatus(
-      batchCancelRef.current || batchStopStrategyRef.current !== "none"
-        ? "已停止批量执行"
-        : `${batchLabel}执行已结束`
-    )
-    batchStopStrategyRef.current = "none"
+    setIsBatchStopping(true)
+    try {
+      const response = await sendRegisterAlarmMessage<{
+        ok: boolean
+        message: string
+      }>({
+        type: "codex-register:batch-stop",
+        strategy
+      })
+      setStatus(response.message)
+      log[response.ok ? "info" : "warn"](response.message)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "发送停止请求失败"
+      setStatus("发送停止请求失败")
+      log.warn(message)
+    } finally {
+      setIsBatchStopping(false)
+    }
   }
 
   const handleStopBatch = () => {
@@ -1249,40 +1077,17 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    if (isWaitingForPhoneCodeRef.current) {
+    if (registerRunLock?.phonePhase === "phone_submitted") {
       setIsStopStrategyModalOpen(true)
       return
     }
 
-    batchStopStrategyRef.current = "immediate"
-    isManualPhoneStopRef.current = false
-    setIsBatchStopping(true)
-    batchCancelRef.current = true
-    batchAbortControllerRef.current?.abort()
-    setStatus("正在停止当前流程")
-    log.warn("收到停止请求，等待当前步骤结束")
+    void requestStopBatch("immediate")
   }
 
   const handleChooseStopStrategy = (strategy: RegisterStopStrategy) => {
     setIsStopStrategyModalOpen(false)
-    batchStopStrategyRef.current = strategy
-    setIsBatchStopping(true)
-
-    if (strategy === "immediate") {
-      isManualPhoneStopRef.current = true
-      batchCancelRef.current = true
-      batchAbortControllerRef.current?.abort()
-      setStatus("正在立即停止，当前手机号后续由人工处理")
-      log.warn("已选择立即停止，当前手机号验证码由人工处理")
-      return
-    }
-
-    setStatus("已设置停止策略，等待当前手机号验证结束")
-    log.warn(
-      strategy === "after_phone"
-        ? "已选择当前手机号验证结束后停止"
-        : "已选择当前手机号失败则停止，成功则完成 CPA 回填后停止"
-    )
+    void requestStopBatch(strategy)
   }
 
   const handleMarkSelectedRegisterStage = (stage: "start" | "phone") => {
@@ -1332,6 +1137,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasBatchConfig = Boolean(
     cpaUrl.trim() && cpaManagementKey.trim() && heroSms.hasRequiredConfig
   )
+  const alarmLastTriggeredLabel = alarmConfig.lastTriggeredAt
+    ? new Date(alarmConfig.lastTriggeredAt).toLocaleString()
+    : "尚未触发"
+  const alarmSummary =
+    alarmConfig.mode === "interval"
+      ? `每 ${alarmConfig.intervalMinutes} 分钟`
+      : `每天 ${alarmConfig.dailyTime}`
+  const orphanLockStartedLabel = registerRunLock?.startedAt
+    ? new Date(registerRunLock.startedAt).toLocaleString()
+    : ""
 
   return (
     <>
@@ -1415,7 +1230,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           ) : (
             <Button
               type="primary"
-              disabled={!hasBatchConfig || selectedCount === 0}
+              disabled={
+                !hasBatchConfig ||
+                selectedCount === 0 ||
+                hasOrphanRegisterRunLock
+              }
               onClick={() => {
                 void handleStartBatch()
               }}>
@@ -1423,6 +1242,140 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             </Button>
           )
         }
+      />
+
+      {hasOrphanRegisterRunLock ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="检测到残留注册任务锁"
+          description={`开始时间：${orphanLockStartedLabel || "未知"}；当前账号：${
+            registerRunLock?.currentEmail || "未知"
+          }；最后状态：${registerRunLock?.message || "未知"}`}
+          action={
+            <Button
+              size="small"
+              loading={isClearingRunLock}
+              onClick={() => {
+                void handleClearRegisterRunLock()
+              }}>
+              清除残留锁
+            </Button>
+          }
+        />
+      ) : null}
+
+      <Collapse
+        className="panel-card"
+        items={[
+          {
+            key: "register-alarm",
+            label: "自动触发",
+            extra: (
+              <Tag color={alarmConfig.enabled ? "processing" : "default"}>
+                {alarmConfig.enabled ? alarmSummary : "未启用"}
+              </Tag>
+            ),
+            children: (
+              <div className="debug-panel">
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  <Space size={12} wrap>
+                    <Switch
+                      checked={alarmConfig.enabled}
+                      disabled={disabled || isAlarmSaving}
+                      onChange={(checked) => {
+                        setAlarmConfig((current) => ({
+                          ...current,
+                          enabled: checked
+                        }))
+                      }}
+                    />
+                    <Radio.Group
+                      value={alarmConfig.mode}
+                      disabled={disabled || isAlarmSaving}
+                      onChange={(event) => {
+                        setAlarmConfig((current) => ({
+                          ...current,
+                          mode:
+                            event.target.value === "daily"
+                              ? "daily"
+                              : "interval"
+                        }))
+                      }}>
+                      <Radio.Button value="interval">间隔</Radio.Button>
+                      <Radio.Button value="daily">每天</Radio.Button>
+                    </Radio.Group>
+                  </Space>
+
+                  {alarmConfig.mode === "interval" ? (
+                    <Space size={8} wrap>
+                      <span className="debug-label">间隔分钟</span>
+                      <InputNumber
+                        min={1}
+                        precision={0}
+                        value={alarmConfig.intervalMinutes}
+                        disabled={disabled || isAlarmSaving}
+                        onChange={(value) => {
+                          setAlarmConfig((current) => ({
+                            ...current,
+                            intervalMinutes: Math.max(1, Number(value || 1))
+                          }))
+                        }}
+                      />
+                    </Space>
+                  ) : (
+                    <Space size={8} wrap>
+                      <span className="debug-label">每天时间</span>
+                      <Input
+                        type="time"
+                        value={alarmConfig.dailyTime}
+                        disabled={disabled || isAlarmSaving}
+                        onChange={(event) => {
+                          setAlarmConfig((current) => ({
+                            ...current,
+                            dailyTime: event.target.value || "02:00"
+                          }))
+                        }}
+                      />
+                    </Space>
+                  )}
+
+                  <Space size={8} wrap>
+                    <Tag color="default">
+                      {`已保存账号 ${alarmConfig.selectedEmails.length}`}
+                    </Tag>
+                    <Tag color="default">{`当前勾选 ${selectedCount}`}</Tag>
+                    <Tag color="default">{`上次 ${alarmLastTriggeredLabel}`}</Tag>
+                  </Space>
+
+                  {alarmConfig.lastMessage ? (
+                    <div className="debug-label">{alarmConfig.lastMessage}</div>
+                  ) : null}
+
+                  <Space size={8} wrap>
+                    <Button
+                      type="primary"
+                      loading={isAlarmSaving}
+                      disabled={disabled || isAlarmSaving}
+                      onClick={() => {
+                        void handleSaveAlarmConfig()
+                      }}>
+                      保存自动触发
+                    </Button>
+                    <Button
+                      loading={isAlarmTesting}
+                      disabled={disabled || isAlarmTesting}
+                      onClick={() => {
+                        void handleTestAlarmRun()
+                      }}>
+                      测试触发
+                    </Button>
+                  </Space>
+                </Space>
+              </div>
+            )
+          }
+        ]}
       />
 
       <HeroSmsConfigPanel heroSms={heroSms} disabled={isDebugRunning} />

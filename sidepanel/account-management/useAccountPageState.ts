@@ -7,6 +7,7 @@ import {
   isManagedAccountDone,
   loadAccountPageState,
   normalizeEmail,
+  normalizeStoredAccount,
   resetManagedAccountState,
   saveAccountPageState,
   STEP_COUNT,
@@ -111,6 +112,43 @@ export const useAccountPageState = ({
       setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
     })()
   }, [setStatus, storageKeys])
+
+  useEffect(() => {
+    const handleStorageChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName !== "local") {
+        return
+      }
+
+      if (changes[storageKeys.cpaUrl]) {
+        setCpaUrlState(String(changes[storageKeys.cpaUrl].newValue || ""))
+      }
+
+      if (changes[storageKeys.cpaManagementKey]) {
+        setCpaManagementKeyState(
+          String(changes[storageKeys.cpaManagementKey].newValue || "")
+        )
+      }
+
+      if (changes[storageKeys.accounts]) {
+        const rawAccounts = Array.isArray(changes[storageKeys.accounts].newValue)
+          ? (changes[storageKeys.accounts].newValue as unknown[])
+          : []
+        setAccountsState(
+          rawAccounts
+            .map((account) => normalizeStoredAccount(account))
+            .filter((account): account is ManagedAccount => Boolean(account))
+        )
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChanged)
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChanged)
+    }
+  }, [storageKeys])
 
   useEffect(() => {
     const existingEmails = new Set(

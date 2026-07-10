@@ -27,6 +27,7 @@
   },
   "manifest": {
     "permissions": [
+      "alarms",
       "cookies",
       "sidePanel",
       "storage",
