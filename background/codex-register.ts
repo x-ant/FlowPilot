@@ -504,6 +504,21 @@ const OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS = [
   "下一步"
 ]
 
+const OPENAI_AUTH_DIALOG_CONTAINER = {
+  selectors: [
+    "[role='dialog'][data-state='open']",
+    "[role='dialog'][aria-modal='true']"
+  ],
+  textIncludes: [
+    "登录或注册",
+    "注册或登录",
+    "log in or sign up",
+    "sign up or log in",
+    "login or signup",
+    "signup or login"
+  ]
+}
+
 /**
  * 在 ChatGPT 注册资料页填写姓名和年龄/生日，并提交创建账户表单。
  *
@@ -1399,6 +1414,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     throwIfRunAborted()
     // 如果上一步停留再 按注册的地方，这里可以继续执行邮箱提交
     const submitResult = await runPageActionInTab(tabId, {
+      container: OPENAI_AUTH_DIALOG_CONTAINER,
       fields: [
         {
           selectors: OPENAI_EMAIL_INPUT_SELECTORS,
@@ -1411,7 +1427,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       },
       timeoutMs: 20000,
       successMessage: "已填写注册邮箱并点击继续",
-      failureMessage: "未找到注册邮箱输入框或继续按钮"
+      failureMessage: "未找到注册弹窗里的邮箱输入框或继续按钮"
     })
 
     if (!submitResult.ok) {
@@ -1489,6 +1505,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     })
 
     const submitResult = await runPageActionInTab(tabId, {
+      container: OPENAI_AUTH_DIALOG_CONTAINER,
       fields: [
         {
           selectors: OPENAI_EMAIL_INPUT_SELECTORS,
@@ -1501,7 +1518,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       },
       timeoutMs: 20000,
       successMessage: "已填写登录邮箱并点击继续",
-      failureMessage: "未找到登录邮箱输入框或继续按钮"
+      failureMessage: "未找到登录弹窗里的邮箱输入框或继续按钮"
     })
 
     if (!submitResult.ok) {

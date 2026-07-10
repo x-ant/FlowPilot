@@ -51,7 +51,19 @@ export type PageActionButton = {
   triggerMode?: "auto" | "click" | "requestSubmit"
 }
 
+export type PageActionContainer = {
+  /**
+   * 限定输入框和按钮查找范围的容器选择器。
+   */
+  selectors: string[]
+  /**
+   * 容器文本必须包含的内容，用来区分前景弹窗和背景面板。
+   */
+  textIncludes?: string[]
+}
+
 export type PageActionConfig = {
+  container?: PageActionContainer
   fields?: PageActionField[]
   button?: PageActionButton
   timeoutMs: number
@@ -534,11 +546,54 @@ export const performPageActionInPage = (
     }
 
     /**
+     * 查找当前动作的 DOM 作用域。
+     *
+     * 不配置 container 时沿用全页面查找；配置后只在匹配容器内查找输入框和按钮，
+     * 避免同一页面上背景面板和前景弹窗同时存在时填错表单。
+     *
+     * @return 匹配到的容器；未配置时返回 document；配置后没找到则返回 null。
+     */
+    const findActionScope = (): Document | Element | null => {
+      if (!action.container) {
+        return document
+      }
+
+      const containerSelector = action.container.selectors.join(",")
+      const targetTexts = (action.container.textIncludes || []).map((text) => {
+        return normalizeText(text)
+      })
+
+      return (
+        Array.from(document.querySelectorAll(containerSelector)).find(
+          (element) => {
+            if (isUnavailable(element)) {
+              return false
+            }
+
+            if (targetTexts.length === 0) {
+              return true
+            }
+
+            const currentText = getElementText(element)
+            return targetTexts.some((targetText) => {
+              return currentText.includes(targetText)
+            })
+          }
+        ) || null
+      )
+    }
+
+    /**
      * 在候选元素里查找文案匹配的按钮。
      *
+     * @param scope DOM 查找范围。
+     * @param formAnchorInput 已填写的输入框，用于优先选择同一表单里位于输入框后方的按钮。
      * @return 匹配到的按钮元素；如果没有找到则返回 undefined。
      */
-    const findButton = () => {
+    const findButton = (
+      scope: Document | Element,
+      formAnchorInput?: HTMLInputElement
+    ) => {
       if (!action.button) {
         return undefined
       }
@@ -561,9 +616,8 @@ export const performPageActionInPage = (
             ]
       ).join(",")
 
-      // 取第一个符合条件的按钮
-      return Array.from(document.querySelectorAll(buttonSelector)).find(
-        (element) => {
+      const candidates = Array.from(scope.querySelectorAll(buttonSelector))
+        .filter((element) => {
           if (isUnavailable(element)) {
             return false
           }
@@ -576,19 +630,43 @@ export const performPageActionInPage = (
           return targetButtonTextArray.some((targetButtonText) => {
             return currentElementText.includes(targetButtonText)
           })
-        }
-      ) as HTMLElement | undefined
+        })
+        .map((element) => {
+          return element as HTMLElement
+        })
+
+      if (!formAnchorInput || candidates.length <= 1) {
+        return candidates[0]
+      }
+
+      const anchorForm =
+        formAnchorInput.form ||
+        (formAnchorInput.closest?.("form") as HTMLFormElement | null)
+      const sameFormCandidates = candidates.filter((candidate) => {
+        return !anchorForm || candidate.closest?.("form") === anchorForm
+      })
+      const scopedCandidates =
+        sameFormCandidates.length > 0 ? sameFormCandidates : candidates
+      const followingCandidates = scopedCandidates.filter((candidate) => {
+        return Boolean(
+          formAnchorInput.compareDocumentPosition(candidate) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+        )
+      })
+
+      return followingCandidates[0] || scopedCandidates[0]
     }
 
     /**
      * 在页面里尝试定位输入框。
      *
+     * @param scope DOM 查找范围。
      * @param field 表单字段配置。
      * @return 找到时返回输入框，否则返回 undefined。
      */
-    const findInput = (field: PageActionField) => {
+    const findInput = (scope: Document | Element, field: PageActionField) => {
       for (const selector of field.selectors) {
-        const matched = Array.from(document.querySelectorAll(selector)).find(
+        const matched = Array.from(scope.querySelectorAll(selector)).find(
           (element) => {
             const input = element as HTMLInputElement
             const rect = input.getBoundingClientRect()
@@ -618,11 +696,12 @@ export const performPageActionInPage = (
      *
      * 这样可以避免普通表单里多个输入框被误判。
      *
+     * @param scope DOM 查找范围。
      * @return 按页面顺序排列的可见输入框列表。
      */
-    const findSplitInputs = () => {
+    const findSplitInputs = (scope: Document | Element) => {
       const inputs = Array.from(
-        document.querySelectorAll("input[maxlength='1']")
+        scope.querySelectorAll("input[maxlength='1']")
       ).filter((element) => {
         const input = element as HTMLInputElement
         const rect = input.getBoundingClientRect()
@@ -665,12 +744,13 @@ export const performPageActionInPage = (
     /**
      * 填写一个字段，兼容普通输入框和分格验证码输入框。
      *
+     * @param scope DOM 查找范围。
      * @param field 字段填写配置。
      * @return 填写结果和可用于关联表单的输入框。
      */
-    const fillField = (field: PageActionField) => {
+    const fillField = (scope: Document | Element, field: PageActionField) => {
       if (field.allowSplitInput) {
-        const splitInputs = findSplitInputs()
+        const splitInputs = findSplitInputs(scope)
         if (splitInputs.length > 1 && field.value.length > 1) {
           const characters = Array.from(field.value)
           const fillLength = Math.min(splitInputs.length, characters.length)
@@ -700,7 +780,7 @@ export const performPageActionInPage = (
         }
       }
 
-      const input = findInput(field)
+      const input = findInput(scope, field)
       if (!input) {
         return {
           ok: false,
@@ -722,15 +802,16 @@ export const performPageActionInPage = (
     /**
      * 批量填写字段，并记录可用于关联表单的输入框。
      *
+     * @param scope DOM 查找范围。
      * @return 字段填写结果。
      */
-    const fillFields = () => {
+    const fillFields = (scope: Document | Element) => {
       const fields = action.fields || []
       const filledInputs: HTMLInputElement[] = []
       let hasFilledSplitInput = false
 
       for (const field of fields) {
-        const fillResult = fillField(field)
+        const fillResult = fillField(scope, field)
         if (!fillResult.ok) {
           if (field.optional) {
             continue
@@ -761,11 +842,15 @@ export const performPageActionInPage = (
     /**
      * 根据按钮和已填写的输入框，寻找最适合触发提交的表单。
      *
+     * @param scope DOM 查找范围。
      * @param formAnchorInput 已填写的第一个输入框，用于反查所在表单。
      * @return 按钮、按钮直属表单和最终可用表单。
      */
-    const getButtonActionContext = (formAnchorInput?: HTMLInputElement) => {
-      const button = findButton() as
+    const getButtonActionContext = (
+      scope: Document | Element,
+      formAnchorInput?: HTMLInputElement
+    ) => {
+      const button = findButton(scope, formAnchorInput) as
         | HTMLButtonElement
         | HTMLInputElement
         | HTMLAnchorElement
@@ -869,7 +954,12 @@ export const performPageActionInPage = (
      * @return 如果已经完成填写和点击，则返回 true；否则返回 false。
      */
     const tryExecute = () => {
-      const fillResult = fillFields()
+      const scope = findActionScope()
+      if (!scope) {
+        return false
+      }
+
+      const fillResult = fillFields(scope)
       if (!fillResult.ok) {
         return false
       }
@@ -885,6 +975,7 @@ export const performPageActionInPage = (
       }
 
       const { button, buttonForm, form } = getButtonActionContext(
+        scope,
         fillResult.filledInputs[0]
       )
 
