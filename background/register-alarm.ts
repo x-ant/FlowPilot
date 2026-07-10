@@ -1,4 +1,11 @@
-import { createConsoleLogger } from "../shared/logging"
+import {
+  createConsoleLogger,
+  EXECUTION_LOG_LIMIT,
+  EXECUTION_LOG_STORAGE_KEY,
+  getTimeLabel,
+  normalizeStoredLogs,
+  type LogLevel
+} from "../shared/logging"
 import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   loadAccountPageState,
@@ -13,24 +20,22 @@ import {
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../sidepanel/shared"
-import type { HeroSmsPhoneVerificationOptions } from "./register-phone-verification"
 import {
   runRegisterBatch,
   type RegisterStopStrategy
 } from "./register-batch-runner"
+import type { HeroSmsPhoneVerificationOptions } from "./register-phone-verification"
 
 const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
 
 const log = createConsoleLogger("register-alarm")
 
-let activeRegisterRun:
-  | {
-      runId: string
-      abortController: AbortController
-      stopStrategy: RegisterStopStrategy
-      manualPhoneStop: boolean
-    }
-  | null = null
+let activeRegisterRun: {
+  runId: string
+  abortController: AbortController
+  stopStrategy: RegisterStopStrategy
+  manualPhoneStop: boolean
+} | null = null
 
 type HeroSmsSettings = {
   apiKey?: string
@@ -61,6 +66,40 @@ const removeStorage = (keys: string[]) => {
       resolve()
     })
   })
+}
+
+/**
+ * 把后台注册任务日志写入统一执行日志。
+ *
+ * @param level 日志级别。
+ * @param message 日志内容。
+ */
+const writeRegisterExecutionLog = async (level: LogLevel, message: string) => {
+  const result = await readStorage([EXECUTION_LOG_STORAGE_KEY])
+  const currentLogs = normalizeStoredLogs(result[EXECUTION_LOG_STORAGE_KEY])
+
+  await writeStorage({
+    [EXECUTION_LOG_STORAGE_KEY]: [
+      ...currentLogs,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        time: getTimeLabel(),
+        level,
+        message: `[后台] ${message}`
+      }
+    ].slice(-EXECUTION_LOG_LIMIT)
+  })
+}
+
+/**
+ * 同时写 console 和统一执行日志。
+ *
+ * @param level 日志级别。
+ * @param message 日志内容。
+ */
+const logRegisterBackground = (level: LogLevel, message: string) => {
+  log[level](message)
+  void writeRegisterExecutionLog(level, message)
 }
 
 const createRunId = () => {
@@ -173,7 +212,11 @@ const buildHeroSmsOptions = async (
     throw new Error("缺少 HeroSMS 接码 API")
   }
 
-  if (!maxPrice || !Number.isFinite(Number(maxPrice)) || Number(maxPrice) <= 0) {
+  if (
+    !maxPrice ||
+    !Number.isFinite(Number(maxPrice)) ||
+    Number(maxPrice) <= 0
+  ) {
     throw new Error("缺少有效 HeroSMS 价格上限")
   }
 
@@ -201,7 +244,7 @@ const buildHeroSmsOptions = async (
     maxPrice,
     fixedPrice,
     onLog: (level, message) => {
-      log[level](`[${logPrefix}] Step 6 ${message}`)
+      logRegisterBackground(level, `[${logPrefix}] Step 6 ${message}`)
     },
     onPhoneVerificationPhase
   }
@@ -271,6 +314,7 @@ const startRegisterBatchJob = async ({
     message: `${triggerLabel}已启动`,
     phonePhase: ""
   })
+  await writeRegisterExecutionLog("info", `${triggerLabel}已启动`)
 
   void (async () => {
     let latestAccounts = state.accounts
@@ -278,13 +322,15 @@ const startRegisterBatchJob = async ({
 
     try {
       const heroSmsOptions = await buildHeroSmsOptions(logPrefix, (phase) => {
+        const message =
+          phase === "phone_submitted"
+            ? "手机号已提交，正在等待验证码"
+            : "手机号验证码等待已结束"
         void patchRegisterRunLock(runId, {
           phonePhase: phase,
-          message:
-            phase === "phone_submitted"
-              ? "手机号已提交，正在等待验证码"
-              : "手机号验证码等待已结束"
+          message
         })
+        void writeRegisterExecutionLog("info", `[${logPrefix}] ${message}`)
       })
 
       const result = await runRegisterBatch({
@@ -307,7 +353,7 @@ const startRegisterBatchJob = async ({
           })
         },
         onLog: (level, message) => {
-          log[level](message)
+          logRegisterBackground(level, message)
         },
         onRunningEmail: (email) => {
           void patchRegisterRunLock(runId, {
@@ -318,8 +364,10 @@ const startRegisterBatchJob = async ({
           void patchRegisterRunLock(runId, {
             message
           })
+          void writeRegisterExecutionLog("info", message)
         }
       })
+      await writeRegisterExecutionLog("info", result.message)
 
       await writeStorage({
         [REGISTER_STORAGE_KEYS.cpaUrl]: cpaUrl,
@@ -335,7 +383,7 @@ const startRegisterBatchJob = async ({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "注册批量任务执行失败"
-      log.warn(message)
+      logRegisterBackground("warn", message)
       await patchRegisterRunLock(runId, {
         message
       })
@@ -350,12 +398,19 @@ const startRegisterBatchJob = async ({
       }
       await releaseRegisterRunLock(runId)
       const latestConfig = await getRegisterAlarmConfig()
-      if (source === "alarm" && latestConfig.enabled && latestConfig.mode === "daily") {
+      if (
+        source === "alarm" &&
+        latestConfig.enabled &&
+        latestConfig.mode === "daily"
+      ) {
         await scheduleRegisterAlarm()
       }
     }
   })().catch((error) => {
-    log.warn(error instanceof Error ? error.message : "注册批量任务启动失败")
+    logRegisterBackground(
+      "warn",
+      error instanceof Error ? error.message : "注册批量任务启动失败"
+    )
   })
 
   return {
@@ -366,6 +421,7 @@ const startRegisterBatchJob = async ({
 
 export const runRegisterAlarmNow = async (source = "alarm") => {
   const config = await getRegisterAlarmConfig()
+  await writeRegisterExecutionLog("info", `自动注册已触发：${source}`)
   await patchAlarmConfig({
     lastTriggeredAt: Date.now(),
     lastMessage: `自动注册已触发：${source}`
@@ -408,7 +464,8 @@ const stopRegisterBatchJob = async (strategy: RegisterStopStrategy) => {
   if (activeRegisterRun?.runId !== lock.runId) {
     return {
       ok: false,
-      message: "注册任务不在当前后台上下文中，无法停止；可等待任务锁过期或重启扩展"
+      message:
+        "注册任务不在当前后台上下文中，无法停止；可等待任务锁过期或重启扩展"
     }
   }
 
@@ -463,7 +520,30 @@ const clearStaleRegisterRunLock = async () => {
     }
   }
 
+  const state = await loadAccountPageState(REGISTER_STORAGE_KEYS)
+  const now = Date.now()
+  const nextAccounts = state.accounts.map((account) => {
+    if (account.status !== "running") {
+      return account
+    }
+
+    return {
+      ...account,
+      status: "failed" as const,
+      lastMessage: "后台任务已中断，已清理残留任务锁",
+      updatedAt: now
+    }
+  })
+
+  await saveAccountPageState(REGISTER_STORAGE_KEYS, {
+    ...state,
+    accounts: nextAccounts
+  })
   await releaseRegisterRunLock(status.lock.runId)
+  await writeRegisterExecutionLog(
+    "warn",
+    "已清除残留注册任务锁，并把执行中的账号标记为失败"
+  )
   return {
     ok: true,
     message: "已清除残留注册任务锁"

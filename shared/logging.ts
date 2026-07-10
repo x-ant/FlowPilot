@@ -26,6 +26,9 @@ export type ConsoleLogger = {
   debug: (...args: unknown[]) => void
 }
 
+export const EXECUTION_LOG_STORAGE_KEY = "codex-login:execution-logs"
+export const EXECUTION_LOG_LIMIT = 6000
+
 export const LOG_LEVEL_META: Record<LogLevel, LogLevelMeta> = {
   error: {
     label: "ERROR",
@@ -43,6 +46,40 @@ export const LOG_LEVEL_META: Record<LogLevel, LogLevelMeta> = {
     label: "DEBUG",
     color: "default"
   }
+}
+
+/**
+ * 规范化本地存储里的执行日志。
+ *
+ * @param value 从 chrome.storage.local 读取到的原始日志列表。
+ * @return 可展示和继续持久化的日志列表。
+ */
+export const normalizeStoredLogs = (value: unknown): LogItem[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item) => {
+      const record = item as Partial<LogItem>
+      if (
+        typeof record.id !== "string" ||
+        typeof record.time !== "string" ||
+        typeof record.message !== "string" ||
+        !["error", "warn", "info", "debug"].includes(String(record.level))
+      ) {
+        return null
+      }
+
+      return {
+        id: record.id,
+        time: record.time,
+        level: record.level as LogItem["level"],
+        message: record.message
+      }
+    })
+    .filter((item): item is LogItem => Boolean(item))
+    .slice(-EXECUTION_LOG_LIMIT)
 }
 
 /**
@@ -65,7 +102,9 @@ export const getTimeLabel = () => {
  * @param write 真实的日志写入函数。
  * @return 带 error / warn / info / debug 方法的日志对象。
  */
-export const createUiLogger = (write: (level: LogLevel, message: string) => void): UiLogger => {
+export const createUiLogger = (
+  write: (level: LogLevel, message: string) => void
+): UiLogger => {
   return {
     error: (message: string) => {
       write("error", message)

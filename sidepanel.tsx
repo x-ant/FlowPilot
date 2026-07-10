@@ -17,8 +17,11 @@ import "./sidepanel.css"
 
 import {
   createUiLogger,
+  EXECUTION_LOG_LIMIT,
+  EXECUTION_LOG_STORAGE_KEY,
   getTimeLabel,
   LOG_LEVEL_META,
+  normalizeStoredLogs,
   type LogItem
 } from "./shared/logging"
 import { CodexLoginPage } from "./sidepanel/CodexLoginPage"
@@ -30,13 +33,11 @@ import {
   type FlowPage
 } from "./sidepanel/shared"
 
-const EXECUTION_LOG_LIMIT = 6000
-
 /**
  * Chrome 扩展侧边栏入口。
  *
- * 只持久化当前功能页；执行日志保留在内存里，关闭侧边栏后重新开始，
- * 避免把账号执行细节长期写入浏览器存储。
+ * 当前功能页和执行日志都会持久化到 chrome.storage.local。
+ * 日志最多保留 6000 条，方便后期排查后台任务和页面自动化问题。
  *
  * @return 侧边栏 React 页面。
  */
@@ -44,10 +45,33 @@ function SidePanel() {
   const [activePage, setActivePage] = useState<FlowPage>("codex-login")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [logsLoaded, setLogsLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
   const [isLogAtBottom, setIsLogAtBottom] = useState(true)
   const logListRef = useRef<HTMLDivElement | null>(null)
   const shouldFollowLogsRef = useRef(true)
+
+  /**
+   * 判断两份日志是否完全一致。
+   *
+   * @param left 第一份日志。
+   * @param right 第二份日志。
+   * @return id、时间、级别、消息都一致时返回 true。
+   */
+  const isSameLogList = (left: LogItem[], right: LogItem[]) => {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => {
+        const other = right[index]
+        return (
+          item.id === other.id &&
+          item.time === other.time &&
+          item.level === other.level &&
+          item.message === other.message
+        )
+      })
+    )
+  }
 
   const log = useMemo(() => {
     return createUiLogger((level, message) => {
@@ -85,14 +109,56 @@ function SidePanel() {
 
   useEffect(() => {
     const storage = getStorage()
-    storage?.get([ACTIVE_PAGE_STORAGE_KEY], (result) => {
-      setActivePage(
-        result?.[ACTIVE_PAGE_STORAGE_KEY] === "codex-register"
-          ? "codex-register"
-          : "codex-login"
-      )
-    })
+    storage?.get(
+      [ACTIVE_PAGE_STORAGE_KEY, EXECUTION_LOG_STORAGE_KEY],
+      (result) => {
+        setActivePage(
+          result?.[ACTIVE_PAGE_STORAGE_KEY] === "codex-register"
+            ? "codex-register"
+            : "codex-login"
+        )
+        setLogs(normalizeStoredLogs(result?.[EXECUTION_LOG_STORAGE_KEY]))
+        setLogsLoaded(true)
+      }
+    )
   }, [])
+
+  useEffect(() => {
+    if (!logsLoaded) {
+      return
+    }
+
+    getStorage()?.set({
+      [EXECUTION_LOG_STORAGE_KEY]: logs.slice(-EXECUTION_LOG_LIMIT)
+    })
+  }, [logs, logsLoaded])
+
+  useEffect(() => {
+    if (!logsLoaded) {
+      return
+    }
+
+    const handleStorageChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName !== "local" || !changes[EXECUTION_LOG_STORAGE_KEY]) {
+        return
+      }
+
+      const nextLogs = normalizeStoredLogs(
+        changes[EXECUTION_LOG_STORAGE_KEY].newValue
+      )
+      setLogs((current) => {
+        return isSameLogList(current, nextLogs) ? current : nextLogs
+      })
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChanged)
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChanged)
+    }
+  }, [logsLoaded])
 
   /**
    * 切换登录/注册功能页，并记住最后一次打开的页面。
@@ -116,6 +182,9 @@ function SidePanel() {
     setLogs([])
     shouldFollowLogsRef.current = true
     setIsLogAtBottom(true)
+    getStorage()?.set({
+      [EXECUTION_LOG_STORAGE_KEY]: []
+    })
     setStatus("日志已清空")
   }
 
