@@ -10,7 +10,14 @@
   Typography
 } from "antd"
 import zhCN from "antd/locale/zh_CN"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react"
 
 import "antd/dist/reset.css"
 import "./sidepanel.css"
@@ -51,6 +58,9 @@ function SidePanel() {
   const [isLogAtBottom, setIsLogAtBottom] = useState(true)
   const logListRef = useRef<HTMLDivElement | null>(null)
   const shouldFollowLogsRef = useRef(true)
+  const isAutoScrollingLogsRef = useRef(false)
+  const logScrollIntentRef = useRef(false)
+  const logScrollIntentTimerRef = useRef<number | null>(null)
   const logWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   /**
@@ -137,15 +147,27 @@ function SidePanel() {
     })
   }, [activePage, log])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = logListRef.current
     if (!element || !shouldFollowLogsRef.current) {
       return
     }
 
+    isAutoScrollingLogsRef.current = true
     element.scrollTop = element.scrollHeight
     setIsLogAtBottom(true)
+    window.setTimeout(() => {
+      isAutoScrollingLogsRef.current = false
+    }, 0)
   }, [logs])
+
+  useEffect(() => {
+    return () => {
+      if (logScrollIntentTimerRef.current) {
+        window.clearTimeout(logScrollIntentTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const storage = getStorage()
@@ -213,6 +235,7 @@ function SidePanel() {
   const handleClearLogs = () => {
     setLogs([])
     shouldFollowLogsRef.current = true
+    logScrollIntentRef.current = false
     setIsLogAtBottom(true)
     getStorage()?.set({
       [EXECUTION_LOG_STORAGE_KEY]: []
@@ -225,6 +248,16 @@ function SidePanel() {
    *
    * 用户向上查看旧日志时暂停自动滚动，避免新日志把视图拉走。
    */
+  const markLogScrollIntent = () => {
+    logScrollIntentRef.current = true
+    if (logScrollIntentTimerRef.current) {
+      window.clearTimeout(logScrollIntentTimerRef.current)
+    }
+    logScrollIntentTimerRef.current = window.setTimeout(() => {
+      logScrollIntentRef.current = false
+    }, 400)
+  }
+
   const handleLogScroll = () => {
     const element = logListRef.current
     if (!element) {
@@ -233,7 +266,19 @@ function SidePanel() {
 
     const isAtBottom =
       element.scrollHeight - element.scrollTop - element.clientHeight <= 24
-    shouldFollowLogsRef.current = isAtBottom
+
+    if (isAtBottom) {
+      shouldFollowLogsRef.current = true
+      logScrollIntentRef.current = false
+      setIsLogAtBottom(true)
+      return
+    }
+
+    if (isAutoScrollingLogsRef.current || !logScrollIntentRef.current) {
+      return
+    }
+
+    shouldFollowLogsRef.current = false
     setIsLogAtBottom(isAtBottom)
   }
 
@@ -245,9 +290,14 @@ function SidePanel() {
     if (!element) {
       return
     }
+    isAutoScrollingLogsRef.current = true
     element.scrollTop = element.scrollHeight
     shouldFollowLogsRef.current = true
+    logScrollIntentRef.current = false
     setIsLogAtBottom(true)
+    window.setTimeout(() => {
+      isAutoScrollingLogsRef.current = false
+    }, 0)
   }
 
   return (
@@ -317,6 +367,9 @@ function SidePanel() {
               <div
                 className="log-list"
                 ref={logListRef}
+                onMouseDown={markLogScrollIntent}
+                onTouchStart={markLogScrollIntent}
+                onWheel={markLogScrollIntent}
                 onScroll={handleLogScroll}>
                 {logs.map((logItem) => {
                   const levelMeta = LOG_LEVEL_META[logItem.level]
