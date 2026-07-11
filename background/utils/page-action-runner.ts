@@ -16,6 +16,83 @@ export type PageActionRunResult = {
   tab?: BrowserTabInfo
 }
 
+export type PageButtonDetectResult = {
+  hasButton: boolean
+  message: string
+}
+
+/**
+ * 按按钮文案检测当前页面是否存在可点击按钮。
+ *
+ * 这个函数会被注入页面执行，只做只读检测，不点击页面。适合在流程步骤里
+ * 先判断是否需要点击入口按钮，再复用统一的表单填写逻辑。
+ *
+ * @param buttonTexts 候选按钮文案。
+ * @return 是否存在匹配按钮和检测说明。
+ */
+export const detectPageButtonByTextInPage = (
+  buttonTexts: string[]
+): PageButtonDetectResult => {
+  const normalizeText = (value: string) => {
+    return String(value || "")
+      .replace(/\s+/g, "")
+      .toLowerCase()
+  }
+  const getElementText = (element: Element) => {
+    const inputValue = element instanceof HTMLInputElement ? element.value : ""
+    return [
+      inputValue,
+      element.textContent,
+      element.getAttribute("aria-label"),
+      element.getAttribute("title")
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim()
+  }
+  const isUnavailable = (element: Element) => {
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+
+    return (
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      Boolean((element as HTMLButtonElement).disabled) ||
+      htmlElement.getAttribute("aria-disabled") === "true" ||
+      style.pointerEvents === "none"
+    )
+  }
+
+  const targetTexts = buttonTexts.map(normalizeText)
+  const selector = [
+    "button",
+    "a",
+    "[role='button']",
+    "input[type='button']",
+    "input[type='submit']"
+  ].join(",")
+  const button = Array.from(document.querySelectorAll(selector)).find(
+    (element) => {
+      if (isUnavailable(element)) {
+        return false
+      }
+
+      const currentText = normalizeText(getElementText(element))
+      return targetTexts.some((targetText) => currentText.includes(targetText))
+    }
+  )
+
+  return {
+    hasButton: Boolean(button),
+    message: button
+      ? `当前页面存在按钮：${getElementText(button) || "未识别文案"}`
+      : "当前页面没有匹配按钮"
+  }
+}
+
 const isSameTargetUrl = (currentUrl: string, targetUrl: string) => {
   try {
     return new URL(currentUrl).href === new URL(targetUrl).href

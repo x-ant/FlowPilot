@@ -16,7 +16,10 @@ import {
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
 } from "../utils/browser-session-cleanup"
-import { runPageActionInTab } from "../utils/page-action-runner"
+import {
+  detectPageButtonByTextInPage,
+  runPageActionInTab
+} from "../utils/page-action-runner"
 import type { RunContext } from "../utils/run-context"
 import {
   findOrOpenTab,
@@ -1490,9 +1493,11 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 2：点击 GPT 注册/登录入口，并提交注册邮箱。
+   * Step 2：提交注册邮箱，必要时先点击 GPT 注册/登录入口。
    *
-   * 该步骤只处理“注册”入口；如果页面已经进入密码页或验证码页，会视为已完成。
+   * 有注册/登录入口按钮时先点击入口；没有入口按钮时跳过点击。
+   * 后续统一填写邮箱并点击继续。
+   * 如果页面已经进入密码页或验证码页，会视为已完成。
    *
    * @param email 要注册的邮箱。
    * @param tabId Step 1 打开的 GPT 页面标签页 ID。
@@ -1521,19 +1526,56 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    const entryResult = await runPageActionInTab(tabId, {
-      button: {
-        texts: SIGNUP_ENTRY_BUTTON_TEXTS
-      },
-      timeoutMs: 10000,
-      successMessage: "已点击 GPT 注册/登录入口",
-      failureMessage: "未找到 GPT 页面上的注册/登录入口"
-    })
+    let entryState = {
+      hasEntryButton: false,
+      message: "未检测到注册/登录入口按钮"
+    }
+    try {
+      const [entryDetectResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: detectPageButtonByTextInPage,
+        args: [SIGNUP_ENTRY_BUTTON_TEXTS]
+      })
+      const detected = entryDetectResult?.result
+      entryState = detected
+        ? {
+            hasEntryButton: detected.hasButton,
+            message: detected.message
+          }
+        : entryState
+    } catch {
+      entryState = {
+        ...entryState,
+        message: "注册/登录入口检测失败，按当前页邮箱表单处理"
+      }
+    }
 
-    throwIfRunAborted()
-    // 如果上一步停留再 按注册的地方，这里可以继续执行邮箱提交
+    let entryMessage = ""
+    if (entryState.hasEntryButton) {
+      const entryResult = await runPageActionInTab(tabId, {
+        button: {
+          texts: SIGNUP_ENTRY_BUTTON_TEXTS
+        },
+        timeoutMs: 10000,
+        successMessage: "已点击 GPT 注册/登录入口",
+        failureMessage: "未找到 GPT 页面上的注册/登录入口"
+      })
+
+      throwIfRunAborted()
+      if (!entryResult.ok) {
+        return {
+          ok: false,
+          message: `${entryState.message}；${entryResult.message}`,
+          targetTab: entryResult.tab
+        }
+      }
+      entryMessage = entryResult.message
+    }
+
     const submitResult = await runPageActionInTab(tabId, {
-      container: OPENAI_AUTH_DIALOG_CONTAINER,
+      container: entryState.hasEntryButton
+        ? OPENAI_AUTH_DIALOG_CONTAINER
+        : undefined,
       fields: [
         {
           selectors: OPENAI_EMAIL_INPUT_SELECTORS,
@@ -1544,13 +1586,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         texts: OPENAI_CONTINUE_BUTTON_TEXTS,
         triggerMode: "requestSubmit"
       },
-      timeoutMs: 20000,
-      successMessage: "已填写注册邮箱并点击继续",
-      failureMessage: "未找到注册弹窗里的邮箱输入框或继续按钮"
+      timeoutMs: entryState.hasEntryButton ? 20000 : 5000,
+      successMessage: entryState.hasEntryButton
+        ? "已填写注册弹窗邮箱并点击继续"
+        : "当前页面已有邮箱输入框，已填写注册邮箱并点击继续",
+      failureMessage: entryState.hasEntryButton
+        ? "未找到注册弹窗里的邮箱输入框或继续按钮"
+        : "当前页面未找到可直接提交的邮箱输入框"
     })
 
     if (!submitResult.ok) {
-      // 即便失败，也要检测一下是不是已经到下一步了，如果时说明就不是失败
+      // 即便失败，也要检测一下是不是已经到下一步了，如果是说明就不是失败。
       let submittedMessage = ""
       try {
         const [detectResult] = await chrome.scripting.executeScript({
@@ -1571,17 +1617,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
       return {
         ok: false,
-        message: entryResult.ok
-          ? submitResult.message
-          : `${entryResult.message}；${submitResult.message}`,
+        message: entryMessage
+          ? `${entryMessage}；${submitResult.message}`
+          : submitResult.message,
         targetTab: submitResult.tab
       }
     }
 
     return {
       ok: true,
-      message: entryResult.ok
-        ? `${entryResult.message}；${submitResult.message}`
+      message: entryMessage
+        ? `${entryMessage}；${submitResult.message}`
         : submitResult.message,
       targetTab: submitResult.tab
     }
