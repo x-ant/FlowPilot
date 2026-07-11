@@ -43,6 +43,29 @@ export const pollMail163VerificationCodeInPage = async (
   const startedAt = Date.now()
   let lastMessage = ""
 
+  const formatDebugTime = (timestamp: number) => {
+    return timestamp
+      ? new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
+      : "无"
+  }
+  const debugLog = (message: string, extra?: unknown) => {
+    const loggedAt = Date.now()
+    const logExtra =
+      extra && typeof extra === "object" && !Array.isArray(extra)
+        ? {
+            loggedAt,
+            loggedAtTime: formatDebugTime(loggedAt),
+            ...(extra as Record<string, unknown>)
+          }
+        : {
+            loggedAt,
+            loggedAtTime: formatDebugTime(loggedAt),
+            extra
+          }
+
+    console.info(`[flowpilot][163验证码] ${message}`, logExtra)
+  }
+
   /**
    * 等待 163 页面列表刷新或邮件详情加载。
    *
@@ -223,11 +246,20 @@ export const pollMail163VerificationCodeInPage = async (
   const refreshInbox = async () => {
     if (!clickReceiveMail()) {
       lastMessage = "未找到 163 邮箱“收信”按钮"
+      debugLog("刷新收件箱失败", {
+        reason: lastMessage,
+        url: window.location.href
+      })
       await wait(1200)
       return
     }
 
-    await waitForMailListReady(12000)
+    const ready = await waitForMailListReady(12000)
+    debugLog("刷新收件箱", {
+      ready,
+      visibleRows: findVisibleMailRows().length,
+      url: window.location.href
+    })
   }
   /**
    * 从邮件列表文本或正文里提取 6 位验证码。
@@ -296,60 +328,177 @@ export const pollMail163VerificationCodeInPage = async (
     }
     return 0
   }
+  type OpenedMailTextCandidate = {
+    source: string
+    text: string
+  }
+
   /**
    * 收集当前打开邮件详情页里的正文候选文本。
    *
-   * @return 按长度倒序排列的正文候选文本。
+   * 163 的阅读正文通常在 `*_frameBody` iframe 内，页面主体仍会保留
+   * 收件箱列表文本；这里保留来源，后续优先使用阅读 iframe，避免把列表
+   * 文本误当作邮件正文。
+   *
+   * @return 邮件正文候选文本和来源。
    */
-  const collectOpenedMailText = () => {
-    const texts: string[] = []
-    const pushText = (value: unknown) => {
+  const collectOpenedMailTextCandidates = () => {
+    const candidates: OpenedMailTextCandidate[] = []
+    const seen = new Set<string>()
+    const pushText = (source: string, value: unknown) => {
       const text = normalizeText(value)
-      if (text) {
-        texts.push(text)
+      if (!text || seen.has(text)) {
+        return
       }
+      seen.add(text)
+      candidates.push({
+        source,
+        text
+      })
     }
-    document
-      .querySelectorAll(
-        ".readHtml, [class*='readmail'], [class*='mailBody'], [class*='mailbody'], [role='main']"
-      )
-      .forEach((element) => pushText((element as HTMLElement).innerText || element.textContent))
-    document.querySelectorAll("iframe").forEach((frame) => {
+
+    document.querySelectorAll("iframe").forEach((frame, index) => {
       try {
-        pushText((frame as HTMLIFrameElement).contentDocument?.body?.innerText)
+        const iframe = frame as HTMLIFrameElement
+        const frameId = iframe.id || iframe.name || `iframe-${index + 1}`
+        pushText(
+          `iframe:${frameId}`,
+          iframe.contentDocument?.body?.innerText ||
+            iframe.contentDocument?.body?.textContent
+        )
       } catch {
-        // Ignore cross-frame mail body access.
+        // 163 邮件正文通常同源可读；跨域或未加载 iframe 只跳过。
       }
     })
-    pushText(document.body?.innerText)
-    return texts.sort((left, right) => right.length - left.length)
+
+    document
+      .querySelectorAll(
+        ".readHtml, [class*='readmail'], [class*='mailread'], [class*='mailBody'], [class*='mailbody'], [class*='mail-content'], [class*='mailContent'], [class*='mail-detail'], [class*='mailDetail'], [class*='read'] [class*='content'], [role='main']"
+      )
+      .forEach((element, index) => {
+        pushText(
+          `detail:${index + 1}`,
+          (element as HTMLElement).innerText || element.textContent
+        )
+      })
+
+    pushText("document.body", document.body?.innerText || document.body?.textContent)
+    return candidates
+  }
+
+  /**
+   * 从候选文本中选择最像邮件正文的一段。
+   *
+   * @param candidates 当前页面可读文本候选。
+   * @param excludedTexts 点击邮件前已经存在的文本，用于排除收件箱列表。
+   * @return 选中的正文候选；未命中时返回 undefined。
+   */
+  const selectOpenedMailTextCandidate = (
+    candidates: OpenedMailTextCandidate[],
+    excludedTexts: Set<string>
+  ) => {
+    const available = candidates.filter((candidate) => {
+      return !excludedTexts.has(candidate.text)
+    })
+    const source = available.length > 0 ? available : candidates
+    return (
+      source.find((candidate) => {
+        return Boolean(extractVerificationCode(candidate.text))
+      }) ||
+      source.find((candidate) => {
+        return /^iframe:/i.test(candidate.source)
+      }) ||
+      source.find((candidate) => {
+        return /^detail:/i.test(candidate.source)
+      }) ||
+      source[0]
+    )
+  }
+
+  /**
+   * 收集打开邮件后的外层头部信息。
+   *
+   * 163 的验证码正文在 iframe 内，但收件人信息在 iframe 外的阅读页头部；
+   * 当前账号匹配需要同时看外层头部和 iframe 正文。
+   *
+   * @return 阅读页外层头部文本。
+   */
+  const collectOpenedMailHeaderText = () => {
+    const texts: string[] = []
+    const seen = new Set<string>()
+    const pushText = (value: unknown) => {
+      const text = normalizeText(value)
+      if (!text || seen.has(text)) {
+        return
+      }
+      seen.add(text)
+      texts.push(text)
+    }
+
+    document
+      .querySelectorAll(
+        "header, [id*='dvReadHeadInfo'], [id*='dvReadHeader'], [id*='_liReadOutto'], [id*='_dvReadto'], .nui-addr, .nui-addr-email, .nui-addr-name"
+      )
+      .forEach((element) => {
+        pushText((element as HTMLElement).innerText || element.textContent)
+        pushText(element.getAttribute("title"))
+        pushText(element.getAttribute("aria-label"))
+      })
+
+    return texts.join(" ")
   }
   /**
    * 打开候选邮件并读取详情正文。
    *
    * @param item 要打开的邮件列表行。
-   * @return 邮件正文文本和从正文中提取到的验证码。
+   * @return 邮件详情文本和从正文中提取到的验证码。
    */
   const openMailAndRead = async (item: HTMLElement) => {
+    const listText = getText(item)
+    const beforeTexts = new Set(
+      collectOpenedMailTextCandidates().map((candidate) => candidate.text)
+    )
+    debugLog("打开验证码候选邮件", {
+      listText: listText.slice(0, 300)
+    })
     item.click()
     let openedText = ""
+    let openedSource = ""
     for (let index = 0; index < 20; index += 1) {
       await wait(250)
-      for (const text of collectOpenedMailText()) {
-        if (text.length > openedText.length) {
-          openedText = text
-        }
-        const code = extractVerificationCode(text)
-        if (code) {
-          await refreshInbox()
-          return {
-            text,
-            code
-          }
+      const candidates = collectOpenedMailTextCandidates()
+      const candidate = selectOpenedMailTextCandidate(candidates, beforeTexts)
+      if (!candidate) {
+        continue
+      }
+      const headerText = collectOpenedMailHeaderText()
+      openedText = normalizeText(`${headerText} ${candidate.text}`)
+      openedSource = candidate.source
+      const code = extractVerificationCode(candidate.text)
+      if (code) {
+        debugLog("详情页提取到验证码", {
+          code,
+          readRound: index + 1,
+          source: candidate.source,
+          candidateSources: candidates.map((item) => item.source),
+          headerHasTarget: includesTargetEmail(headerText),
+          headerPreview: headerText.slice(0, 500),
+          textLength: candidate.text.length,
+          textPreview: candidate.text.slice(0, 500)
+        })
+        await refreshInbox()
+        return {
+          text: openedText,
+          code
         }
       }
     }
     await refreshInbox()
+    debugLog("详情页未提取到验证码", {
+      source: openedSource,
+      textLength: openedText.length,
+      textPreview: openedText.slice(0, 500)
+    })
     return {
       text: openedText,
       code: ""
@@ -377,21 +526,58 @@ export const pollMail163VerificationCodeInPage = async (
     return normalized.includes(targetEmail) || Boolean(duckForwardHint && normalized.includes(duckForwardHint))
   }
 
+  debugLog("开始轮询", {
+    requestedAt,
+    requestedAtTime: formatDebugTime(requestedAt),
+    filterAfter,
+    filterAfterTime: formatDebugTime(filterAfter),
+    targetEmail,
+    excludeCodes: Array.from(excludeCodes),
+    timeoutMs,
+    intervalMs
+  })
+
   while (Date.now() - startedAt <= timeoutMs) {
     await refreshInbox()
     const items = findMailItems()
+    debugLog("扫描邮件列表", {
+      candidateCount: items.length,
+      visibleRows: findVisibleMailRows().length,
+      elapsedMs: Date.now() - startedAt
+    })
     for (const item of items) {
       const text = getText(item)
       const timestamp = parseTimestamp(text)
+      const listCode = extractVerificationCode(text)
+      debugLog("检查列表邮件", {
+        timestamp,
+        time: formatDebugTime(timestamp),
+        filterAfter,
+        filterAfterTime: formatDebugTime(filterAfter),
+        listCode,
+        hasTargetEmailInList: includesTargetEmail(text),
+        text: text.slice(0, 500)
+      })
       if (timestamp && timestamp < filterAfter) {
-        lastMessage = "跳过旧邮件"
+        lastMessage = `跳过旧邮件（列表时间 ${formatDebugTime(
+          timestamp
+        )}，过滤时间 ${formatDebugTime(filterAfter)}）`
+        debugLog("跳过列表旧邮件", {
+          timestamp,
+          time: formatDebugTime(timestamp),
+          filterAfter,
+          filterAfterTime: formatDebugTime(filterAfter)
+        })
         continue
       }
       if (!/openai|chatgpt|验证码|代码|verification|code/i.test(text)) {
         lastMessage = "跳过非验证码邮件"
+        debugLog("跳过非验证码候选邮件", {
+          text: text.slice(0, 500)
+        })
         continue
       }
-      let code = extractVerificationCode(text)
+      let code = listCode
       let openedText = ""
       if (!code || !includesTargetEmail(text)) {
         const openedMail = await openMailAndRead(item)
@@ -400,23 +586,51 @@ export const pollMail163VerificationCodeInPage = async (
       }
       if (!includesTargetEmail(`${text} ${openedText}`)) {
         lastMessage = `跳过非当前账号邮件（目标 ${targetEmail}）`
+        debugLog("跳过非当前账号邮件", {
+          targetEmail,
+          listHasTarget: includesTargetEmail(text),
+          detailHasTarget: includesTargetEmail(openedText),
+          listText: text.slice(0, 500),
+          detailText: openedText.slice(0, 500)
+        })
         continue
       }
       if (!code) {
         lastMessage = "候选邮件未提取到验证码"
+        debugLog("候选邮件未提取到验证码", {
+          listText: text.slice(0, 500),
+          detailText: openedText.slice(0, 500)
+        })
         continue
       }
       if (excludeCodes.has(code) || seenCodes.has(code)) {
         lastMessage = `跳过已处理验证码 ${code}`
+        debugLog("跳过已处理验证码", {
+          code,
+          excluded: excludeCodes.has(code),
+          seen: seenCodes.has(code)
+        })
         continue
       }
       seenCodes.add(code)
+      debugLog("读取到验证码", {
+        code,
+        targetEmail,
+        timestamp,
+        time: formatDebugTime(timestamp),
+        listText: text.slice(0, 500),
+        detailText: openedText.slice(0, 500)
+      })
       return {
         ok: true,
         code,
         message: `已在 163 邮箱读取验证码 ${code}`
       }
     }
+    debugLog("本轮未命中验证码，等待后继续", {
+      lastMessage,
+      intervalMs
+    })
     await wait(intervalMs)
   }
 

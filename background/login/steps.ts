@@ -2,7 +2,10 @@
   requestCpaOAuthUrl,
   submitCpaOAuthCallback
 } from "../integrations/cpa-management-api"
-import { createMailVerificationRunner } from "../integrations/mail-verification"
+import {
+  createMailVerificationRunner,
+  type VerificationCodeResult
+} from "../integrations/mail-verification"
 import {
   detectCodexAuthPageStateInPage,
   type DetectCodexAuthPageState
@@ -750,7 +753,10 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
 
     let latestMailTab: FetchAndSubmitCodexVerificationCodeResponse["mailTab"]
 
-    return retryVerificationCodeOnInvalidCode({
+    return retryVerificationCodeOnInvalidCode<
+      VerificationCodeResult,
+      FetchAndSubmitCodexVerificationCodeResponse
+    >({
       fetchCode: async (excludeCodes) => {
         throwIfAborted(getAbortSignal())
         const mailResult = await fetchVerificationCode(account, {

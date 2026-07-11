@@ -1,5 +1,8 @@
 ﻿import { createCodexLoginRunner } from "../login/steps"
-import { createMailVerificationRunner } from "../integrations/mail-verification"
+import {
+  createMailVerificationRunner,
+  type VerificationCodeResult
+} from "../integrations/mail-verification"
 import { detectCodexAuthPageStateInPage } from "../page-scripts/page-script"
 import {
   assertHeroSmsActivationCostWithinExpected,
@@ -1831,7 +1834,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    return retryVerificationCodeOnInvalidCode({
+    return retryVerificationCodeOnInvalidCode<
+      VerificationCodeResult,
+      CodexRegisterStepResponse
+    >({
       fetchCode: async (excludeCodes) => {
         const mailResult = await fetchVerificationCode(account, {
           verificationRequestedAt,
