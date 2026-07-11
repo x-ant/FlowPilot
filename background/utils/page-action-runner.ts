@@ -24,6 +24,28 @@ const isSameTargetUrl = (currentUrl: string, targetUrl: string) => {
   }
 }
 
+const getTabInfoQuietly = async (tabId: number): Promise<BrowserTabInfo> => {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+  return {
+    id: tabId,
+    url: tab?.url
+  }
+}
+
+const getErrorMessage = (error: unknown) => {
+  return error instanceof Error ? error.message : String(error || "未知错误")
+}
+
+const buildPageUnavailableMessage = (
+  failureMessage: string,
+  error: unknown,
+  tab: BrowserTabInfo
+) => {
+  const detail = getErrorMessage(error)
+  const urlMessage = tab.url ? `；当前地址：${tab.url}` : ""
+  return `${failureMessage}；页面当前不可操作，可能还没加载完成、处于空白页/错误页，或浏览器刚从休眠恢复：${detail}${urlMessage}`
+}
+
 /**
  * 等页面加载完成后
  * 在已经确定的标签页里注入并执行一次页面动作。
@@ -36,35 +58,44 @@ export const runPageActionInTab = async (
   tabId: number,
   action: PageActionConfig
 ): Promise<PageActionRunResult> => {
-  // 等待页面加载完成
-  await waitForTabLoaded(tabId)
+  try {
+    // 等待页面加载完成
+    await waitForTabLoaded(tabId)
 
-  const [actionInjectionResult] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: performPageActionInPage,
-    args: [action]
-  })
-  const pageActionResult = actionInjectionResult?.result
-  // 可能出现地址变了的情况，所以总是返回新的地址
-  const currentTab = await chrome.tabs.get(tabId)
+    const [actionInjectionResult] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: performPageActionInPage,
+      args: [action]
+    })
+    const pageActionResult = actionInjectionResult?.result
+    // 可能出现地址变了的情况，所以总是返回新的地址
+    const currentTab = await chrome.tabs.get(tabId)
 
-  if (!pageActionResult?.ok) {
-    return {
-      ok: false,
-      message: pageActionResult?.message || action.failureMessage,
-      tab: {
-        id: tabId,
-        url: currentTab.url
+    if (!pageActionResult?.ok) {
+      return {
+        ok: false,
+        message: pageActionResult?.message || action.failureMessage,
+        tab: {
+          id: tabId,
+          url: currentTab.url
+        }
+      }
+    } else {
+      return {
+        ok: true,
+        message: pageActionResult.message,
+        tab: {
+          id: tabId,
+          url: currentTab.url
+        }
       }
     }
-  } else {
+  } catch (error) {
+    const tab = await getTabInfoQuietly(tabId)
     return {
-      ok: true,
-      message: pageActionResult.message,
-      tab: {
-        id: tabId,
-        url: currentTab.url
-      }
+      ok: false,
+      message: buildPageUnavailableMessage(action.failureMessage, error, tab),
+      tab
     }
   }
 }

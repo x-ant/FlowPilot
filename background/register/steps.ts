@@ -163,6 +163,32 @@ const isChatGptPageUrl = (rawUrl?: string) => {
   }
 }
 
+const detectChatGptEntryPageReadyInPage = () => {
+  const hostname = window.location.hostname.toLowerCase()
+  const isChatGptHost = hostname === "chatgpt.com" || hostname === "www.chatgpt.com"
+  if (!isChatGptHost) {
+    return {
+      ok: false,
+      message: `当前页面不是 ChatGPT：${window.location.href}`
+    }
+  }
+
+  const body = document.body
+  const text = body?.innerText?.replace(/\s+/g, " ").trim() || ""
+  const hasContent = Boolean(body && (body.children.length > 0 || text))
+  if (!hasContent) {
+    return {
+      ok: false,
+      message: "ChatGPT 页面主体为空"
+    }
+  }
+
+  return {
+    ok: true,
+    message: "ChatGPT 页面已加载并可注入"
+  }
+}
+
 const isOpenAiAddPhoneUrl = (rawUrl?: string) => {
   try {
     const url = new URL(String(rawUrl || ""))
@@ -1101,6 +1127,60 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
   }
 
+  const waitForChatGptEntryPageReady = async (tabId: number) => {
+    let lastMessage = ""
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      throwIfRunAborted()
+
+      if (attempt > 1) {
+        await chrome.tabs.update(tabId, {
+          active: true,
+          url: CHATGPT_SIGNUP_ENTRY_URL
+        })
+      }
+
+      await waitForTabLoaded(tabId, isChatGptPageUrl, 30000)
+      const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+      if (!currentTab?.id) {
+        lastMessage = "GPT 页面标签页已关闭"
+      } else if (!isChatGptPageUrl(currentTab.url)) {
+        lastMessage = `GPT 页面未打开到 chatgpt.com，当前地址：${currentTab.url || "unknown"}`
+      } else {
+        try {
+          const [readyResult] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: detectChatGptEntryPageReadyInPage
+          })
+          const readyValue = readyResult?.result
+          if (readyValue?.ok) {
+            return {
+              ok: true,
+              message:
+                attempt > 1
+                  ? "ChatGPT 页面重载后已可操作"
+                  : readyValue.message
+            }
+          }
+          lastMessage = readyValue?.message || "ChatGPT 页面未确认可操作"
+        } catch (error) {
+          lastMessage = `ChatGPT 页面不可注入：${
+            error instanceof Error ? error.message : String(error || "未知错误")
+          }`
+        }
+      }
+
+      if (attempt < 2) {
+        await abortableSleep(1500, getAbortSignal())
+      }
+    }
+
+    return {
+      ok: false,
+      message: `GPT 页面没有正常加载，疑似系统休眠后网络或 Chrome 页面尚未恢复；${lastMessage}`
+    }
+  }
+
   /**
    * 等待手机验证码提交后的页面结果。
    *
@@ -1354,7 +1434,18 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       active: true,
       url: CHATGPT_SIGNUP_ENTRY_URL
     })
-    const tab = await chrome.tabs.get(tabId)
+    const readyResult = await waitForChatGptEntryPageReady(tabId)
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined)
+    if (!readyResult.ok) {
+      return {
+        ok: false,
+        message: `${cookieResult.message}；${storageResult.message}${currentTabStorageMessage}；${readyResult.message}`,
+        targetTab: {
+          id: tabId,
+          url: tab?.url
+        }
+      }
+    }
 
     return {
       ok: true,
@@ -1362,10 +1453,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         typeof reuseTabId === "number"
           ? "已在当前 tab 打开 GPT 页面"
           : "已打开 GPT 页面"
-      }`,
+      }；${readyResult.message}`,
       targetTab: {
-        id: tab.id,
-        url: tab.url
+        id: tab?.id,
+        url: tab?.url
       }
     }
   }
@@ -1432,11 +1523,16 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     if (!submitResult.ok) {
       // 即便失败，也要检测一下是不是已经到下一步了，如果时说明就不是失败
-      const [detectResult] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: detectRegisterEmailSubmittedInPage
-      })
-      const submittedMessage = String(detectResult?.result || "")
+      let submittedMessage = ""
+      try {
+        const [detectResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: detectRegisterEmailSubmittedInPage
+        })
+        submittedMessage = String(detectResult?.result || "")
+      } catch {
+        submittedMessage = ""
+      }
       if (submittedMessage) {
         return {
           ok: true,
