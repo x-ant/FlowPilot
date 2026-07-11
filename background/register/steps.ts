@@ -848,6 +848,54 @@ const submitRegisterProfileInPage = (
   }
 
   /**
+   * 读取输入框附近的上下文文案。
+   *
+   * OpenAI 的“出生年份”单字段页面没有稳定 name，但字段外层 label 会出现
+   * “出生年份/你出生于哪一年”等文案；用附近文案区分它和普通年龄字段。
+   *
+   * @param element 要识别的输入控件。
+   * @return 规范化后的字段上下文。
+   */
+  const getFieldContextText = (element: Element) => {
+    const contextNodes = [
+      element,
+      element.closest("label"),
+      element.closest("fieldset"),
+      element.closest("form"),
+      element.parentElement,
+      element.parentElement?.parentElement
+    ]
+
+    return normalizeText(
+      contextNodes
+        .map((node) => {
+          return [
+            node?.textContent,
+            node?.getAttribute?.("aria-label"),
+            node?.getAttribute?.("title")
+          ]
+            .filter(Boolean)
+            .join(" ")
+        })
+        .filter(Boolean)
+        .join(" ")
+    )
+  }
+
+  /**
+   * 判断输入框是否是“出生年份”单字段。
+   *
+   * @param element 候选输入控件。
+   * @return 命中出生年份语义时返回 true。
+   */
+  const isBirthYearInput = (element: Element) => {
+    const text = getFieldContextText(element)
+    return /出生年份|出生年|出生于哪一年|哪一年|yearofbirth|birthyear|bornyear/.test(
+      text
+    )
+  }
+
+  /**
    * 兼容多种生日字段结构，优先填写显式年月日，其次写隐藏 birthday 字段。
    *
    * @return 成功填写的字段类型描述；找不到返回 undefined。
@@ -910,6 +958,14 @@ const submitRegisterProfileInPage = (
         setInputValue(hidden, birthday.value)
       }
       return "生日输入字段"
+    }
+
+    if (year && isBirthYearInput(year)) {
+      await fillField(year, birthday.year)
+      if (hidden) {
+        setInputValue(hidden, birthday.value)
+      }
+      return "出生年份字段"
     }
 
     if (hidden) {
@@ -1024,6 +1080,11 @@ const submitRegisterProfileInPage = (
     await fillField(nameInput, fullName)
 
     const profileMode = await waitFor(async () => {
+      const birthdayMode = await fillBirthdayField()
+      if (birthdayMode) {
+        return birthdayMode
+      }
+
       const ageInput = findInput([
         "input[name='age']",
         "input[type='number']",
@@ -1037,7 +1098,7 @@ const submitRegisterProfileInPage = (
         return "年龄字段"
       }
 
-      return fillBirthdayField()
+      return undefined
     }, 10000)
 
     if (!profileMode) {
