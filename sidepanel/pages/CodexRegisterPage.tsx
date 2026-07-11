@@ -20,11 +20,16 @@ import {
   completeRegisterPhoneVerification,
   fetchAndSubmitRegisterVerificationCode,
   openChatGptRegisterEntry,
+  prepareRegisterAccountEmail,
   refreshRegisterOAuthAndLogin,
   submitRegisterOAuthCallbackToCpa,
   submitRegisterProfile,
   type CodexRegisterStepResponse
 } from "../../background/register/steps"
+import {
+  fetchDuckEmail,
+  type FetchDuckEmailOptions
+} from "../../background/integrations/duck-email"
 import {
   REGISTER_STEP_COUNT,
   type RegisterStopStrategy
@@ -40,7 +45,8 @@ import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
 import type { PageProps } from "./types"
 import {
   DEFAULT_REGISTER_ALARM_CONFIG,
-  normalizeEmail,
+  getManagedAccountDisplayLabel,
+  getManagedAccountKey,
   normalizeRegisterAlarmConfig,
   normalizeRegisterRunLock,
   REGISTER_ALARM_STORAGE_KEY,
@@ -172,10 +178,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
 
   const selectedDebugAccount = useMemo(() => {
-    const normalizedDebugEmail = normalizeEmail(debugEmail)
     return (
       accounts.find((account) => {
-        return normalizeEmail(account.email) === normalizedDebugEmail
+        return getManagedAccountKey(account) === debugEmail
       }) || null
     )
   }, [accounts, debugEmail])
@@ -196,13 +201,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const currentDebugEmail = normalizeEmail(debugEmail)
+    const currentDebugAccountId = debugEmail
     const hasCurrentDebugAccount = accounts.some((account) => {
-      return normalizeEmail(account.email) === currentDebugEmail
+      return getManagedAccountKey(account) === currentDebugAccountId
     })
 
     if (!hasCurrentDebugAccount) {
-      setDebugEmail(accounts[0].email)
+      setDebugEmail(getManagedAccountKey(accounts[0]))
     }
   }, [accounts, debugEmail])
 
@@ -361,14 +366,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
+    const accountKey = getManagedAccountKey(selectedDebugAccount)
+    const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
+    setRunningEmail(accountKey)
     setStatus(options.runningStatus)
     log.info(
-      `[注册调试][${selectedDebugAccount.email}] Step ${options.step} 开始`
+      `[注册调试][${accountLabel}] Step ${options.step} 开始`
     )
     options.beforeRun?.()
-    patchAccountState(selectedDebugAccount.email, {
+    patchAccountState(accountKey, {
       progress: options.runningProgress,
       status: "running",
       lastMessage: options.runningMessage
@@ -379,8 +386,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       if (!result.ok) {
         setStatus(options.failureStatus)
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${result.message}`)
-        patchAccountState(selectedDebugAccount.email, {
+        log.warn(`[注册调试][${accountLabel}] ${result.message}`)
+        patchAccountState(accountKey, {
           status: "failed",
           lastMessage: result.message
         })
@@ -391,11 +398,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setDebugProgress(options.successProgress)
       setStatus(options.successStatus)
       log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step ${options.step} ${result.message}；tab=${
+        `[注册调试][${accountLabel}] Step ${options.step} ${result.message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
-      patchAccountState(selectedDebugAccount.email, {
+      patchAccountState(accountKey, {
         progress: options.successProgress,
         status: options.successAccountStatus,
         lastMessage: result.message
@@ -404,8 +411,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       const message =
         error instanceof Error ? error.message : options.exceptionMessage
       setStatus(options.exceptionStatus)
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
+      log.warn(`[注册调试][${accountLabel}] ${message}`)
+      patchAccountState(accountKey, {
         status: "failed",
         lastMessage: message
       })
@@ -417,19 +424,35 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
   const handleSubmitRegisterEmail = async () => {
     const verificationRequestedAt = Date.now()
+    const accountLabel = selectedDebugAccount
+      ? getManagedAccountDisplayLabel(selectedDebugAccount)
+      : ""
     await runRegisterDebugStep({
       step: 2,
-      runningStatus: `正在提交注册邮箱 ${selectedDebugAccount?.email || ""}`,
+      runningStatus: `正在提交注册邮箱 ${accountLabel}`,
       runningMessage: "正在点击注册并提交邮箱",
       runningProgress: 1,
       beforeRun: () => {
         setDebugVerificationRequestedAt(verificationRequestedAt)
       },
-      action: (tabId) => {
-        return clickRegisterAndSubmitEmail(
-          selectedDebugAccount?.email || "",
-          tabId
+      action: async (tabId) => {
+        if (!selectedDebugAccount) {
+          return {
+            ok: false,
+            message: "未选择账号"
+          }
+        }
+        const preparedResult = await prepareRegisterAccountEmail(
+          selectedDebugAccount
         )
+        if (!preparedResult.ok || !preparedResult.account?.email) {
+          return preparedResult
+        }
+        patchAccountState(getManagedAccountKey(preparedResult.account), {
+          ...preparedResult.account,
+          lastMessage: preparedResult.message
+        })
+        return clickRegisterAndSubmitEmail(preparedResult.account.email, tabId)
       },
       failureStatus: "提交注册邮箱失败",
       successStatus: "已提交注册邮箱",
@@ -441,16 +464,24 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleSubmitRegisterVerificationCode = async () => {
+    const accountLabel = selectedDebugAccount
+      ? getManagedAccountDisplayLabel(selectedDebugAccount)
+      : ""
     await runRegisterDebugStep({
       step: 3,
-      runningStatus: `正在读取并提交验证码 ${selectedDebugAccount?.email || ""}`,
+      runningStatus: `正在读取并提交验证码 ${accountLabel}`,
       runningMessage: "正在读取并提交验证码",
       runningProgress: 2,
       action: (tabId) => {
+        if (!selectedDebugAccount) {
+          return Promise.resolve({
+            ok: false,
+            message: "未选择账号"
+          })
+        }
         return fetchAndSubmitRegisterVerificationCode(
           tabId,
-          selectedDebugAccount?.email || "",
-          selectedDebugAccount?.password || "",
+          selectedDebugAccount,
           debugVerificationRequestedAt
         )
       },
@@ -511,11 +542,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
+    const accountKey = getManagedAccountKey(selectedDebugAccount)
+    const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
+    setRunningEmail(accountKey)
     setStatus("正在完成 OAuth 登录")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 5 开始`)
-    patchAccountState(selectedDebugAccount.email, {
+    log.info(`[注册调试][${accountLabel}] Step 5 开始`)
+    patchAccountState(accountKey, {
       progress: 4,
       status: "running",
       lastMessage: "正在刷新 OAuth 并选择账号卡片"
@@ -531,10 +564,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         typeof refreshResult.targetTab?.id !== "number"
       ) {
         setStatus("OAuth 登录失败")
-        log.warn(
-          `[注册调试][${selectedDebugAccount.email}] ${refreshResult.message}`
-        )
-        patchAccountState(selectedDebugAccount.email, {
+        log.warn(`[注册调试][${accountLabel}] ${refreshResult.message}`)
+        patchAccountState(accountKey, {
           status: "failed",
           lastMessage: refreshResult.message
         })
@@ -543,20 +574,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       const result = await completeRegisterOAuthLogin(
         refreshResult.targetTab.id,
-        selectedDebugAccount.email,
-        selectedDebugAccount.password,
+        selectedDebugAccount,
         normalizedCpaUrl,
         normalizedCpaManagementKey,
         (message) => {
-          log.info(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+          log.info(`[注册调试][${accountLabel}] ${message}`)
         }
       )
       const message = `${refreshResult.message}；${result.message}`
 
       if (!result.ok) {
         setStatus("OAuth 登录失败")
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-        patchAccountState(selectedDebugAccount.email, {
+        log.warn(`[注册调试][${accountLabel}] ${message}`)
+        patchAccountState(accountKey, {
           status: "failed",
           lastMessage: message
         })
@@ -576,11 +606,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setDebugProgress(5)
       setStatus("已完成 OAuth 登录")
       log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 5 ${message}；tab=${
+        `[注册调试][${accountLabel}] Step 5 ${message}；tab=${
           result.targetTab?.id || "unknown"
         }；url=${result.targetTab?.url || "unknown"}`
       )
-      patchAccountState(selectedDebugAccount.email, {
+      patchAccountState(accountKey, {
         progress: 5,
         status: "running",
         lastMessage: message
@@ -588,8 +618,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "OAuth 登录异常"
       setStatus("OAuth 登录异常")
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
+      log.warn(`[注册调试][${accountLabel}] ${message}`)
+      patchAccountState(accountKey, {
         status: "failed",
         lastMessage: message
       })
@@ -616,11 +646,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
+    const accountKey = getManagedAccountKey(selectedDebugAccount)
+    const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
+    setRunningEmail(accountKey)
     setStatus("正在执行手机号验证")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 6 开始`)
-    patchAccountState(selectedDebugAccount.email, {
+    log.info(`[注册调试][${accountLabel}] Step 6 开始`)
+    patchAccountState(accountKey, {
       progress: 5,
       status: "running",
       lastMessage: "正在获取手机号并等待短信验证码"
@@ -644,13 +676,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           setDebugProgress(6)
           setStatus("已完成手机号验证")
           log.info(
-            `[注册调试][${selectedDebugAccount.email}] Step 6 ${
+            `[注册调试][${accountLabel}] Step 6 ${
               result.message
             }；tab=${result.targetTab?.id || "unknown"}；url=${
               result.targetTab?.url || "unknown"
             }`
           )
-          patchAccountState(selectedDebugAccount.email, {
+          patchAccountState(accountKey, {
             progress: 6,
             status: "running",
             lastMessage: result.message
@@ -661,10 +693,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         if (!result.needRefreshOAuth) {
           if (result.needsManualReview) {
             setStatus("手机号验证结果需要人工判断")
-            log.warn(
-              `[注册调试][${selectedDebugAccount.email}] ${result.message}`
-            )
-            patchAccountState(selectedDebugAccount.email, {
+            log.warn(`[注册调试][${accountLabel}] ${result.message}`)
+            patchAccountState(accountKey, {
               progress: 6,
               status: "needs_review",
               lastMessage: `${result.message}；手机号验证码已经提交但跳转结果无法判断，为避免重复浪费手机号，请人工检查`
@@ -673,10 +703,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           }
 
           setStatus("手机号验证失败")
-          log.warn(
-            `[注册调试][${selectedDebugAccount.email}] ${result.message}`
-          )
-          patchAccountState(selectedDebugAccount.email, {
+          log.warn(`[注册调试][${accountLabel}] ${result.message}`)
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: result.message
           })
@@ -691,8 +719,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               : "当前 OAuth 页面未关闭或已不存在"
           }`
           setStatus("手机号验证失败")
-          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-          patchAccountState(selectedDebugAccount.email, {
+          log.warn(`[注册调试][${accountLabel}] ${message}`)
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: message
           })
@@ -704,8 +732,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
           const message = `${result.message}；缺少 CPA 地址或管理密钥，无法重新执行 Step 5`
           setStatus("手机号验证失败")
-          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-          patchAccountState(selectedDebugAccount.email, {
+          log.warn(`[注册调试][${accountLabel}] ${message}`)
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: message
           })
@@ -715,9 +743,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         oauthAttemptCount += 1
         setStatus("OAuth 时间不足，正在重新执行 Step 5")
         log.warn(
-          `[注册调试][${selectedDebugAccount.email}] ${result.message}；正在重新执行 Step 5（OAuth URL ${oauthAttemptCount}/${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS}）`
+          `[注册调试][${accountLabel}] ${result.message}；正在重新执行 Step 5（OAuth URL ${oauthAttemptCount}/${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS}）`
         )
-        patchAccountState(selectedDebugAccount.email, {
+        patchAccountState(accountKey, {
           progress: 5,
           status: "running",
           lastMessage: "OAuth 时间不足，正在重新执行 Step 5"
@@ -734,8 +762,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ) {
           const message = `${result.message}；${refreshResult.message}`
           setStatus("OAuth 登录失败")
-          log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-          patchAccountState(selectedDebugAccount.email, {
+          log.warn(`[注册调试][${accountLabel}] ${message}`)
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: message
           })
@@ -744,19 +772,18 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
         const loginResult = await completeRegisterOAuthLogin(
           refreshResult.targetTab.id,
-          selectedDebugAccount.email,
-          selectedDebugAccount.password,
+          selectedDebugAccount,
           normalizedCpaUrl,
           normalizedCpaManagementKey,
           (message) => {
-            log.info(`[注册调试][${selectedDebugAccount.email}] ${message}`)
+            log.info(`[注册调试][${accountLabel}] ${message}`)
           }
         )
         const step5Message = `${refreshResult.message}；${loginResult.message}`
         if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
           setStatus("OAuth 登录失败")
-          log.warn(`[注册调试][${selectedDebugAccount.email}] ${step5Message}`)
-          patchAccountState(selectedDebugAccount.email, {
+          log.warn(`[注册调试][${accountLabel}] ${step5Message}`)
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: step5Message
           })
@@ -778,8 +805,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "手机号验证异常"
       setStatus("手机号验证异常")
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
+      log.warn(`[注册调试][${accountLabel}] ${message}`)
+      patchAccountState(accountKey, {
         status: "failed",
         lastMessage: message
       })
@@ -813,11 +840,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const callbackTabId =
       Number.isFinite(parsedTabId) && parsedTabId > 0 ? parsedTabId : undefined
 
+    const accountKey = getManagedAccountKey(selectedDebugAccount)
+    const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
-    setRunningEmail(selectedDebugAccount.email)
+    setRunningEmail(accountKey)
     setStatus("正在回填 CPA")
-    log.info(`[注册调试][${selectedDebugAccount.email}] Step 7 开始`)
-    patchAccountState(selectedDebugAccount.email, {
+    log.info(`[注册调试][${accountLabel}] Step 7 开始`)
+    patchAccountState(accountKey, {
       progress: 6,
       status: "running",
       lastMessage: "正在把 OAuth 回调地址提交回 CPA"
@@ -835,8 +864,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       if (!result.ok) {
         const message = `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${result.message}`
         setStatus("CPA 回填需要人工处理")
-        log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-        patchAccountState(selectedDebugAccount.email, {
+        log.warn(`[注册调试][${accountLabel}] ${message}`)
+        patchAccountState(accountKey, {
           progress: 7,
           status: "needs_review",
           lastMessage: message
@@ -846,10 +875,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       setDebugProgress(REGISTER_STEP_COUNT)
       setStatus("已完成 CPA 回填")
-      log.info(
-        `[注册调试][${selectedDebugAccount.email}] Step 7 ${result.message}`
-      )
-      patchAccountState(selectedDebugAccount.email, {
+      log.info(`[注册调试][${accountLabel}] Step 7 ${result.message}`)
+      patchAccountState(accountKey, {
         progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
         status: "done",
         lastMessage: result.message
@@ -857,8 +884,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "CPA 回填异常"
       setStatus("CPA 回填异常")
-      log.warn(`[注册调试][${selectedDebugAccount.email}] ${message}`)
-      patchAccountState(selectedDebugAccount.email, {
+      log.warn(`[注册调试][${accountLabel}] ${message}`)
+      patchAccountState(accountKey, {
         status: "failed",
         lastMessage: message
       })
@@ -954,6 +981,36 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
+  /**
+   * 注册页账号管理里手动生成 Duck 邮箱。
+   *
+   * 这里生成后只回填账号表单；保存账号后，注册执行流程仍然从账号列表读取邮箱。
+   *
+   * @param options Duck 邮箱生成选项。
+   * @param options.baselineEmail 当前表单已有邮箱，用于避免重复返回旧值。
+   * @param options.generateNew 是否要求 DuckDuckGo 生成新邮箱。
+   * @return 生成成功的 Duck 邮箱和展示消息。
+   */
+  const handleFetchDuckEmail = async (options: FetchDuckEmailOptions) => {
+    setStatus("正在获取 Duck 邮箱")
+    log.info("[注册账号管理] 正在从 DuckDuckGo 获取注册邮箱")
+
+    try {
+      const result = await fetchDuckEmail(options)
+
+      setStatus(result.message)
+      log.info(`[注册账号管理] ${result.message}`)
+
+      return result
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Duck 邮箱生成失败"
+      setStatus(message)
+      log.warn(`[注册账号管理] ${message}`)
+      throw error
+    }
+  }
+
   const handleStartBatch = async () => {
     const normalizedCpaUrl = String(cpaUrl || "").trim()
     const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
@@ -999,7 +1056,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
     const runnableCount = accounts.filter((account) => {
       return (
-        selectedEmailSet.has(normalizeEmail(account.email)) &&
+        selectedEmailSet.has(getManagedAccountKey(account)) &&
         !isRegisterAccountDone(account) &&
         account.status !== "needs_review"
       )
@@ -1086,9 +1143,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const selectedSet = new Set(
-      selectedEmails.map((email) => normalizeEmail(email))
-    )
+    const selectedSet = new Set(selectedEmails)
     const nextProgress = stage === "phone" ? 4 : 0
     const nextMessage =
       stage === "phone"
@@ -1097,7 +1152,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     let changedCount = 0
     const now = Date.now()
     const nextAccounts = accounts.map((account) => {
-      if (!selectedSet.has(normalizeEmail(account.email))) {
+      if (!selectedSet.has(getManagedAccountKey(account))) {
         return account
       }
 
@@ -1238,7 +1293,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         <Alert
           type="warning"
           showIcon
-          message="检测到残留注册任务锁"
+          title="检测到残留注册任务锁"
           description={`开始时间：${orphanLockStartedLabel || "未知"}；当前账号：${
             registerRunLock?.currentEmail || "未知"
           }；最后状态：${registerRunLock?.message || "未知"}`}
@@ -1361,7 +1416,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       onClick={() => {
                         void handleTestAlarmRun()
                       }}>
-                      测试触发
+                      单次触发
                     </Button>
                   </Space>
                 </Space>
@@ -1380,7 +1435,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         onCpaConfigChange={accountPage.handleCpaConfigChange}
       />
 
-      <AccountFormPanel accountPage={accountPage} disabled={disabled} />
+      <AccountFormPanel
+        accountPage={accountPage}
+        disabled={disabled}
+        allowEmailGenerator
+        onFetchDuckEmail={handleFetchDuckEmail}
+      />
 
       <Collapse
         className="panel-card"
@@ -1404,8 +1464,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                         placeholder="选择账号"
                         options={accounts.map((account) => {
                           return {
-                            label: account.email,
-                            value: account.email
+                            label: getManagedAccountDisplayLabel(account),
+                            value: getManagedAccountKey(account)
                           }
                         })}
                         onChange={(value) => {

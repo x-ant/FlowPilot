@@ -1,7 +1,8 @@
 ﻿import { createCodexRegisterRunner } from "./steps"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 import {
-  normalizeEmail,
+  getManagedAccountDisplayLabel,
+  getManagedAccountKey,
   resetManagedAccountState,
   type AccountRunResult,
   type ManagedAccount,
@@ -49,6 +50,12 @@ type RunRegisterBatchOptions = {
   onStatus?: (message: string) => void
 }
 
+/**
+ * 安静关闭指定标签页。
+ *
+ * @param tabId 要关闭的标签页 ID；为空时直接返回 false。
+ * @return 关闭成功返回 true，标签页不存在或关闭失败返回 false。
+ */
 const closeTabQuietly = async (tabId?: number) => {
   if (typeof tabId !== "number") {
     return false
@@ -62,6 +69,22 @@ const closeTabQuietly = async (tabId?: number) => {
   }
 }
 
+/**
+ * 执行单个账号的完整注册流程。
+ *
+ * Step 2 只使用账号列表里保存的注册邮箱，不在批量流程中生成邮箱。
+ *
+ * @param cpaUrl CPA OAuth 页面地址。
+ * @param cpaManagementKey CPA 管理密钥。
+ * @param account 当前要执行的账号。
+ * @param heroSmsOptions HeroSMS 接码配置。
+ * @param runner 注册流程 runner。
+ * @param getStopStrategy 获取当前停止策略的函数。
+ * @param onStage 步骤完成回调，用于更新账号进度。
+ * @param onProgressLog 细粒度日志回调。
+ * @param onAccountPrepared 注册邮箱校验完成回调，用于同步账号快照。
+ * @return 单账号注册执行结果。
+ */
 export const runManagedRegisterFlow = async (
   cpaUrl: string,
   cpaManagementKey: string,
@@ -70,10 +93,12 @@ export const runManagedRegisterFlow = async (
   runner: ReturnType<typeof createCodexRegisterRunner>,
   getStopStrategy: () => RegisterStopStrategy,
   onStage: (progress: ManagedAccountProgress, message: string) => void,
-  onProgressLog?: (message: string) => void
+  onProgressLog?: (message: string) => void,
+  onAccountPrepared?: (account: ManagedAccount) => void
 ): Promise<AccountRunResult> => {
   const messages: string[] = []
   const startFromStep = account.progress >= 4 ? 5 : 1
+  let workingAccount = account
 
   if (startFromStep === 1) {
     const step1Result = await runner.openChatGptRegisterEntry()
@@ -88,8 +113,21 @@ export const runManagedRegisterFlow = async (
 
     const registerTabId = step1Result.targetTab.id
     const verificationRequestedAt = Date.now()
+    const preparedResult = await runner.prepareRegisterAccountEmail(
+      workingAccount
+    )
+    if (!preparedResult.ok || !preparedResult.account?.email) {
+      return {
+        ok: false,
+        message: preparedResult.message || "注册邮箱准备失败"
+      }
+    }
+    workingAccount = preparedResult.account
+    onAccountPrepared?.(workingAccount)
+    onProgressLog?.(preparedResult.message)
+
     const step2Result = await runner.clickRegisterAndSubmitEmail(
-      account.email,
+      workingAccount.email,
       registerTabId
     )
     if (!step2Result.ok) {
@@ -103,8 +141,7 @@ export const runManagedRegisterFlow = async (
 
     const step3Result = await runner.fetchAndSubmitRegisterVerificationCode(
       registerTabId,
-      account.email,
-      account.password,
+      workingAccount,
       verificationRequestedAt,
       (message) => {
         onStage(2, message)
@@ -150,8 +187,7 @@ export const runManagedRegisterFlow = async (
   }
   const loginResult = await runner.completeRegisterOAuthLogin(
     refreshResult.targetTab.id,
-    account.email,
-    account.password,
+    workingAccount,
     cpaUrl,
     cpaManagementKey,
     onProgressLog
@@ -238,8 +274,7 @@ export const runManagedRegisterFlow = async (
 
     const nextLoginResult = await runner.completeRegisterOAuthLogin(
       nextRefreshResult.targetTab.id,
-      account.email,
-      account.password,
+      workingAccount,
       cpaUrl,
       cpaManagementKey,
       onProgressLog
@@ -308,6 +343,29 @@ export const runManagedRegisterFlow = async (
   }
 }
 
+/**
+ * 执行注册账号批量流程。
+ *
+ * 该入口被侧边栏手动执行和后台自动任务复用，负责筛选目标账号、
+ * 更新账号状态、写入日志，并复用账号列表里保存的注册邮箱。
+ *
+ * @param options 批量执行配置。
+ * @param options.cpaUrl CPA OAuth 页面地址。
+ * @param options.cpaManagementKey CPA 管理密钥。
+ * @param options.accounts 当前账号列表。
+ * @param options.selectedEmails 要执行的账号 ID 列表；沿用旧字段名但内容是账号 ID。
+ * @param options.heroSmsOptions HeroSMS 接码配置。
+ * @param options.abortSignal 停止当前流程的中断信号。
+ * @param options.targetAllWhenNoSelection 没有选择账号时是否执行所有可执行账号。
+ * @param options.getStopStrategy 获取当前停止策略的函数。
+ * @param options.isManualPhoneStop 判断是否为人工接管手机号验证码的停止。
+ * @param options.shouldCancel 判断是否需要立即取消批量流程。
+ * @param options.onAccountsChange 账号列表变化回调。
+ * @param options.onLog 执行日志回调。
+ * @param options.onRunningEmail 当前运行账号 ID 回调；沿用旧字段名但内容是账号 ID。
+ * @param options.onStatus 顶部状态文案回调。
+ * @return 批量执行结果和最新账号列表。
+ */
 export const runRegisterBatch = async ({
   cpaUrl,
   cpaManagementKey,
@@ -324,11 +382,11 @@ export const runRegisterBatch = async ({
   onRunningEmail,
   onStatus
 }: RunRegisterBatchOptions) => {
-  const selectedEmailSet = new Set(selectedEmails.map((email) => normalizeEmail(email)))
+  const selectedEmailSet = new Set(selectedEmails)
   const shouldUseAllTargets = targetAllWhenNoSelection && selectedEmailSet.size === 0
   const isTargetAccount = (account: ManagedAccount) => {
     return (
-      (shouldUseAllTargets || selectedEmailSet.has(normalizeEmail(account.email))) &&
+      (shouldUseAllTargets || selectedEmailSet.has(getManagedAccountKey(account))) &&
       account.status !== "needs_review" &&
       account.status !== "done" &&
       account.progress < REGISTER_STEP_COUNT
@@ -366,20 +424,22 @@ export const runRegisterBatch = async ({
     }
 
     const currentAccount = workingAccounts[index]
+    const currentAccountKey = getManagedAccountKey(currentAccount)
+    const currentAccountLabel = getManagedAccountDisplayLabel(currentAccount)
     if (!isTargetAccount(currentAccount)) {
       continue
     }
 
     const resumeStep = currentAccount.progress >= 4 ? 5 : 1
     currentRunnableIndex += 1
-    onRunningEmail?.(currentAccount.email)
+    onRunningEmail?.(currentAccountKey)
     onStatus?.(
-      `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
+      `正在处理 ${currentAccountLabel}（${currentRunnableIndex}/${runnableCount}）`
     )
-    onLog?.("info", `开始处理账号 ${currentAccount.email}`)
+    onLog?.("info", `开始处理账号 ${currentAccountLabel}`)
     onLog?.(
       "info",
-      `[${currentAccount.email}] 当前标记进度 ${currentAccount.progress}/${REGISTER_STEP_COUNT}，将从 Step ${resumeStep} 开始执行`
+      `[${currentAccountLabel}] 当前标记进度 ${currentAccount.progress}/${REGISTER_STEP_COUNT}，将从 Step ${resumeStep} 开始执行`
     )
 
     const updateCurrentAccount = (
@@ -421,21 +481,24 @@ export const runRegisterBatch = async ({
             status: nextStatus,
             lastMessage: message
           })
-          onStatus?.(`账号 ${currentAccount.email} 已完成 Step ${progress}`)
-          onLog?.("info", `[${currentAccount.email}] ${message}`)
+          onStatus?.(`账号 ${currentAccountLabel} 已完成 Step ${progress}`)
+          onLog?.("info", `[${currentAccountLabel}] ${message}`)
         },
         (message) => {
           updateCurrentAccount({
             status: "running",
             lastMessage: message
           })
-          onLog?.("info", `[${currentAccount.email}] ${message}`)
+          onLog?.("info", `[${currentAccountLabel}] ${message}`)
+        },
+        (preparedAccount) => {
+          updateCurrentAccount(preparedAccount)
         }
       )
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "账号自动注册时发生异常"
-      onLog?.("warn", `[${currentAccount.email}] 账号自动注册异常：${message}`)
+      onLog?.("warn", `[${currentAccountLabel}] 账号自动注册异常：${message}`)
       runResult = {
         ok: false,
         message
@@ -455,7 +518,7 @@ export const runRegisterBatch = async ({
       onStatus?.("已停止当前流程")
       onLog?.(
         "warn",
-        `[${currentAccount.email}] ${runResult.message || "已停止当前流程"}`
+        `[${currentAccountLabel}] ${runResult.message || "已停止当前流程"}`
       )
       break
     }
@@ -466,8 +529,8 @@ export const runRegisterBatch = async ({
         status: "done",
         lastMessage: runResult.message
       })
-      onLog?.("info", `[${currentAccount.email}] ${runResult.message}`)
-      onLog?.("info", `========== 流程成功完成：${currentAccount.email} ==========`)
+      onLog?.("info", `[${currentAccountLabel}] ${runResult.message}`)
+      onLog?.("info", `========== 流程成功完成：${currentAccountLabel} ==========`)
       if (getStopStrategy() !== "none") {
         break
       }
@@ -481,8 +544,8 @@ export const runRegisterBatch = async ({
         status: "needs_review",
         lastMessage: runResult.message
       })
-      onStatus?.(`账号 ${currentAccount.email} 需要人工判断`)
-      onLog?.("warn", `[${currentAccount.email}] ${runResult.message}`)
+      onStatus?.(`账号 ${currentAccountLabel} 需要人工判断`)
+      onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
       if (getStopStrategy() !== "none") {
         break
       }
@@ -494,8 +557,8 @@ export const runRegisterBatch = async ({
       status: "failed",
       lastMessage: runResult.message
     })
-    onStatus?.(`账号 ${currentAccount.email} 执行失败`)
-    onLog?.("warn", `[${currentAccount.email}] ${runResult.message}`)
+    onStatus?.(`账号 ${currentAccountLabel} 执行失败`)
+    onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
     if (getStopStrategy() !== "none") {
       break
     }

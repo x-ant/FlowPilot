@@ -1,11 +1,17 @@
 ﻿import { useEffect, useMemo, useState } from "react"
 
 import type { UiLogger } from "../../shared/logging"
+import { useRef } from "react"
 import {
   createManagedAccount,
   EMPTY_PAGE_STATE,
+  getManagedAccountKey,
+  getManagedAccountLabel,
+  getManagedAccountProviderLabel,
   loadAccountPageState,
   normalizeEmail,
+  normalizeEmailGenerator,
+  normalizeMailProvider,
   normalizeStoredAccount,
   resetManagedAccountState,
   saveAccountPageState,
@@ -40,6 +46,7 @@ export const useAccountPageState = ({
   log,
   setStatus
 }: UseAccountPageStateOptions) => {
+  const setStatusRef = useRef(setStatus)
   const [cpaUrl, setCpaUrlState] = useState("")
   const [cpaManagementKey, setCpaManagementKeyState] = useState("")
   const [accounts, setAccountsState] = useState<ManagedAccount[]>([])
@@ -83,11 +90,19 @@ export const useAccountPageState = ({
   }
 
   const setCpaUrl = (nextCpaUrl: string) => {
+    if (nextCpaUrl === cpaUrl) {
+      return
+    }
+
     setCpaUrlState(nextCpaUrl)
     persistState(nextCpaUrl, accounts, cpaManagementKey)
   }
 
   const setCpaManagementKey = (nextCpaManagementKey: string) => {
+    if (nextCpaManagementKey === cpaManagementKey) {
+      return
+    }
+
     setCpaManagementKeyState(nextCpaManagementKey)
     persistState(cpaUrl, accounts, nextCpaManagementKey)
   }
@@ -96,6 +111,10 @@ export const useAccountPageState = ({
     nextCpaUrl: string,
     nextCpaManagementKey: string
   ) => {
+    if (nextCpaUrl === cpaUrl && nextCpaManagementKey === cpaManagementKey) {
+      return
+    }
+
     setCpaUrlState(nextCpaUrl)
     setCpaManagementKeyState(nextCpaManagementKey)
     persistState(nextCpaUrl, accounts, nextCpaManagementKey)
@@ -115,7 +134,7 @@ export const useAccountPageState = ({
   }
 
   const selectedEmailSet = useMemo(() => {
-    return new Set(selectedEmails.map((email) => normalizeEmail(email)))
+    return new Set(selectedEmails)
   }, [selectedEmails])
 
   const selectedCount = selectedEmails.length
@@ -125,8 +144,12 @@ export const useAccountPageState = ({
     selectedCount > 0 && selectedCount < accounts.length
   const editingAccount =
     accounts.find((account) => {
-      return normalizeEmail(account.email) === normalizeEmail(editingEmail)
+      return getManagedAccountKey(account) === editingEmail
     }) || null
+
+  useEffect(() => {
+    setStatusRef.current = setStatus
+  }, [setStatus])
 
   useEffect(() => {
     void (async () => {
@@ -134,9 +157,11 @@ export const useAccountPageState = ({
       setCpaUrlState(state.cpaUrl)
       setCpaManagementKeyState(state.cpaManagementKey)
       setAccountsState(state.accounts)
-      setStatus(state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置")
+      setStatusRef.current(
+        state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置"
+      )
     })()
-  }, [setStatus, storageKeys])
+  }, [storageKeys.accounts, storageKeys.cpaManagementKey, storageKeys.cpaUrl])
 
   useEffect(() => {
     const handleStorageChanged = (
@@ -175,16 +200,23 @@ export const useAccountPageState = ({
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [storageKeys])
+  }, [storageKeys.accounts, storageKeys.cpaManagementKey, storageKeys.cpaUrl])
 
   useEffect(() => {
     const existingEmails = new Set(
-      accounts.map((account) => normalizeEmail(account.email))
+      accounts.map((account) => getManagedAccountKey(account))
     )
     setSelectedEmails((currentSelectedEmails) => {
-      return currentSelectedEmails.filter((email) => {
-        return existingEmails.has(normalizeEmail(email))
+      const nextSelectedEmails = currentSelectedEmails.filter((accountId) => {
+        return existingEmails.has(accountId)
       })
+      const isUnchanged =
+        nextSelectedEmails.length === currentSelectedEmails.length &&
+        nextSelectedEmails.every((accountId, index) => {
+          return accountId === currentSelectedEmails[index]
+        })
+
+      return isUnchanged ? currentSelectedEmails : nextSelectedEmails
     })
   }, [accounts])
 
@@ -206,36 +238,61 @@ export const useAccountPageState = ({
   /**
    * 保存账号表单。
    *
-   * 新增时创建初始账号；编辑同一邮箱时保留执行进度，只更新邮箱和密码。
+   * 新增时创建带稳定 ID 的账号；编辑时按账号 ID 保留执行进度，
+   * 同步更新邮箱服务、可选邮箱生成方式、注册邮箱和注册密码。
    *
-   * @param values 表单提交的邮箱和密码。
+   * @param values 表单提交的账号配置。
+   * @param values.mailProvider 邮箱服务，决定验证码读取方式。
+   * @param values.emailGenerator 邮箱生成方式，仅注册页 163 邮箱需要。
+   * @param values.email 注册邮箱。
+   * @param values.password 注册密码。
    */
   const handleSubmitAccount = (values: AccountFormValues) => {
+    const mailProvider = normalizeMailProvider(values.mailProvider)
+    const emailGenerator =
+      mailProvider === "163"
+        ? normalizeEmailGenerator(values.emailGenerator)
+        : undefined
     const email = normalizeEmail(String(values.email || ""))
+    const mailboxEmail = mailProvider === "2925" ? email : ""
     const password = String(values.password || "")
 
-    if (!email || !password) {
-      setStatus("请输入账号邮箱和密码")
-      log.warn("账号邮箱和密码不能为空")
+    if (!password) {
+      setStatus("请输入注册密码")
+      log.warn("注册密码不能为空")
       return
     }
 
-    const previousEditingEmail = normalizeEmail(editingEmail)
+    if (!email) {
+      setStatus("请输入注册邮箱")
+      log.warn("当前邮箱服务需要填写注册邮箱")
+      return
+    }
+
+    const previousEditingId = editingEmail
     const existingAccount =
       accounts.find((account) => {
-        return normalizeEmail(account.email) === email
+        return getManagedAccountKey(account) === previousEditingId
       }) || null
-    const shouldPreserveAccountState =
-      existingAccount &&
-      (!previousEditingEmail || previousEditingEmail === email)
+    const shouldPreserveAccountState = Boolean(existingAccount)
     const nextAccount = shouldPreserveAccountState
       ? {
           ...existingAccount,
+          mailProvider,
+          emailGenerator,
           email,
+          mailboxEmail,
           password,
           updatedAt: Date.now()
         }
-      : createManagedAccount(email, password)
+      : createManagedAccount({
+          ...values,
+          mailProvider,
+          emailGenerator,
+          email,
+          mailboxEmail,
+          password
+        })
     const nextAccounts = upsertManagedAccount(
       accounts,
       nextAccount,
@@ -244,8 +301,11 @@ export const useAccountPageState = ({
 
     syncAccounts(nextAccounts)
     setEditingEmail("")
-    setStatus(`已保存账号 ${email}`)
-    log.info(`已保存账号 ${email}`)
+    const accountLabel =
+      getManagedAccountLabel(nextAccount) ||
+      getManagedAccountProviderLabel(nextAccount)
+    setStatus(`已保存账号 ${accountLabel}`)
+    log.info(`已保存账号 ${accountLabel}`)
   }
 
   /**
@@ -254,8 +314,12 @@ export const useAccountPageState = ({
    * @param account 要编辑的账号。
    */
   const handleEditAccount = (account: ManagedAccount) => {
-    setEditingEmail(account.email)
-    setStatus(`正在编辑 ${account.email}`)
+    setEditingEmail(getManagedAccountKey(account))
+    setStatus(
+      `正在编辑 ${
+        getManagedAccountLabel(account) || getManagedAccountProviderLabel(account)
+      }`
+    )
   }
 
   const handleCancelEdit = () => {
@@ -266,51 +330,47 @@ export const useAccountPageState = ({
   /**
    * 删除指定账号。
    *
-   * @param email 要删除的账号邮箱。
+   * @param accountId 要删除的账号 ID。
    */
-  const handleRemoveAccount = (email: string) => {
-    const nextEmail = normalizeEmail(email)
+  const handleRemoveAccount = (accountId: string) => {
     const nextAccounts = accounts.filter((account) => {
-      return normalizeEmail(account.email) !== nextEmail
+      return getManagedAccountKey(account) !== accountId
     })
 
-    if (editingEmail && normalizeEmail(editingEmail) === nextEmail) {
+    if (editingEmail && editingEmail === accountId) {
       setEditingEmail("")
     }
 
     syncAccounts(nextAccounts)
-    setStatus(`已删除账号 ${email}`)
-    log.warn(`已删除账号 ${email}`)
+    setStatus("已删除账号")
+    log.warn("已删除账号")
   }
 
   /**
    * 勾选或取消勾选单个账号。
    *
-   * @param email 要切换选择状态的账号邮箱。
+   * @param accountId 要切换选择状态的账号 ID。
    * @param checked 是否选中。
    */
-  const handleToggleAccountSelected = (email: string, checked: boolean) => {
-    const normalizedEmail = normalizeEmail(email)
+  const handleToggleAccountSelected = (accountId: string, checked: boolean) => {
     setSelectedEmails((currentSelectedEmails) => {
-      const currentSet = new Set(
-        currentSelectedEmails.map((item) => normalizeEmail(item))
-      )
+      const currentSet = new Set(currentSelectedEmails)
 
       if (checked) {
-        currentSet.add(normalizedEmail)
+        currentSet.add(accountId)
       } else {
-        currentSet.delete(normalizedEmail)
+        currentSet.delete(accountId)
       }
 
       return accounts
-        .map((account) => normalizeEmail(account.email))
-        .filter((accountEmail) => currentSet.has(accountEmail))
+        .map((account) => getManagedAccountKey(account))
+        .filter((nextAccountId) => currentSet.has(nextAccountId))
     })
   }
 
   const handleToggleAllAccountsSelected = (checked: boolean) => {
     setSelectedEmails(
-      checked ? accounts.map((account) => normalizeEmail(account.email)) : []
+      checked ? accounts.map((account) => getManagedAccountKey(account)) : []
     )
   }
 
@@ -326,9 +386,9 @@ export const useAccountPageState = ({
       return
     }
 
-    const selectedEmail = normalizeEmail(selectedEmails[0])
+    const selectedAccountId = selectedEmails[0]
     const selectedIndex = accounts.findIndex((account) => {
-      return normalizeEmail(account.email) === selectedEmail
+      return getManagedAccountKey(account) === selectedAccountId
     })
 
     if (selectedIndex < 0) {
@@ -360,12 +420,12 @@ export const useAccountPageState = ({
     }
 
     const selectedSet = new Set(
-      selectedEmails.map((email) => normalizeEmail(email))
+      selectedEmails
     )
     let changedCount = 0
     const now = Date.now()
     const nextAccounts: ManagedAccount[] = accounts.map((account) => {
-      if (!selectedSet.has(normalizeEmail(account.email))) {
+      if (!selectedSet.has(getManagedAccountKey(account))) {
         return account
       }
 
@@ -393,14 +453,13 @@ export const useAccountPageState = ({
   /**
    * 更新单个账号的执行状态。
    *
-   * @param email 要更新的账号邮箱。
+   * @param accountId 要更新的账号 ID。
    * @param patch 要合并到账号上的局部状态。
    */
-  const patchAccountState = (email: string, patch: Partial<ManagedAccount>) => {
-    const targetEmail = normalizeEmail(email)
+  const patchAccountState = (accountId: string, patch: Partial<ManagedAccount>) => {
     setAccounts((currentAccounts) => {
       return currentAccounts.map((account) => {
-        if (normalizeEmail(account.email) !== targetEmail) {
+        if (getManagedAccountKey(account) !== accountId) {
           return account
         }
 

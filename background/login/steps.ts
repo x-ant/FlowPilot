@@ -2,7 +2,7 @@
   requestCpaOAuthUrl,
   submitCpaOAuthCallback
 } from "../integrations/cpa-management-api"
-import { createMail2925Runner } from "../integrations/mail-2925"
+import { createMailVerificationRunner } from "../integrations/mail-verification"
 import {
   detectCodexAuthPageStateInPage,
   type DetectCodexAuthPageState
@@ -23,6 +23,7 @@ import {
 import { runAuthPageAction } from "../utils/page-action-runner"
 import type { RunContext } from "../utils/run-context"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "../utils/tab-utils"
+import type { ManagedAccount } from "../../shared/account-state"
 
 type OpenCodexAuthLinkOptions = {
   cleanupSession?: boolean
@@ -31,7 +32,7 @@ type OpenCodexAuthLinkOptions = {
 }
 
 export const createCodexLoginRunner = (context: RunContext = {}) => {
-  const { fetchMail2925VerificationCode } = createMail2925Runner(context)
+  const { fetchVerificationCode } = createMailVerificationRunner(context)
   const getAbortSignal = () => context.abortSignal
 
   const OPENAI_LOGIN_BUTTON_TEXTS = [
@@ -708,19 +709,17 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 读取 2925 验证码并提交到当前 OpenAI 验证码页。
+   * 按账号配置读取邮箱验证码并提交到当前 OpenAI 验证码页。
    *
    * @param tabId 要操作的验证码页标签页 id。
-   * @param email 2925 邮箱地址。
-   * @param password 2925 邮箱密码。
+   * @param account 当前账号配置。
    * @param verificationRequestedAt 验证码发送时间。
    * @param options 提交后的状态判断逻辑。
    * @return 验证码读取、提交和页面状态确认结果。
    */
   const fetchAndSubmitVerificationCode = async (
     tabId: number,
-    email: string,
-    password: string,
+    account: ManagedAccount,
     verificationRequestedAt = 0,
     options: SubmitVerificationCodeOptions
   ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
@@ -755,8 +754,8 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       throwIfAborted(getAbortSignal())
-      // region ========== 去2925邮箱获取验证码 ==========
-      const mailResult = await fetchMail2925VerificationCode(email, password, {
+      // region ========== 按账号邮箱服务获取验证码 ==========
+      const mailResult = await fetchVerificationCode(account, {
         verificationRequestedAt,
         excludeCodes: excludedCodes
       })
@@ -856,24 +855,21 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 在 OAuth 邮箱验证码页读取 2925 验证码并回填。
+   * 在 OAuth 邮箱验证码页读取验证码并回填。
    *
    * @param tabId 要操作的验证码页标签页 id。
-   * @param email 2925 邮箱地址。
-   * @param password 2925 邮箱密码。
+   * @param account 当前账号配置。
    * @param verificationRequestedAt 验证码发送时间。
    * @return 返回给侧边栏展示的执行结果。
    */
   const fetchAndSubmitCodexVerificationCode = async (
     tabId: number,
-    email: string,
-    password: string,
+    account: ManagedAccount,
     verificationRequestedAt = 0
   ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
     return fetchAndSubmitVerificationCode(
       tabId,
-      email,
-      password,
+      account,
       verificationRequestedAt,
       {
         isCurrentStateCompleted: (state) => {
@@ -892,24 +888,21 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 在普通 ChatGPT 登录验证码页读取 2925 验证码并回填。
+   * 在普通 ChatGPT 登录验证码页读取验证码并回填。
    *
    * @param tabId 要操作的验证码页标签页 id。
-   * @param email 2925 邮箱地址。
-   * @param password 2925 邮箱密码。
+   * @param account 当前账号配置。
    * @param verificationRequestedAt 验证码发送时间。
    * @return 返回给注册兜底流程展示的执行结果。
    */
   const fetchAndSubmitChatGptLoginVerificationCode = async (
     tabId: number,
-    email: string,
-    password: string,
+    account: ManagedAccount,
     verificationRequestedAt = 0
   ): Promise<FetchAndSubmitCodexVerificationCodeResponse> => {
     return fetchAndSubmitVerificationCode(
       tabId,
-      email,
-      password,
+      account,
       verificationRequestedAt,
       {
         isCurrentStateCompleted: (state) => {

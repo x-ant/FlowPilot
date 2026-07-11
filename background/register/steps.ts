@@ -1,5 +1,5 @@
 ﻿import { createCodexLoginRunner } from "../login/steps"
-import { createMail2925Runner } from "../integrations/mail-2925"
+import { createMailVerificationRunner } from "../integrations/mail-verification"
 import { detectCodexAuthPageStateInPage } from "../page-scripts/page-script"
 import {
   assertHeroSmsActivationCostWithinExpected,
@@ -23,6 +23,7 @@ import {
   waitForTabLoaded,
   waitForTabMatchingUrl
 } from "../utils/tab-utils"
+import type { ManagedAccount } from "../../shared/account-state"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [
@@ -1100,7 +1101,7 @@ const detectRegisterEmailSubmittedInPage = () => {
  * @return FlowPilot 注册流程各步骤的执行函数集合。
  */
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
-  const { fetchMail2925VerificationCode } = createMail2925Runner(context)
+  const { fetchVerificationCode } = createMailVerificationRunner(context)
   const {
     openCodexAuthLink,
     confirmCodexOAuthConsent,
@@ -1124,6 +1125,33 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const throwIfRunAborted = () => {
     if (getAbortSignal()?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError")
+    }
+  }
+
+  /**
+   * 准备注册时提交给 OpenAI 的实际邮箱。
+   *
+   * 注册流程只使用账号列表里已经保存的注册邮箱。
+   *
+   * @param account 当前要注册的账号配置。
+   * @return 准备结果；成功时返回可继续执行的账号快照。
+   */
+  const prepareRegisterAccountEmail = async (
+    account: ManagedAccount
+  ): Promise<CodexRegisterStepResponse & { account?: ManagedAccount }> => {
+    throwIfRunAborted()
+
+    if (!account.email) {
+      return {
+        ok: false,
+        message: "缺少注册邮箱"
+      }
+    }
+
+    return {
+      ok: true,
+      message: "已准备注册邮箱",
+      account
     }
   }
 
@@ -1637,18 +1665,16 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 3：从 2925 邮箱读取验证码，并填写到当前 OpenAI 页面。
+   * Step 3：按账号邮箱服务读取验证码，并填写到当前 OpenAI 页面。
    *
    * @param tabId 等待填写验证码的 OpenAI/ChatGPT 标签页 ID。
-   * @param email 2925 邮箱账号，也是目标 OpenAI 账号。
-   * @param password 2925 邮箱密码。
+   * @param account 当前账号配置。
    * @param verificationRequestedAt 发起验证码请求的时间，用于过滤旧邮件。
    * @return 验证码读取和提交结果。
    */
   const fetchAndSubmitRegisterVerificationCode = async (
     tabId: number,
-    email: string,
-    password: string,
+    account: ManagedAccount,
     verificationRequestedAt = 0,
     onProgress?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
@@ -1663,7 +1689,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    const mailResult = await fetchMail2925VerificationCode(email, password, {
+    const mailResult = await fetchVerificationCode(account, {
       verificationRequestedAt
     })
     throwIfRunAborted()
@@ -2349,22 +2375,22 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * Step 3 完成目标账号登录，再刷新 OAuth 并重新点击账号卡片。
    *
    * @param tabId OAuth 登录授权页标签页 ID。
-   * @param email 目标 OpenAI/2925 邮箱。
-   * @param password 2925 邮箱密码，用于读取登录验证码。
+   * @param account 当前账号配置。
    * @param targetUrl CPA OAuth 页面地址，用于登录后重新刷新授权页。
    * @param managementKey CPA 管理密钥。
    * @return OAuth 账号选择或兜底登录后的结果。
    */
   const completeRegisterOAuthLogin = async (
     tabId: number,
-    email: string,
-    password: string,
+    account: ManagedAccount,
     targetUrl: string,
     managementKey: string,
     onFallbackLog?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
+    const email = account.email
+    const password = account.password
     const firstChoice = await chooseRegisterLoginAccount(tabId, email)
     if (firstChoice.ok) {
       return firstChoice
@@ -2463,8 +2489,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     try {
       codeResult = await fetchAndSubmitChatGptLoginVerificationCode(
         openResult.targetTab.id,
-        email,
-        password,
+        account,
         verificationRequestedAt
       )
     } catch (error) {
@@ -2594,6 +2619,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
   return {
     openChatGptRegisterEntry,
+    prepareRegisterAccountEmail,
     clickRegisterAndSubmitEmail,
     fetchAndSubmitRegisterVerificationCode,
     submitRegisterProfile,
@@ -2607,6 +2633,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
 export const {
   openChatGptRegisterEntry,
+  prepareRegisterAccountEmail,
   clickRegisterAndSubmitEmail,
   fetchAndSubmitRegisterVerificationCode,
   submitRegisterProfile,

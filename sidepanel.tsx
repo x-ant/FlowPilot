@@ -57,6 +57,7 @@ function SidePanel() {
   const [busy, setBusy] = useState(false)
   const [isLogAtBottom, setIsLogAtBottom] = useState(true)
   const logListRef = useRef<HTMLDivElement | null>(null)
+  const isLogAtBottomRef = useRef(true)
   const shouldFollowLogsRef = useRef(true)
   const isAutoScrollingLogsRef = useRef(false)
   const logScrollIntentRef = useRef(false)
@@ -149,6 +150,23 @@ function SidePanel() {
     })
   }, [activePage, log])
 
+  /**
+   * 同步日志是否停在底部的 React 状态。
+   *
+   * 日志追加时会频繁触发滚动检查；只有值真正变化时才 setState，
+   * 避免 useLayoutEffect 和滚动事件在日志写入时形成嵌套更新。
+   *
+   * @param nextValue 日志区域是否已经滚动到底部。
+   */
+  const setLogAtBottomSafely = useCallback((nextValue: boolean) => {
+    if (isLogAtBottomRef.current === nextValue) {
+      return
+    }
+
+    isLogAtBottomRef.current = nextValue
+    setIsLogAtBottom(nextValue)
+  }, [])
+
   useLayoutEffect(() => {
     const element = logListRef.current
     if (!element || !shouldFollowLogsRef.current) {
@@ -157,11 +175,11 @@ function SidePanel() {
 
     isAutoScrollingLogsRef.current = true
     element.scrollTop = element.scrollHeight
-    setIsLogAtBottom(true)
+    setLogAtBottomSafely(true)
     window.setTimeout(() => {
       isAutoScrollingLogsRef.current = false
     }, 0)
-  }, [logs])
+  }, [logs, setLogAtBottomSafely])
 
   useEffect(() => {
     return () => {
@@ -238,7 +256,7 @@ function SidePanel() {
     setLogs([])
     shouldFollowLogsRef.current = true
     logScrollIntentRef.current = false
-    setIsLogAtBottom(true)
+    setLogAtBottomSafely(true)
     getStorage()?.set({
       [EXECUTION_LOG_STORAGE_KEY]: []
     })
@@ -272,7 +290,7 @@ function SidePanel() {
     if (isAtBottom) {
       shouldFollowLogsRef.current = true
       logScrollIntentRef.current = false
-      setIsLogAtBottom(true)
+      setLogAtBottomSafely(true)
       return
     }
 
@@ -281,7 +299,7 @@ function SidePanel() {
     }
 
     shouldFollowLogsRef.current = false
-    setIsLogAtBottom(isAtBottom)
+    setLogAtBottomSafely(isAtBottom)
   }
 
   /**
@@ -296,7 +314,7 @@ function SidePanel() {
     element.scrollTop = element.scrollHeight
     shouldFollowLogsRef.current = true
     logScrollIntentRef.current = false
-    setIsLogAtBottom(true)
+    setLogAtBottomSafely(true)
     window.setTimeout(() => {
       isAutoScrollingLogsRef.current = false
     }, 0)

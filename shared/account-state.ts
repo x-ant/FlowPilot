@@ -4,9 +4,15 @@ export type LoginFormValues = {
 }
 
 export type AccountFormValues = {
+  mailProvider?: MailProvider
+  emailGenerator?: EmailGenerator
   email?: string
+  mailboxEmail?: string
   password?: string
 }
+
+export type MailProvider = "2925" | "163"
+export type EmailGenerator = "duckduckgo"
 
 export type ManagedAccountStatus =
   | "idle"
@@ -18,7 +24,11 @@ export type ManagedAccountStatus =
 export type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 export type ManagedAccount = {
+  id: string
+  mailProvider: MailProvider
+  emailGenerator?: EmailGenerator
   email: string
+  mailboxEmail: string
   password: string
   progress: ManagedAccountProgress
   status: ManagedAccountStatus
@@ -95,7 +105,10 @@ export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
 }
 
 export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
+  mailProvider: "2925",
+  emailGenerator: undefined,
   email: "",
+  mailboxEmail: "",
   password: ""
 }
 
@@ -251,6 +264,129 @@ export const normalizeEmail = (value: string) => {
 }
 
 /**
+ * 规范化账号使用的邮箱服务。
+ *
+ * @param value 表单里的邮箱服务原始值。
+ * @return 支持的邮箱服务；无法识别时返回 2925。
+ */
+export const normalizeMailProvider = (value: unknown): MailProvider => {
+  return value === "163" ? "163" : "2925"
+}
+
+/**
+ * 规范化账号使用的邮箱生成方式。
+ *
+ * 当前只有注册流程里的 163 邮箱会用到 DuckDuckGo 辅助生成注册邮箱。
+ *
+ * @param value 表单或存储里的邮箱生成方式原始值。
+ * @return 支持的邮箱生成方式；缺失或无法识别时返回 undefined。
+ */
+export const normalizeEmailGenerator = (
+  value: unknown
+): EmailGenerator | undefined => {
+  return value === "duckduckgo" ? "duckduckgo" : undefined
+}
+
+/**
+ * 读取存储账号里的邮箱服务。
+ *
+ * 当前功能不兼容旧账号数据，存储里必须明确写入邮箱服务类型。
+ *
+ * @param value 存储里的邮箱服务原始值。
+ * @return 有效邮箱服务；缺失或无法识别时返回 null。
+ */
+const readStoredMailProvider = (value: unknown): MailProvider | null => {
+  if (value === "2925" || value === "163") {
+    return value
+  }
+
+  return null
+}
+
+/**
+ * 创建本地账号稳定 ID。
+ *
+ * 账号的邮箱可能在编辑时变化，所以列表选择和编辑不能再依赖邮箱作为主键。
+ *
+ * @return 新账号 ID。
+ */
+export const createManagedAccountId = () => {
+  return `account-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * 规范化账号 ID。
+ *
+ * 自动触发配置里的 selectedEmails 字段沿用旧字段名，但当前内容已经是账号 ID。
+ *
+ * @param value 账号 ID 原始值。
+ * @return 去除首尾空白后的账号 ID。
+ */
+export const normalizeAccountId = (value: unknown) => {
+  return String(value || "").trim()
+}
+
+/**
+ * 获取账号在 UI 和批量流程中的稳定主键。
+ *
+ * @param account 要读取主键的账号。
+ * @return 账号 ID。
+ */
+export const getManagedAccountKey = (account: Pick<ManagedAccount, "id">) => {
+  return normalizeAccountId(account.id)
+}
+
+/**
+ * 获取账号展示名。
+ *
+ * 显示账号列表里保存的注册邮箱。
+ *
+ * @param account 要展示的账号。
+ * @return 适合日志和列表展示的账号标签。
+ */
+export const getManagedAccountLabel = (
+  account: Pick<ManagedAccount, "email" | "mailboxEmail">
+) => {
+  return normalizeEmail(account.email)
+}
+
+/**
+ * 获取账号邮箱服务展示标签。
+ *
+ * @param account 要展示的账号。
+ * @return 账号列表里展示的邮箱服务文案。
+ */
+export const getManagedAccountProviderLabel = (
+  account: Pick<ManagedAccount, "mailProvider">
+) => {
+  if (account.mailProvider === "163") {
+    return "163"
+  }
+
+  return "2925"
+}
+
+/**
+ * 获取账号展示标签。
+ *
+ * 有注册邮箱时优先展示邮箱；异常缺失时展示邮箱服务和占位说明。
+ *
+ * @param account 要展示的账号。
+ * @return 适合 UI 下拉、状态和日志使用的账号标签。
+ */
+export const getManagedAccountDisplayLabel = (
+  account: Pick<
+    ManagedAccount,
+    "email" | "mailboxEmail" | "mailProvider"
+  >
+) => {
+  return (
+    getManagedAccountLabel(account) ||
+    `${getManagedAccountProviderLabel(account)} 缺少注册邮箱`
+  )
+}
+
+/**
  * 规范化浏览器存储里的注册自动触发配置。
  *
  * @param value 从 `chrome.storage.local` 读取到的原始值。
@@ -278,7 +414,7 @@ export const normalizeRegisterAlarmConfig = (
     dailyTime,
     selectedEmails: Array.isArray(record.selectedEmails)
       ? record.selectedEmails
-          .map((email) => normalizeEmail(String(email)))
+          .map((accountId) => normalizeAccountId(accountId))
           .filter(Boolean)
       : [],
     lastTriggeredAt: Number(record.lastTriggeredAt) || 0,
@@ -311,7 +447,7 @@ export const normalizeRegisterRunLock = (
     runId,
     source: record.source === "manual" ? "manual" : "alarm",
     startedAt,
-    currentEmail: normalizeEmail(String(record.currentEmail || "")),
+    currentEmail: normalizeAccountId(record.currentEmail),
     message: String(record.message || ""),
     phonePhase:
       record.phonePhase === "phone_submitted" ||
@@ -325,7 +461,7 @@ export const normalizeRegisterRunLock = (
  * 规范化本地保存的账号数据。
  *
  * @param value 从浏览器本地存储读取到的单个账号。
- * @return 账号有效时返回规范化对象；缺少邮箱时返回 null。
+ * @return 账号有效时返回规范化对象；邮箱服务缺失或账号必填字段缺失时返回 null。
  */
 export const normalizeStoredAccount = (
   value: unknown
@@ -335,8 +471,19 @@ export const normalizeStoredAccount = (
   }
 
   const record = value as Partial<ManagedAccount>
+  const id = String(record.id || "").trim()
+  if (!id) {
+    return null
+  }
+
+  const mailProvider = readStoredMailProvider(record.mailProvider)
+  if (!mailProvider) {
+    return null
+  }
+
   const email = normalizeEmail(String(record.email || ""))
-  if (!email) {
+  const mailboxEmail = normalizeEmail(String(record.mailboxEmail || ""))
+  if (mailProvider === "2925" && !email) {
     return null
   }
 
@@ -353,7 +500,14 @@ export const normalizeStoredAccount = (
     : 0
 
   return {
+    id,
+    mailProvider,
+    emailGenerator:
+      mailProvider === "163"
+        ? normalizeEmailGenerator(record.emailGenerator)
+        : undefined,
     email,
+    mailboxEmail: mailProvider === "2925" ? mailboxEmail || email : "",
     password: String(record.password || ""),
     progress,
     status,
@@ -365,17 +519,27 @@ export const normalizeStoredAccount = (
 /**
  * 创建新的账号记录。
  *
- * @param email 账号邮箱，同时也是 2925 邮箱。
- * @param password 账号密码。
+ * @param values 新账号表单字段。
  * @return 初始状态为待执行的账号对象。
  */
 export const createManagedAccount = (
-  email: string,
-  password: string
+  values: AccountFormValues
 ): ManagedAccount => {
+  const mailProvider = normalizeMailProvider(values.mailProvider)
+  const email = normalizeEmail(values.email || "")
+  const mailboxEmail = mailProvider === "2925" ? email : ""
+  const emailGenerator =
+    mailProvider === "163"
+      ? normalizeEmailGenerator(values.emailGenerator)
+      : undefined
+
   return {
-    email: normalizeEmail(email),
-    password: String(password || ""),
+    id: createManagedAccountId(),
+    mailProvider,
+    emailGenerator,
+    email,
+    mailboxEmail,
+    password: String(values.password || ""),
     progress: 0,
     status: "idle",
     lastMessage: "",
@@ -415,32 +579,31 @@ export const isManagedAccountDone = (account: ManagedAccount) => {
  *
  * @param accounts 当前账号列表。
  * @param nextAccount 要写入的新账号。
- * @param previousEmail 编辑账号时的旧邮箱；新增账号时不用传。
+ * @param previousId 编辑账号时的旧账号 ID；新增账号时不用传。
  * @return 更新后的账号列表。
  */
 export const upsertManagedAccount = (
   accounts: ManagedAccount[],
   nextAccount: ManagedAccount,
-  previousEmail?: string
+  previousId?: string
 ) => {
-  const nextNormalizedEmail = normalizeEmail(nextAccount.email)
+  const nextId = getManagedAccountKey(nextAccount)
   let nextAccounts: ManagedAccount[]
   let previousIndex = -1
 
-  if (previousEmail) {
-    const previousNormalizedEmail = normalizeEmail(previousEmail)
+  if (previousId) {
     nextAccounts = accounts.filter((account) => {
-      return normalizeEmail(account.email) !== previousNormalizedEmail
+      return getManagedAccountKey(account) !== previousId
     })
     previousIndex = accounts.findIndex((account) => {
-      return normalizeEmail(account.email) === previousNormalizedEmail
+      return getManagedAccountKey(account) === previousId
     })
   } else {
     nextAccounts = [...accounts]
   }
 
   const targetIndex = nextAccounts.findIndex((account) => {
-    return normalizeEmail(account.email) === nextNormalizedEmail
+    return getManagedAccountKey(account) === nextId
   })
   if (targetIndex >= 0) {
     nextAccounts[targetIndex] = nextAccount

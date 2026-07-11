@@ -13,7 +13,9 @@ import type { ReactNode } from "react"
 
 import {
   getAccountProgressSummary,
-  normalizeEmail,
+  getManagedAccountKey,
+  getManagedAccountLabel,
+  getManagedAccountProviderLabel,
   STATUS_META,
   STEP_COUNT,
   type AccountProgressStepMeta
@@ -46,6 +48,22 @@ type AccountListPanelProps = {
   onExtraMoreClick?: (key: string) => boolean
 }
 
+/**
+ * 账号列表面板。
+ *
+ * 列表使用账号 ID 做选择和高亮主键，展示注册邮箱，
+ * 并显示当前账号使用的邮箱服务类型；邮箱异常缺失时显示占位文案。
+ *
+ * @param props 组件属性。
+ * @param props.accountPage 账号页共享状态和账号操作方法。
+ * @param props.disabled 是否禁用列表操作。
+ * @param props.stepCount 当前流程总步骤数。
+ * @param props.stepLabels 当前流程步骤文案。
+ * @param props.toolbarActions 列表工具栏里的额外操作按钮。
+ * @param props.extraMoreItems “更多”菜单里的额外菜单项。
+ * @param props.onExtraMoreClick 额外菜单项点击处理函数；返回 true 时阻止默认菜单处理。
+ * @return 账号列表面板组件。
+ */
 export function AccountListPanel({
   accountPage,
   disabled,
@@ -138,21 +156,21 @@ export function AccountListPanel({
         <div className="account-list">
           {accounts.map((account) => {
             const statusMeta = STATUS_META[account.status]
+            const accountKey = getManagedAccountKey(account)
+            const accountLabel = getManagedAccountLabel(account)
             return (
               <div
                 className={`account-row account-row--${account.status} ${
-                  runningEmail === account.email ? "account-row--active" : ""
+                  runningEmail === accountKey ? "account-row--active" : ""
                 }`}
-                key={account.email}>
+                key={accountKey}>
                 <div className="account-select">
                   <Checkbox
-                    checked={selectedEmailSet.has(
-                      normalizeEmail(account.email)
-                    )}
+                    checked={selectedEmailSet.has(accountKey)}
                     disabled={disabled}
                     onChange={(event) => {
                       handleToggleAccountSelected(
-                        account.email,
+                        accountKey,
                         event.target.checked
                       )
                     }}
@@ -160,10 +178,13 @@ export function AccountListPanel({
                 </div>
                 <div className="account-main">
                   <div className="account-head">
-                    <span className="account-email" title={account.email}>
-                      {account.email}
+                    <span className="account-email" title={accountLabel}>
+                      {accountLabel || "缺少注册邮箱"}
                     </span>
                     <Space className="account-status-tags" size={6}>
+                      <Tag variant="filled">
+                        {getManagedAccountProviderLabel(account)}
+                      </Tag>
                       <Tag variant="filled">{`${account.progress}/${stepCount}`}</Tag>
                       <Tag variant="filled" color={statusMeta.color}>
                         {statusMeta.label}
@@ -199,7 +220,7 @@ export function AccountListPanel({
                       title="删除"
                       danger
                       onClick={() => {
-                        handleRemoveAccount(account.email)
+                        handleRemoveAccount(accountKey)
                       }}
                       disabled={disabled}>
                       <span className="account-action-icon">×</span>
@@ -232,7 +253,7 @@ export function AccountListPanel({
                         }
 
                         if (key === "remove") {
-                          handleRemoveAccount(account.email)
+                          handleRemoveAccount(accountKey)
                         }
                       }
                     }}>

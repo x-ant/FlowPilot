@@ -18,7 +18,20 @@ export function CpaConfigPanel({
 }: CpaConfigPanelProps) {
   const [form] = Form.useForm<LoginFormValues>()
 
+  /**
+   * 同步外部保存的 CPA 配置到表单。
+   *
+   * @return 外部值和表单值不一致时更新表单。
+   */
   useEffect(() => {
+    const currentValues = form.getFieldsValue()
+    if (
+      currentValues.cpaUrl === cpaUrl &&
+      currentValues.cpaManagementKey === cpaManagementKey
+    ) {
+      return
+    }
+
     form.setFieldsValue({ cpaUrl, cpaManagementKey })
   }, [cpaManagementKey, cpaUrl, form])
 

@@ -21,9 +21,10 @@ import type { PageProps } from "./types"
 import {
   getFlowStepLabel,
   getFlowStepName,
+  getManagedAccountDisplayLabel,
+  getManagedAccountKey,
   isManagedAccountDone,
   LOGIN_STORAGE_KEYS,
-  normalizeEmail,
   resetManagedAccountState,
   STEP_COUNT,
   type AccountRunResult,
@@ -84,8 +85,7 @@ const runManagedAccountFlow = async (
 
   const step4Result = await runner.fetchAndSubmitCodexVerificationCode(
     authTabId,
-    account.email,
-    account.password,
+    account,
     verificationRequestedAt
   )
   if (!step4Result.ok) {
@@ -170,10 +170,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const batchAbortControllerRef = useRef<AbortController | null>(null)
 
   const selectedDebugAccount = useMemo(() => {
-    const normalizedDebugEmail = normalizeEmail(debugEmail)
     return (
       accounts.find((account) => {
-        return normalizeEmail(account.email) === normalizedDebugEmail
+        return getManagedAccountKey(account) === debugEmail
       }) || null
     )
   }, [accounts, debugEmail])
@@ -194,13 +193,13 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const currentDebugEmail = normalizeEmail(debugEmail)
+    const currentDebugAccountId = debugEmail
     const hasCurrentDebugAccount = accounts.some((account) => {
-      return normalizeEmail(account.email) === currentDebugEmail
+      return getManagedAccountKey(account) === currentDebugAccountId
     })
 
     if (!hasCurrentDebugAccount) {
-      setDebugEmail(accounts[0].email)
+      setDebugEmail(getManagedAccountKey(accounts[0]))
     }
   }, [accounts, debugEmail])
 
@@ -266,17 +265,19 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
+    const accountKey = getManagedAccountKey(account)
+    const accountLabel = getManagedAccountDisplayLabel(account)
     setIsDebugRunning(true)
-    setRunningEmail(account.email)
-    setStatus(`正在调试 ${account.email}：${getFlowStepLabel(step)}`)
-    log.info(`[调试][${account.email}] 开始执行 ${getFlowStepLabel(step)}`)
+    setRunningEmail(accountKey)
+    setStatus(`正在调试 ${accountLabel}：${getFlowStepLabel(step)}`)
+    log.info(`[调试][${accountLabel}] 开始执行 ${getFlowStepLabel(step)}`)
 
     try {
       if (step === 1) {
         setDebugVerificationRequestedAt(0)
         setDebugCallbackUrl("")
         setDebugCpaOAuthState("")
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 0,
           status: "running",
           lastMessage: getFlowStepLabel(step)
@@ -286,13 +287,13 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           managementKey: cpaManagementKey
         })
         if (!result.ok || !result.targetTab?.id) {
-          patchAccountState(account.email, {
+          patchAccountState(accountKey, {
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(1)}失败`
           })
           setStatus(`${getFlowStepName(1)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || `${getFlowStepName(1)}失败`}`
+            `[调试][${accountLabel}] ${result.message || `${getFlowStepName(1)}失败`}`
           )
           return
         }
@@ -300,14 +301,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         setDebugAuthTabId(String(result.targetTab.id))
         setDebugCpaOAuthState(result.cpaOAuthState || "")
         setDebugProgress(1)
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 1,
           status: "running",
           lastMessage: result.message
         })
         setStatus(`${getFlowStepName(1)}已完成`)
         log.info(
-          `[调试][${account.email}] ${result.message}；auth tab=${result.targetTab.id}；url=${
+          `[调试][${accountLabel}] ${result.message}；auth tab=${result.targetTab.id}；url=${
             result.targetTab.url || "unknown"
           }`
         )
@@ -320,14 +321,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           account.email
         )
         if (!result.ok) {
-          patchAccountState(account.email, {
+          patchAccountState(accountKey, {
             progress: Math.max(debugProgress, 1) as ManagedAccount["progress"],
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(2)}失败`
           })
           setStatus(`${getFlowStepName(2)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || `${getFlowStepName(2)}失败`}`
+            `[调试][${accountLabel}] ${result.message || `${getFlowStepName(2)}失败`}`
           )
           return
         }
@@ -336,13 +337,13 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           setDebugVerificationRequestedAt(result.verificationRequestedAt)
         }
         setDebugProgress(2)
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 2,
           status: "running",
           lastMessage: result.message
         })
         setStatus(`${getFlowStepName(2)}已完成`)
-        log.info(`[调试][${account.email}] ${result.message}`)
+        log.info(`[调试][${accountLabel}] ${result.message}`)
         return
       }
 
@@ -352,14 +353,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           account.password
         )
         if (!result.ok) {
-          patchAccountState(account.email, {
+          patchAccountState(accountKey, {
             progress: Math.max(debugProgress, 2) as ManagedAccount["progress"],
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(3)}失败`
           })
           setStatus(`${getFlowStepName(3)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || `${getFlowStepName(3)}失败`}`
+            `[调试][${accountLabel}] ${result.message || `${getFlowStepName(3)}失败`}`
           )
           return
         }
@@ -368,71 +369,70 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           setDebugVerificationRequestedAt(result.verificationRequestedAt)
         }
         setDebugProgress(3)
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 3,
           status: "running",
           lastMessage: result.message
         })
         setStatus(`${getFlowStepName(3)}已完成`)
-        log.info(`[调试][${account.email}] ${result.message}`)
+        log.info(`[调试][${accountLabel}] ${result.message}`)
         return
       }
 
       if (step === 4) {
         const result = await fetchAndSubmitCodexVerificationCode(
           parsedDebugAuthTabId,
-          account.email,
-          account.password,
+          account,
           debugVerificationRequestedAt
         )
         if (!result.ok) {
-          patchAccountState(account.email, {
+          patchAccountState(accountKey, {
             progress: Math.max(debugProgress, 3) as ManagedAccount["progress"],
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(4)}失败`
           })
           setStatus(`${getFlowStepName(4)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || `${getFlowStepName(4)}失败`}`
+            `[调试][${accountLabel}] ${result.message || `${getFlowStepName(4)}失败`}`
           )
           return
         }
 
         setDebugProgress(4)
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 4,
           status: "running",
           lastMessage: result.message
         })
         setStatus(`${getFlowStepName(4)}已完成`)
-        log.info(`[调试][${account.email}] ${result.message}`)
+        log.info(`[调试][${accountLabel}] ${result.message}`)
         return
       }
 
       if (step === 5) {
         const result = await confirmCodexOAuthConsent(parsedDebugAuthTabId)
         if (!result.ok || !result.callbackUrl) {
-          patchAccountState(account.email, {
+          patchAccountState(accountKey, {
             progress: Math.max(debugProgress, 4) as ManagedAccount["progress"],
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(5)}失败`
           })
           setStatus(`${getFlowStepName(5)}失败`)
           log.warn(
-            `[调试][${account.email}] ${result.message || `${getFlowStepName(5)}失败`}`
+            `[调试][${accountLabel}] ${result.message || `${getFlowStepName(5)}失败`}`
           )
           return
         }
 
         setDebugCallbackUrl(result.callbackUrl)
         setDebugProgress(5)
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: 5,
           status: "running",
           lastMessage: result.message
         })
         setStatus(`${getFlowStepName(5)}已完成`)
-        log.info(`[调试][${account.email}] ${result.message}`)
+        log.info(`[调试][${accountLabel}] ${result.message}`)
         return
       }
 
@@ -450,35 +450,35 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         debugCpaOAuthState
       )
       if (!result.ok) {
-        patchAccountState(account.email, {
+        patchAccountState(accountKey, {
           progress: Math.max(debugProgress, 5) as ManagedAccount["progress"],
           status: "failed",
           lastMessage: result.message || `${getFlowStepName(6)}失败`
         })
         setStatus(`${getFlowStepName(6)}失败`)
         log.warn(
-          `[调试][${account.email}] ${result.message || `${getFlowStepName(6)}失败`}`
+          `[调试][${accountLabel}] ${result.message || `${getFlowStepName(6)}失败`}`
         )
         return
       }
 
       setDebugProgress(6)
-      patchAccountState(account.email, {
+      patchAccountState(accountKey, {
         progress: 6,
         status: "done",
         lastMessage: result.message
       })
       setStatus(`${getFlowStepName(6)}已完成`)
-      log.info(`[调试][${account.email}] ${result.message}`)
+      log.info(`[调试][${accountLabel}] ${result.message}`)
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "调试步骤执行异常"
-      patchAccountState(account.email, {
+      patchAccountState(accountKey, {
         status: "failed",
         lastMessage: message
       })
       setStatus("调试步骤执行异常")
-      log.warn(`[调试][${account.email}] ${message}`)
+      log.warn(`[调试][${accountLabel}] ${message}`)
     } finally {
       setIsDebugRunning(false)
       setRunningEmail("")
@@ -525,12 +525,13 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     const isTargetAccount = (account: ManagedAccount) => {
+      const accountKey = getManagedAccountKey(account)
       if (mode === "all") {
-        return selectedEmailSet.has(normalizeEmail(account.email))
+        return selectedEmailSet.has(accountKey)
       }
 
       return (
-        selectedEmailSet.has(normalizeEmail(account.email)) &&
+        selectedEmailSet.has(accountKey) &&
         !isManagedAccountDone(account)
       )
     }
@@ -573,16 +574,18 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       const currentAccount = workingAccounts[index]
+      const currentAccountKey = getManagedAccountKey(currentAccount)
+      const currentAccountLabel = getManagedAccountDisplayLabel(currentAccount)
       if (!isTargetAccount(currentAccount)) {
         continue
       }
 
       currentRunnableIndex += 1
-      setRunningEmail(currentAccount.email)
+      setRunningEmail(currentAccountKey)
       setStatus(
-        `正在处理 ${currentAccount.email}（${currentRunnableIndex}/${runnableCount}）`
+        `正在处理 ${currentAccountLabel}（${currentRunnableIndex}/${runnableCount}）`
       )
-      log.info(`开始处理账号 ${currentAccount.email}`)
+      log.info(`开始处理账号 ${currentAccountLabel}`)
 
       const updateCurrentAccount = (
         patch: Partial<ManagedAccount>
@@ -620,9 +623,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
               lastMessage: message
             })
             setStatus(
-              `账号 ${currentAccount.email} 已完成「${getFlowStepLabel(progress)}」`
+              `账号 ${currentAccountLabel} 已完成「${getFlowStepLabel(progress)}」`
             )
-            log.info(`[${currentAccount.email}] ${message}`)
+            log.info(`[${currentAccountLabel}] ${message}`)
           }
         )
       } catch (error) {
@@ -640,7 +643,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         })
         setStatus("已停止当前流程")
         log.warn(
-          `[${currentAccount.email}] ${runResult.message || "已停止当前流程"}`
+          `[${currentAccountLabel}] ${runResult.message || "已停止当前流程"}`
         )
         break
       }
@@ -651,7 +654,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           status: "done",
           lastMessage: runResult.message
         })
-        log.info(`[${currentAccount.email}] ${runResult.message}`)
+        log.info(`[${currentAccountLabel}] ${runResult.message}`)
         continue
       }
 
@@ -661,8 +664,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         status: "failed",
         lastMessage: runResult.message
       })
-      setStatus(`账号 ${currentAccount.email} 执行失败`)
-      log.warn(`[${currentAccount.email}] ${runResult.message}`)
+      setStatus(`账号 ${currentAccountLabel} 执行失败`)
+      log.warn(`[${currentAccountLabel}] ${runResult.message}`)
     }
 
     setRunningEmail("")
@@ -707,7 +710,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
             <Space.Compact>
               <Button
                 type="primary"
-                disabled={!hasCpaApiConfig || selectedCount === 0}
+                disabled={selectedCount === 0}
                 onClick={() => {
                   void handleStartBatch("pending")
                 }}>
@@ -715,7 +718,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
               </Button>
               <Dropdown
                 trigger={["click"]}
-                disabled={!hasCpaApiConfig || selectedCount === 0}
+                disabled={selectedCount === 0}
                 menu={{
                   items: [
                     {
@@ -729,7 +732,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                 }}>
                 <Button
                   type="primary"
-                  disabled={!hasCpaApiConfig || selectedCount === 0}
+                  disabled={selectedCount === 0}
                   aria-label="执行选项">
                   ▾
                 </Button>
@@ -770,8 +773,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                         placeholder="选择账号"
                         options={accounts.map((account) => {
                           return {
-                            label: account.email,
-                            value: account.email
+                            label: getManagedAccountDisplayLabel(account),
+                            value: getManagedAccountKey(account)
                           }
                         })}
                         onChange={(value) => {
