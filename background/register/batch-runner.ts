@@ -1,5 +1,6 @@
 ﻿import { createCodexRegisterRunner } from "./steps"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
+import { abortableSleep } from "../utils/abort"
 import {
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
@@ -12,6 +13,8 @@ import {
 
 export const REGISTER_STEP_COUNT = 7
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
+const REGISTER_ACCOUNT_INTERVAL_MIN_MS = 3 * 60 * 1000
+const REGISTER_ACCOUNT_INTERVAL_MAX_MS = 5 * 60 * 1000
 
 export type RegisterStopStrategy =
   | "none"
@@ -67,6 +70,33 @@ const closeTabQuietly = async (tabId?: number) => {
   } catch {
     return false
   }
+}
+
+/**
+ * 生成两个注册账号之间的随机等待时间。
+ *
+ * 连续快速注册容易触发邮箱或 OpenAI 风控；这里固定在 3~5 分钟之间，
+ * 只用于账号与账号之间，不影响单个账号内部步骤。
+ *
+ * @return 随机等待毫秒数。
+ */
+const createRegisterAccountIntervalMs = () => {
+  const rangeMs =
+    REGISTER_ACCOUNT_INTERVAL_MAX_MS - REGISTER_ACCOUNT_INTERVAL_MIN_MS
+  return REGISTER_ACCOUNT_INTERVAL_MIN_MS + Math.floor(Math.random() * rangeMs)
+}
+
+/**
+ * 格式化账号间隔等待时长，便于日志展示。
+ *
+ * @param durationMs 等待毫秒数。
+ * @return `x 分 y 秒` 格式的时长。
+ */
+const formatRegisterAccountInterval = (durationMs: number) => {
+  const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`
 }
 
 /**
@@ -415,6 +445,43 @@ export const runRegisterBatch = async ({
 
   let currentRunnableIndex = 0
   let cancelled = false
+  const hasNextRunnableAccount = (currentIndex: number) => {
+    return workingAccounts.some((account, index) => {
+      return index > currentIndex && isTargetAccount(account)
+    })
+  }
+  const waitBeforeNextRunnableAccount = async (
+    currentIndex: number,
+    currentAccountLabel: string
+  ) => {
+    if (
+      shouldCancel() ||
+      getStopStrategy() !== "none" ||
+      !hasNextRunnableAccount(currentIndex)
+    ) {
+      return true
+    }
+
+    const intervalMs = createRegisterAccountIntervalMs()
+    const intervalLabel = formatRegisterAccountInterval(intervalMs)
+    onRunningEmail?.("")
+    onStatus?.(`账号间隔中，等待 ${intervalLabel} 后处理下一个账号`)
+    onLog?.(
+      "info",
+      `[${currentAccountLabel}] 已结束，账号间隔等待 ${intervalLabel} 后处理下一个账号`
+    )
+
+    try {
+      await abortableSleep(intervalMs, abortSignal)
+      return !shouldCancel()
+    } catch {
+      cancelled = true
+      onStatus?.("已停止批量执行")
+      onLog?.("warn", "账号间隔等待已停止")
+      return false
+    }
+  }
+
   for (let index = 0; index < workingAccounts.length; index += 1) {
     if (shouldCancel()) {
       cancelled = true
@@ -534,6 +601,9 @@ export const runRegisterBatch = async ({
       if (getStopStrategy() !== "none") {
         break
       }
+      if (!(await waitBeforeNextRunnableAccount(index, currentAccountLabel))) {
+        break
+      }
       continue
     }
 
@@ -549,6 +619,9 @@ export const runRegisterBatch = async ({
       if (getStopStrategy() !== "none") {
         break
       }
+      if (!(await waitBeforeNextRunnableAccount(index, currentAccountLabel))) {
+        break
+      }
       continue
     }
 
@@ -560,6 +633,9 @@ export const runRegisterBatch = async ({
     onStatus?.(`账号 ${currentAccountLabel} 执行失败`)
     onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
     if (getStopStrategy() !== "none") {
+      break
+    }
+    if (!(await waitBeforeNextRunnableAccount(index, currentAccountLabel))) {
       break
     }
   }
