@@ -24,6 +24,7 @@ import {
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
   isManagedAccountDone,
+  LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
   LOGIN_STORAGE_KEYS,
   resetManagedAccountState,
   STEP_COUNT,
@@ -749,7 +750,12 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         onCpaConfigChange={accountPage.handleCpaConfigChange}
       />
 
-      <AccountFormPanel accountPage={accountPage} disabled={disabled} />
+      <AccountFormPanel
+        accountPage={accountPage}
+        disabled={disabled}
+        draftStorageKey={LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY}
+        preserveDraftEmail
+      />
 
       <Collapse
         className="panel-card"

@@ -3,8 +3,12 @@ import { useEffect, useState } from "react"
 
 import {
   EMPTY_ACCOUNT_FORM,
+  EMPTY_ACCOUNT_FORM_DRAFT,
+  getStorage,
+  normalizeAccountFormDraft,
   normalizeEmailGenerator,
   normalizeMailProvider,
+  type AccountFormDraftValues,
   type AccountFormValues,
   type EmailGenerator,
   type MailProvider
@@ -27,6 +31,8 @@ type AccountFormPanelProps = {
   accountPage: AccountFormPanelAccountPage
   disabled: boolean
   allowEmailGenerator?: boolean
+  draftStorageKey?: string
+  preserveDraftEmail?: boolean
   onFetchDuckEmail?: (
     options: FetchDuckEmailOptions
   ) => Promise<DuckEmailResult>
@@ -43,6 +49,8 @@ const ACCOUNT_PANEL_KEY = "account"
  * @param props.accountPage 账号页共享状态和操作方法。
  * @param props.disabled 是否禁止编辑表单。
  * @param props.allowEmailGenerator 是否展示注册页专用的邮箱生成控件。
+ * @param props.draftStorageKey 可选的表单草稿存储 key，用于保存当前页面常用输入。
+ * @param props.preserveDraftEmail 是否把注册邮箱也保存到表单草稿。
  * @param props.onFetchDuckEmail 点击获取 Duck 邮箱时调用的生成方法。
  * @return 账号管理表单组件。
  */
@@ -50,6 +58,8 @@ export function AccountFormPanel({
   accountPage,
   disabled,
   allowEmailGenerator = false,
+  draftStorageKey,
+  preserveDraftEmail = false,
   onFetchDuckEmail
 }: AccountFormPanelProps) {
   const {
@@ -62,6 +72,9 @@ export function AccountFormPanel({
   const [activeKeys, setActiveKeys] = useState<string[]>([])
   const [selectedMailProvider, setSelectedMailProvider] =
     useState<MailProvider>("2925")
+  const [draftValues, setDraftValues] = useState<AccountFormDraftValues>(
+    EMPTY_ACCOUNT_FORM_DRAFT
+  )
   const [isFetchingDuckEmail, setIsFetchingDuckEmail] = useState(false)
   const selectedEmailGenerator = Form.useWatch("emailGenerator", form)
   const canUseDuckEmailGenerator =
@@ -84,6 +97,39 @@ export function AccountFormPanel({
     setActiveKeys([ACCOUNT_PANEL_KEY])
   }, [form, editingAccount])
 
+  useEffect(() => {
+    if (!draftStorageKey) {
+      return
+    }
+
+    let isUnmounted = false
+    const storage = getStorage()
+    storage?.get([draftStorageKey], (result) => {
+      if (isUnmounted) {
+        return
+      }
+
+      const nextDraftValues = normalizeAccountFormDraft(
+        result?.[draftStorageKey]
+      )
+      setDraftValues(nextDraftValues)
+
+      if (!editingAccount) {
+        form.setFieldsValue({
+          ...EMPTY_ACCOUNT_FORM,
+          ...nextDraftValues
+        })
+        setSelectedMailProvider(
+          normalizeMailProvider(nextDraftValues.mailProvider)
+        )
+      }
+    })
+
+    return () => {
+      isUnmounted = true
+    }
+  }, [draftStorageKey, editingAccount, form])
+
   /**
    * 同步账号管理折叠面板的展开状态。
    *
@@ -99,8 +145,50 @@ export function AccountFormPanel({
   const handleCancelEdit = () => {
     cancelEdit()
     form.resetFields()
-    form.setFieldsValue(EMPTY_ACCOUNT_FORM)
-    setSelectedMailProvider("2925")
+    form.setFieldsValue({
+      ...EMPTY_ACCOUNT_FORM,
+      ...draftValues
+    })
+    setSelectedMailProvider(normalizeMailProvider(draftValues.mailProvider))
+  }
+
+  /**
+   * 判断当前表单草稿是否应该保留注册邮箱。
+   *
+   * 登录页需要连续复用同一邮箱；注册页默认不复用生成邮箱，只为未来的
+   * 自定义邮箱选项预留保留逻辑。
+   *
+   * @param values 当前表单值。
+   * @return 需要把注册邮箱写入草稿时返回 true。
+   */
+  const shouldPreserveDraftEmail = (values: AccountFormValues) => {
+    return (
+      preserveDraftEmail ||
+      normalizeEmailGenerator(values.emailGenerator) === "custom"
+    )
+  }
+
+  /**
+   * 保存账号表单草稿。
+   *
+   * 登录页保存邮箱服务、注册邮箱和注册密码；注册页保存邮箱服务、
+   * 邮箱生成和注册密码，DuckDuckGo 生成邮箱不进入草稿。
+   *
+   * @param values 当前表单值。
+   */
+  const persistDraftValues = (values: AccountFormValues) => {
+    if (!draftStorageKey || editingEmail) {
+      return
+    }
+
+    const nextDraftValues = normalizeAccountFormDraft({
+      ...values,
+      email: shouldPreserveDraftEmail(values) ? values.email : ""
+    })
+    setDraftValues(nextDraftValues)
+    getStorage()?.set({
+      [draftStorageKey]: nextDraftValues
+    })
   }
 
   /**
@@ -139,9 +227,53 @@ export function AccountFormPanel({
     form.setFieldsValue({
       emailGenerator: nextEmailGenerator,
       email: "",
-      password: ""
+      ...(draftStorageKey ? {} : { password: "" })
+    })
+    persistDraftValues({
+      ...form.getFieldsValue(),
+      mailProvider: nextMailProvider,
+      emailGenerator: nextEmailGenerator
     })
     clearEmailFieldErrors()
+  }
+
+  /**
+   * 判断账号保存后是否清空注册邮箱。
+   *
+   * 这个判断只看“邮箱生成”字段：DuckDuckGo 或未选择生成方式都代表下一次
+   * 应该重新准备邮箱；预留的 custom 表示未来手动自定义邮箱时可以继续保留。
+   *
+   * @param values 刚提交的账号表单值。
+   * @return 需要清空注册邮箱时返回 true。
+   */
+  const shouldClearEmailAfterSubmit = (values: AccountFormValues) => {
+    return normalizeEmailGenerator(values.emailGenerator) !== "custom"
+  }
+
+  /**
+   * 提交账号并按当前页面的草稿规则恢复表单。
+   *
+   * @param values 表单提交的账号配置。
+   */
+  const handleFinishAccount = (values: AccountFormValues) => {
+    const isCreatingAccount = !editingEmail
+    handleSubmitAccount(values)
+
+    if (
+      draftStorageKey &&
+      !shouldPreserveDraftEmail(values) &&
+      isCreatingAccount &&
+      shouldClearEmailAfterSubmit(values)
+    ) {
+      form.setFieldsValue({
+        email: ""
+      })
+    }
+
+    persistDraftValues({
+      ...values,
+      email: shouldPreserveDraftEmail(values) ? values.email : ""
+    })
   }
 
   /**
@@ -220,7 +352,10 @@ export function AccountFormPanel({
               layout="vertical"
               initialValues={EMPTY_ACCOUNT_FORM}
               requiredMark={false}
-              onFinish={handleSubmitAccount}>
+              onValuesChange={(_, values) => {
+                persistDraftValues(values)
+              }}
+              onFinish={handleFinishAccount}>
               <Form.Item label="邮箱服务" required>
                 <Space.Compact block>
                   <Form.Item

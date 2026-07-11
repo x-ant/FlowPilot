@@ -12,7 +12,12 @@ export type AccountFormValues = {
 }
 
 export type MailProvider = "2925" | "163"
-export type EmailGenerator = "duckduckgo"
+export type EmailGenerator = "duckduckgo" | "custom"
+
+export type AccountFormDraftValues = Pick<
+  AccountFormValues,
+  "mailProvider" | "emailGenerator" | "email" | "password"
+>
 
 export type ManagedAccountStatus =
   | "idle"
@@ -87,11 +92,15 @@ export const LOGIN_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaManagementKey: "flowpilot:login:cpa-management-key",
   accounts: "flowpilot:login:accounts"
 }
+export const LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY =
+  "flowpilot:login:account-form-draft"
 export const REGISTER_STORAGE_KEYS: AccountPageStorageKeys = {
   cpaUrl: "flowpilot:register:cpa-url",
   cpaManagementKey: "flowpilot:register:cpa-management-key",
   accounts: "flowpilot:register:accounts"
 }
+export const REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY =
+  "flowpilot:register:account-form-draft"
 export const REGISTER_ALARM_NAME = "flowpilot:register:auto-run"
 export const REGISTER_ALARM_STORAGE_KEY = "flowpilot:register:alarm-config"
 export const REGISTER_RUN_LOCK_STORAGE_KEY = "flowpilot:register:run-lock"
@@ -109,6 +118,13 @@ export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
   emailGenerator: undefined,
   email: "",
   mailboxEmail: "",
+  password: ""
+}
+
+export const EMPTY_ACCOUNT_FORM_DRAFT: AccountFormDraftValues = {
+  mailProvider: "2925",
+  emailGenerator: undefined,
+  email: "",
   password: ""
 }
 
@@ -284,7 +300,41 @@ export const normalizeMailProvider = (value: unknown): MailProvider => {
 export const normalizeEmailGenerator = (
   value: unknown
 ): EmailGenerator | undefined => {
-  return value === "duckduckgo" ? "duckduckgo" : undefined
+  if (value === "duckduckgo" || value === "custom") {
+    return value
+  }
+
+  return undefined
+}
+
+/**
+ * 规范化账号表单草稿。
+ *
+ * 草稿只保存会被重复使用的输入习惯；调用方可以在写入前决定是否保留
+ * 注册邮箱，例如登录页保留邮箱，注册页 DuckDuckGo 生成邮箱后清空。
+ *
+ * @param value 从浏览器本地存储读取到的账号表单草稿。
+ * @return 可安全回填到账号表单的草稿字段。
+ */
+export const normalizeAccountFormDraft = (
+  value: unknown
+): AccountFormDraftValues => {
+  const record =
+    value && typeof value === "object"
+      ? (value as Partial<AccountFormDraftValues>)
+      : {}
+  const mailProvider = normalizeMailProvider(record.mailProvider)
+  const emailGenerator =
+    mailProvider === "163"
+      ? normalizeEmailGenerator(record.emailGenerator)
+      : undefined
+
+  return {
+    mailProvider,
+    emailGenerator,
+    email: normalizeEmail(String(record.email || "")),
+    password: String(record.password || "")
+  }
 }
 
 /**
@@ -357,13 +407,21 @@ export const getManagedAccountLabel = (
  * @return 账号列表里展示的邮箱服务文案。
  */
 export const getManagedAccountProviderLabel = (
-  account: Pick<ManagedAccount, "mailProvider">
+  account: Pick<ManagedAccount, "mailProvider" | "emailGenerator">
 ) => {
-  if (account.mailProvider === "163") {
-    return "163"
+  if (account.mailProvider !== "163") {
+    return "2925"
   }
 
-  return "2925"
+  if (account.emailGenerator === "duckduckgo") {
+    return "163 + DDG"
+  }
+
+  if (account.emailGenerator === "custom") {
+    return "163 + 自定义邮箱"
+  }
+
+  return "163 + 缺少邮箱生成"
 }
 
 /**
@@ -377,7 +435,7 @@ export const getManagedAccountProviderLabel = (
 export const getManagedAccountDisplayLabel = (
   account: Pick<
     ManagedAccount,
-    "email" | "mailboxEmail" | "mailProvider"
+    "email" | "mailboxEmail" | "mailProvider" | "emailGenerator"
   >
 ) => {
   return (
@@ -487,6 +545,14 @@ export const normalizeStoredAccount = (
     return null
   }
 
+  const emailGenerator =
+    mailProvider === "163"
+      ? normalizeEmailGenerator(record.emailGenerator)
+      : undefined
+  if (mailProvider === "163" && !emailGenerator) {
+    return null
+  }
+
   const status =
     record.status === "running" ||
     record.status === "done" ||
@@ -502,10 +568,7 @@ export const normalizeStoredAccount = (
   return {
     id,
     mailProvider,
-    emailGenerator:
-      mailProvider === "163"
-        ? normalizeEmailGenerator(record.emailGenerator)
-        : undefined,
+    emailGenerator,
     email,
     mailboxEmail: mailProvider === "2925" ? mailboxEmail || email : "",
     password: String(record.password || ""),

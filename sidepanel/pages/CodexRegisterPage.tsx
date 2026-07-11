@@ -49,6 +49,7 @@ import {
   getManagedAccountKey,
   normalizeRegisterAlarmConfig,
   normalizeRegisterRunLock,
+  REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
   REGISTER_ALARM_STORAGE_KEY,
   REGISTER_RUN_LOCK_STALE_MS,
   REGISTER_RUN_LOCK_STORAGE_KEY,
@@ -1439,6 +1440,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         accountPage={accountPage}
         disabled={disabled}
         allowEmailGenerator
+        draftStorageKey={REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY}
         onFetchDuckEmail={handleFetchDuckEmail}
       />
 

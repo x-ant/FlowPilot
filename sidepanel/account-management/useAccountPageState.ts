@@ -269,6 +269,12 @@ export const useAccountPageState = ({
       return
     }
 
+    if (mailProvider === "163" && !emailGenerator) {
+      setStatus("请选择邮箱生成方式")
+      log.warn("163 邮箱账号需要选择邮箱生成方式")
+      return
+    }
+
     const previousEditingId = editingEmail
     const existingAccount =
       accounts.find((account) => {
