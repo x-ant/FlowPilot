@@ -34,6 +34,28 @@ const isMail163Url = (rawUrl?: string) => {
 }
 
 /**
+ * 判断 163 标签页是否停在登录页。
+ *
+ * 当前项目不自动登录邮箱；命中登录页时直接提示用户手动登录，
+ * 避免在登录页继续执行收信和验证码轮询。
+ *
+ * @param rawUrl 标签页当前 URL。
+ * @return URL 是 163 登录页时返回 true。
+ */
+const isMail163LoginUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    if (url.hostname.toLowerCase() !== MAIL163_HOSTNAME) {
+      return false
+    }
+
+    return url.pathname === "/" || url.pathname.startsWith("/js6/main.jsp")
+  } catch {
+    return false
+  }
+}
+
+/**
  * 创建 163 邮箱验证码读取 runner。
  *
  * runner 只负责复用或打开 163 邮箱页面并注入验证码轮询逻辑，
@@ -62,7 +84,8 @@ export const createMail163Runner = (context: RunContext = {}) => {
     const tabId = await findOrOpenMatchedTab({
       targetUrl: MAIL163_MAILBOX_URL,
       errorMessage: "无法打开 163 邮箱页面",
-      matcher: (tab) => isMail163Url(tab.url)
+      matcher: (tab) => isMail163Url(tab.url),
+      navigateMatchedTab: false
     })
     throwIfAborted(getAbortSignal())
 
@@ -90,6 +113,11 @@ export const createMail163Runner = (context: RunContext = {}) => {
 
     await chrome.tabs.update(tabId, { active: true })
     await waitForTabLoaded(tabId)
+    const currentTab = await chrome.tabs.get(tabId)
+    if (isMail163LoginUrl(currentTab.url)) {
+      return createResult("", "163 邮箱未登录，请先手动登录 163 邮箱")
+    }
+
     throwIfAborted(getAbortSignal())
 
     const [codeInjectionResult] = await raceWithAbort(

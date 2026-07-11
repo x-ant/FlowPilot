@@ -53,6 +53,23 @@ const isMail2925MailboxUrl = (rawUrl?: string) => {
 }
 
 /**
+ * 判断 2925 标签页是否停在登录页。
+ *
+ * 当前项目不自动登录邮箱；如果验证码读取时发现需要登录，只给出明确提示。
+ *
+ * @param rawUrl 标签页当前 URL。
+ * @return URL 是 2925 登录页时返回 true。
+ */
+const isMail2925LoginUrl = (rawUrl?: string) => {
+  const url = getMail2925Url(rawUrl)
+  if (!url) {
+    return false
+  }
+
+  return url.pathname === "/login" || url.pathname === "/login/"
+}
+
+/**
  * 创建 2925 邮箱验证码读取 runner。
  *
  * runner 只负责打开或复用已登录的 2925 收件箱，不再自动填写账号密码登录。
@@ -130,8 +147,24 @@ export const createMail2925Runner = (context: RunContext = {}) => {
     }
 
     await waitForTabLoaded(tabId)
+    let currentTab = await chrome.tabs.get(tabId)
+    if (isMail2925LoginUrl(currentTab.url)) {
+      return createResult("", "2925 邮箱未登录，请先手动登录 2925 邮箱")
+    }
+
     await navigateMail2925TabToMailbox(tabId)
     await waitForTabLoaded(tabId)
+    currentTab = await chrome.tabs.get(tabId)
+    /**
+     * 访问收件箱后再判断一次登录页。
+     *
+     * 2925 session 失效时，初始 tab URL 可能还不是 `/login/`，
+     * 但切到收件箱后会被站点重定向到登录页；这里用于给出明确的未登录提示。
+     */
+    if (isMail2925LoginUrl(currentTab.url)) {
+      return createResult("", "2925 邮箱未登录，请先手动登录 2925 邮箱")
+    }
+
     throwIfAborted(getAbortSignal())
 
     const [codeInjectionResult] = await raceWithAbort(

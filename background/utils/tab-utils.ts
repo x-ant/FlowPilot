@@ -14,6 +14,7 @@ type FindOrOpenMatchedTabOptions = {
   matcher: (tab: chrome.tabs.Tab) => boolean
   errorMessage: string
   activate?: boolean
+  navigateMatchedTab?: boolean
 }
 
 /**
@@ -307,9 +308,17 @@ export const normalizeUrlForTabMatch = (value: string) => {
 }
 
 /**
- * 查找符合条件的标签页；找不到时打开目标地址。只是打开地址，不管页面是否加载完成
+ * 查找符合条件的标签页；找不到时打开目标地址。只是打开地址，不管页面是否加载完成。
+ *
+ * 默认会把复用到的标签页导航到 targetUrl；对 163 邮箱、Duck 邮箱这类
+ * 已打开页面需要保留当前内部状态的场景，可以关闭 navigateMatchedTab。
  *
  * @param options 查找条件、目标地址和失败提示。
+ * @param options.targetUrl 找不到标签页时要打开的 URL。
+ * @param options.matcher 标签页匹配规则。
+ * @param options.errorMessage 无法打开标签页时的错误提示。
+ * @param options.activate 是否激活标签页，默认 true。
+ * @param options.navigateMatchedTab 复用标签页时是否导航到 targetUrl，默认 true。
  * @return 可以注入脚本或继续操作的标签页 id。
  */
 export const findOrOpenMatchedTab = async (
@@ -317,6 +326,7 @@ export const findOrOpenMatchedTab = async (
 ) => {
   const tabs = await chrome.tabs.query({})
   const shouldActivate = options.activate ?? true
+  const shouldNavigateMatchedTab = options.navigateMatchedTab ?? true
   const matchedTabs = tabs.filter(options.matcher)
   const matchedTab = shouldActivate
     ? matchedTabs[0]
@@ -332,7 +342,10 @@ export const findOrOpenMatchedTab = async (
       updateProperties.active = true
     }
 
-    if (!isSameFullUrl(matchedTab.url, options.targetUrl)) {
+    if (
+      shouldNavigateMatchedTab &&
+      !isSameFullUrl(matchedTab.url, options.targetUrl)
+    ) {
       updateProperties.url = options.targetUrl
     }
 

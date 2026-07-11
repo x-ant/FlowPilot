@@ -26,6 +26,7 @@ import {
   waitForTabLoaded,
   waitForTabMatchingUrl
 } from "../utils/tab-utils"
+import { retryVerificationCodeOnInvalidCode } from "../utils/verification-code-retry"
 import type { ManagedAccount } from "../../shared/account-state"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
@@ -93,6 +94,12 @@ type RegisterPhoneVerificationSubmitState = {
   message: string
   url: string
   releaseActivation?: boolean
+}
+
+type RegisterEmailVerificationSubmitState = {
+  state: string
+  message: string
+  url: string
 }
 
 type HistoryBackGuardResult =
@@ -219,6 +226,25 @@ const isOpenAiPhoneVerificationUrl = (rawUrl?: string) => {
 const isHeroSmsCodeTimeoutError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "")
   return /^等待手机验证码超时/.test(message)
+}
+
+const isChromeErrorPageInjectionMessage = (message: string) => {
+  return /Frame with ID \d+ is showing error page|showing error page/i.test(
+    String(message || "")
+  )
+}
+
+const formatPhoneVerificationPageInjectionMessage = (
+  message: string,
+  rawUrl?: string
+) => {
+  if (!isChromeErrorPageInjectionMessage(message)) {
+    return message
+  }
+
+  return `手机号验证页脚本注入失败，Chrome 判断当前页面是错误页，页面可能异常或显示 500；原始错误：${message}；当前 URL：${
+    rawUrl || "unknown"
+  }`
 }
 
 const isOpenAiPhoneVerificationRateLimited = (message: string) => {
@@ -1261,13 +1287,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           url: detected?.url || currentUrl
         }
       } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "手机验证码提交后页面暂不可检测"
         lastState = {
           ok: false,
           state: "other",
-          message:
-            error instanceof Error
-              ? error.message
-              : "手机验证码提交后页面暂不可检测",
+          message: formatPhoneVerificationPageInjectionMessage(
+            errorMessage,
+            currentUrl
+          ),
           url: currentUrl
         }
       }
@@ -1296,11 +1326,14 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
 
       if (lastState.state !== "verification_pending") {
+        const statusMessage = isOpenAiPhoneVerificationUrl(lastState.url)
+          ? `${lastState.message}；当前仍在手机号验证地址，但页面状态无法读取，请停止当前账号后人工检查`
+          : `${lastState.message}；手机验证码提交后已离开验证码页，但还没有到 localhost 回调地址，请人工判断是否已验证成功`
         return {
           ...lastState,
           ok: false,
           releaseActivation: false,
-          message: `${lastState.message}；手机验证码提交后已离开验证码页，但还没有到 localhost 回调地址，请人工判断是否已验证成功`
+          message: statusMessage
         }
       }
 
@@ -1313,6 +1346,68 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       releaseActivation: lastState.state === "verification_pending",
       message: `${lastState.message}；45 秒内未确认手机验证码提交后的页面状态`
     }
+  }
+
+  /**
+   * 等待邮箱验证码提交后的页面状态。
+   *
+   * 这里只关心验证码是否被判错；只要页面离开验证码输入状态，就交给后续
+   * 注册资料步骤继续处理，避免把注册页后续形态复杂化。
+   *
+   * @param tabId 当前 OpenAI 注册页标签页 ID。
+   * @return 提交后的认证页状态。
+   */
+  const waitForRegisterEmailVerificationSubmitState = async (
+    tabId: number
+  ): Promise<RegisterEmailVerificationSubmitState> => {
+    const startedAt = Date.now()
+    let lastState: RegisterEmailVerificationSubmitState = {
+      state: "other",
+      message: "注册邮箱验证码提交后未确认页面状态",
+      url: ""
+    }
+
+    while (Date.now() - startedAt < 12000) {
+      throwIfRunAborted()
+
+      const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+      const currentUrl = String(currentTab?.url || "")
+
+      try {
+        await waitForTabLoaded(tabId)
+        const [detectResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: detectCodexAuthPageStateInPage
+        })
+        const detected = detectResult?.result
+        lastState = {
+          state: detected?.state || "other",
+          message: detected?.message || "未识别注册验证码提交后的页面状态",
+          url: detected?.url || currentUrl
+        }
+      } catch (error) {
+        lastState = {
+          state: "other",
+          message:
+            error instanceof Error
+              ? error.message
+              : "注册验证码提交后页面暂不可检测",
+          url: currentUrl
+        }
+      }
+
+      if (lastState.state === "verification_invalid_code") {
+        return lastState
+      }
+
+      if (lastState.state !== "verification_pending") {
+        return lastState
+      }
+
+      await abortableSleep(500, getAbortSignal())
+    }
+
+    return lastState
   }
 
   /**
@@ -1716,6 +1811,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * @param tabId 等待填写验证码的 OpenAI/ChatGPT 标签页 ID。
    * @param account 当前账号配置。
    * @param verificationRequestedAt 发起验证码请求的时间，用于过滤旧邮件。
+   * @param onProgress 用于改变当前账号步骤流程的回调
    * @return 验证码读取和提交结果。
    */
   const fetchAndSubmitRegisterVerificationCode = async (
@@ -1735,66 +1831,100 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    const mailResult = await fetchVerificationCode(account, {
-      verificationRequestedAt
-    })
-    throwIfRunAborted()
-    if (!mailResult.code) {
-      return {
-        ok: false,
-        message: mailResult.message,
-        targetTab: mailResult.mailTab
-      }
-    }
-    onProgress?.(mailResult.message)
-
-    await chrome.tabs.update(tabId, { active: true })
-    const fillResult = await runPageActionInTab(tabId, {
-      fields: [
-        {
-          selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
-          value: mailResult.code,
-          allowSplitInput: true
-        }
-      ],
-      timeoutMs: 15000,
-      successMessage: "已填写注册验证码",
-      failureMessage: "未找到验证码输入框"
-    })
-
-    if (!fillResult.ok) {
-      return {
-        ok: false,
-        message: `${mailResult.message}；${fillResult.message}`,
-        targetTab: fillResult.tab
-      }
-    }
-    onProgress?.(fillResult.message)
-
-    const submitResult = await runPageActionInTab(tabId, {
-      button: {
-        texts: OPENAI_CONTINUE_BUTTON_TEXTS,
-        triggerMode: "requestSubmit"
+    return retryVerificationCodeOnInvalidCode({
+      fetchCode: async (excludeCodes) => {
+        const mailResult = await fetchVerificationCode(account, {
+          verificationRequestedAt,
+          excludeCodes
+        })
+        throwIfRunAborted()
+        return mailResult
       },
-      timeoutMs: 15000,
-      successMessage: "已点击注册验证码页继续按钮",
-      failureMessage: "未找到验证码页继续按钮"
-    })
+      buildNoCodeResult: (mailResult, attemptMessages) => {
+        return {
+          ok: false,
+          message: [...attemptMessages, mailResult.message]
+            .filter(Boolean)
+            .join("；"),
+          targetTab: mailResult.mailTab
+        }
+      },
+      submitCode: async (mailResult) => {
+        onProgress?.(mailResult.message)
 
-    if (!submitResult.ok) {
-      return {
-        ok: false,
-        message: `${mailResult.message}；${fillResult.message}；${submitResult.message}`,
-        targetTab: submitResult.tab
+        await chrome.tabs.update(tabId, { active: true })
+        const fillResult = await runPageActionInTab(tabId, {
+          fields: [
+            {
+              selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+              value: mailResult.code,
+              allowSplitInput: true
+            }
+          ],
+          timeoutMs: 15000,
+          successMessage: "已填写注册验证码",
+          failureMessage: "未找到验证码输入框"
+        })
+
+        if (!fillResult.ok) {
+          return {
+            invalidCode: false,
+            result: {
+              ok: false,
+              message: `${mailResult.message}；${fillResult.message}`,
+              targetTab: fillResult.tab
+            }
+          }
+        }
+        onProgress?.(fillResult.message)
+
+        const submitResult = await runPageActionInTab(tabId, {
+          button: {
+            texts: OPENAI_CONTINUE_BUTTON_TEXTS,
+            triggerMode: "requestSubmit"
+          },
+          timeoutMs: 15000,
+          successMessage: "已点击注册验证码页继续按钮",
+          failureMessage: "未找到验证码页继续按钮"
+        })
+
+        if (!submitResult.ok) {
+          return {
+            invalidCode: false,
+            result: {
+              ok: false,
+              message: `${mailResult.message}；${fillResult.message}；${submitResult.message}`,
+              targetTab: submitResult.tab
+            }
+          }
+        }
+        onProgress?.(submitResult.message)
+
+        const submitState = await waitForRegisterEmailVerificationSubmitState(
+          tabId
+        )
+        const currentAttemptMessage = `${mailResult.message}；${fillResult.message}；${submitResult.message}；${submitState.message}`
+
+        return {
+          invalidCode: submitState.state === "verification_invalid_code",
+          attemptMessage: currentAttemptMessage,
+          result: {
+            ok: submitState.state !== "verification_invalid_code",
+            message: currentAttemptMessage,
+            targetTab: {
+              id: tabId,
+              url: submitState.url || submitResult.tab?.url
+            }
+          }
+        }
+      },
+      buildFallbackResult: (attemptMessages) => {
+        return {
+          ok: false,
+          message: attemptMessages.join("；") || "注册验证码提交失败"
+        }
       }
-    }
-    onProgress?.(submitResult.message)
-
-    return {
-      ok: true,
-      message: `${mailResult.message}；${fillResult.message}；${submitResult.message}`,
-      targetTab: submitResult.tab
-    }
+    })
   }
 
   /**
@@ -2242,7 +2372,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             await releaseHeroSmsActivationQuietly(options, activation)
             return {
               ok: false,
-              message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${submitResult.message}；${activationSummary}`,
+              message: `${phonePageResult.message}；HeroSMS 已收到验证码 ${code}；${formatPhoneVerificationPageInjectionMessage(
+                submitResult.message,
+                submitResult.tab?.url
+              )}；${activationSummary}`,
               targetTab: submitResult.tab
             }
           }
@@ -2398,14 +2531,18 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       const currentTab = await chrome.tabs.get(tabId).catch(() => null)
       const errorMessage =
         error instanceof Error ? error.message : "手机号验证流程执行失败"
+      const readableErrorMessage = formatPhoneVerificationPageInjectionMessage(
+        errorMessage,
+        currentTab?.url
+      )
       const activationSummary = activation
         ? formatHeroSmsActivationSummary(activation)
         : ""
       return {
         ok: false,
         message: activationSummary
-          ? `${errorMessage}；${activationSummary}`
-          : errorMessage,
+          ? `${readableErrorMessage}；${activationSummary}`
+          : readableErrorMessage,
         targetTab: {
           id: tabId,
           url: currentTab?.url

@@ -23,6 +23,7 @@ import {
 import { runAuthPageAction } from "../utils/page-action-runner"
 import type { RunContext } from "../utils/run-context"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "../utils/tab-utils"
+import { retryVerificationCodeOnInvalidCode } from "../utils/verification-code-retry"
 import type { ManagedAccount } from "../../shared/account-state"
 
 type OpenCodexAuthLinkOptions = {
@@ -747,22 +748,20 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       }
     }
 
-    const maxAttempts = 2
-    const excludedCodes: string[] = []
-    const attemptMessages: string[] = []
     let latestMailTab: FetchAndSubmitCodexVerificationCodeResponse["mailTab"]
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      throwIfAborted(getAbortSignal())
-      // region ========== 按账号邮箱服务获取验证码 ==========
-      const mailResult = await fetchVerificationCode(account, {
-        verificationRequestedAt,
-        excludeCodes: excludedCodes
-      })
-      latestMailTab = mailResult.mailTab
-      throwIfAborted(getAbortSignal())
-
-      if (!mailResult.code) {
+    return retryVerificationCodeOnInvalidCode({
+      fetchCode: async (excludeCodes) => {
+        throwIfAborted(getAbortSignal())
+        const mailResult = await fetchVerificationCode(account, {
+          verificationRequestedAt,
+          excludeCodes
+        })
+        latestMailTab = mailResult.mailTab
+        throwIfAborted(getAbortSignal())
+        return mailResult
+      },
+      buildNoCodeResult: (mailResult, attemptMessages) => {
         return {
           ok: false,
           message: [...attemptMessages, mailResult.message]
@@ -774,84 +773,84 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
           },
           mailTab: mailResult.mailTab
         }
-      }
-      // endregion
+      },
+      submitCode: async (mailResult) => {
+        // 回到登录页面输入验证码。是否真在验证码页交给输入框和提交后的页面状态判断。
+        await activateBrowserTab(tabId)
+        const result = await runAuthPageAction(tabId, {
+          fields: [
+            {
+              selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
+              value: mailResult.code,
+              allowSplitInput: true
+            }
+          ],
+          button: {
+            texts: OPENAI_VERIFICATION_BUTTON_TEXTS,
+            triggerMode: "requestSubmit"
+          },
+          timeoutMs: 15000,
+          successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
+          failureMessage: CODEX_AUTH_VERIFY_FAILURE_MESSAGE
+        })
 
-      // 回到登录页面输入验证码。是否真在验证码页交给输入框和提交后的页面状态判断。
-      await activateBrowserTab(tabId)
-      const result = await runAuthPageAction(tabId, {
-        fields: [
-          {
-            selectors: OPENAI_VERIFICATION_INPUT_SELECTORS,
-            value: mailResult.code,
-            allowSplitInput: true
+        if (!result.ok) {
+          return {
+            invalidCode: false,
+            result: {
+              ok: false,
+              message: `${mailResult.message}；${result.message}`,
+              targetTab: result.tab,
+              mailTab: mailResult.mailTab
+            }
           }
-        ],
-        button: {
-          texts: OPENAI_VERIFICATION_BUTTON_TEXTS,
-          triggerMode: "requestSubmit"
-        },
-        timeoutMs: 15000,
-        successMessage: CODEX_AUTH_VERIFY_SUCCESS_MESSAGE,
-        failureMessage: CODEX_AUTH_VERIFY_FAILURE_MESSAGE
-      })
+        }
 
-      if (!result.ok) {
+        const submitState = await options.waitForSubmitState(tabId)
+        const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
+
+        if (options.isSubmitSuccess(submitState)) {
+          return {
+            invalidCode: false,
+            result: {
+              ok: true,
+              message: currentAttemptMessage,
+              targetTab: {
+                id: tabId,
+                url: submitState.url || result.tab?.url
+              },
+              mailTab: mailResult.mailTab
+            }
+          }
+        }
+
+        return {
+          invalidCode: submitState.state === "verification_invalid_code",
+          attemptMessage: currentAttemptMessage,
+          result: {
+            ok: false,
+            message: currentAttemptMessage,
+            targetTab: {
+              id: tabId,
+              url: submitState.url || result.tab?.url
+            },
+            mailTab: mailResult.mailTab
+          }
+        }
+      },
+      buildFallbackResult: (attemptMessages) => {
         return {
           ok: false,
-          message: `${mailResult.message}；${result.message}`,
-          targetTab: result.tab,
-          mailTab: mailResult.mailTab
-        }
-      }
-
-      const submitState = await options.waitForSubmitState(tabId)
-      const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
-
-      if (options.isSubmitSuccess(submitState)) {
-        return {
-          ok: true,
-          message: currentAttemptMessage,
+          message: attemptMessages.length
+            ? attemptMessages.join("；")
+            : "验证码提交失败",
           targetTab: {
-            id: tabId,
-            url: submitState.url || result.tab?.url
+            id: tabId
           },
-          mailTab: mailResult.mailTab
+          mailTab: latestMailTab
         }
       }
-
-      if (submitState.state === "verification_invalid_code") {
-        excludedCodes.push(mailResult.code)
-        attemptMessages.push(
-          `${currentAttemptMessage}；已排除本次验证码并准备重新读取`
-        )
-
-        if (attempt < maxAttempts) {
-          continue
-        }
-      }
-
-      return {
-        ok: false,
-        message: currentAttemptMessage,
-        targetTab: {
-          id: tabId,
-          url: submitState.url || result.tab?.url
-        },
-        mailTab: mailResult.mailTab
-      }
-    }
-
-    return {
-      ok: false,
-      message: attemptMessages.length
-        ? attemptMessages.join("；")
-        : "验证码提交失败",
-      targetTab: {
-        id: tabId
-      },
-      mailTab: latestMailTab
-    }
+    })
   }
 
   /**

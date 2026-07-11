@@ -27,6 +27,7 @@ type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys
   log: UiLogger
   setStatus: (status: string) => void
+  stepCount?: number
 }
 
 /**
@@ -39,12 +40,14 @@ type UseAccountPageStateOptions = {
  * @param options.storageKeys 当前功能页使用的本地存储 key。
  * @param options.log 写入侧边栏执行日志的对象。
  * @param options.setStatus 更新顶部状态标签的函数。
+ * @param options.stepCount 当前功能页总步骤数，默认使用登录流程的 6 步。
  * @return 页面组件需要读取和调用的账号状态与操作方法。
  */
 export const useAccountPageState = ({
   storageKeys,
   log,
-  setStatus
+  setStatus,
+  stepCount = STEP_COUNT
 }: UseAccountPageStateOptions) => {
   const setStatusRef = useRef(setStatus)
   const [cpaUrl, setCpaUrlState] = useState("")
@@ -430,6 +433,10 @@ export const useAccountPageState = ({
     )
     let changedCount = 0
     const now = Date.now()
+    const doneProgress = Math.min(
+      Math.max(0, stepCount),
+      STEP_COUNT + 1
+    ) as ManagedAccountProgress
     const nextAccounts: ManagedAccount[] = accounts.map((account) => {
       if (!selectedSet.has(getManagedAccountKey(account))) {
         return account
@@ -438,7 +445,7 @@ export const useAccountPageState = ({
       changedCount += 1
       return {
         ...account,
-        progress: STEP_COUNT as ManagedAccountProgress,
+        progress: doneProgress,
         status: "done" as const,
         lastMessage: "已手动标为已完成",
         updatedAt: now

@@ -68,12 +68,8 @@ export const createDuckEmailRunner = (context: RunContext = {}) => {
     const tabId = await findOrOpenMatchedTab({
       targetUrl: DUCK_EMAIL_AUTOFILL_URL,
       errorMessage: "无法打开 DuckDuckGo 邮箱生成页面",
-      matcher: (tab) => isDuckEmailAutofillUrl(tab.url)
-    })
-
-    await chrome.tabs.update(tabId, {
-      active: true,
-      url: DUCK_EMAIL_AUTOFILL_URL
+      matcher: (tab) => isDuckEmailAutofillUrl(tab.url),
+      navigateMatchedTab: false
     })
     await waitForTabLoaded(tabId)
     throwIfAborted(getAbortSignal())

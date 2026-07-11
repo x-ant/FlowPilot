@@ -142,7 +142,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
     storageKeys: REGISTER_STORAGE_KEYS,
     log,
-    setStatus
+    setStatus,
+    stepCount: REGISTER_STEP_COUNT
   })
   const {
     accounts,
@@ -288,6 +289,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   useEffect(() => {
     setRunningEmail(isBatchRunning ? registerRunLock?.currentEmail || "" : "")
   }, [isBatchRunning, registerRunLock?.currentEmail, setRunningEmail])
+
+  useEffect(() => {
+    if (!isBatchRunning) {
+      setIsBatchStopping(false)
+      setIsStopStrategyModalOpen(false)
+    }
+  }, [isBatchRunning])
 
   const handleOpenRegisterEntry = async () => {
     if (isDebugRunning) {
@@ -742,14 +750,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         oauthAttemptCount += 1
-        setStatus("OAuth 时间不足，正在重新执行 Step 5")
+        setStatus("正在重新执行 Step 5")
         log.warn(
           `[注册调试][${accountLabel}] ${result.message}；正在重新执行 Step 5（OAuth URL ${oauthAttemptCount}/${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS}）`
         )
         patchAccountState(accountKey, {
           progress: 5,
           status: "running",
-          lastMessage: "OAuth 时间不足，正在重新执行 Step 5"
+          lastMessage: "正在重新执行 Step 5"
         })
 
         const refreshResult = await refreshRegisterOAuthAndLogin(
@@ -1109,12 +1117,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
       setStatus(response.message)
       log[response.ok ? "info" : "warn"](response.message)
+      if (!response.ok) {
+        setIsBatchStopping(false)
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "发送停止请求失败"
       setStatus("发送停止请求失败")
       log.warn(message)
-    } finally {
       setIsBatchStopping(false)
     }
   }
@@ -1204,6 +1214,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           <Button
             key="immediate"
             danger
+            disabled={isBatchStopping}
+            loading={isBatchStopping}
             onClick={() => {
               handleChooseStopStrategy("immediate")
             }}>
@@ -1211,6 +1223,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           </Button>,
           <Button
             key="after-phone"
+            disabled={isBatchStopping}
             onClick={() => {
               handleChooseStopStrategy("after_phone")
             }}>
@@ -1219,6 +1232,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           <Button
             key="finish"
             type="primary"
+            disabled={isBatchStopping}
             onClick={() => {
               handleChooseStopStrategy("finish_current_if_phone_success")
             }}>

@@ -158,6 +158,8 @@ export function AccountListPanel({
             const statusMeta = STATUS_META[account.status]
             const accountKey = getManagedAccountKey(account)
             const accountLabel = getManagedAccountLabel(account)
+            const displayProgress =
+              account.status === "done" ? stepCount : account.progress
             return (
               <div
                 className={`account-row account-row--${account.status} ${
@@ -185,7 +187,7 @@ export function AccountListPanel({
                       <Tag variant="filled">
                         {getManagedAccountProviderLabel(account)}
                       </Tag>
-                      <Tag variant="filled">{`${account.progress}/${stepCount}`}</Tag>
+                      <Tag variant="filled">{`${displayProgress}/${stepCount}`}</Tag>
                       <Tag variant="filled" color={statusMeta.color}>
                         {statusMeta.label}
                       </Tag>

@@ -118,39 +118,36 @@ export const pollMail163VerificationCodeInPage = async (
     return true
   }
   /**
-   * 点击 163 邮箱左侧收件箱入口。
+   * 查找 163 邮箱列表里的任意邮件行。
    *
-   * @return 找到并点击收件箱时返回 true。
+   * @return 可见邮件行元素列表。
    */
-  const clickInbox = () => {
-    const inbox = Array.from(
-      document.querySelectorAll(
-        ".nui-tree-item-text[title='收件箱'], [title='收件箱'], a, button, [role='button']"
-      )
-    ).find((element) => {
-      return isVisible(element) && /收件箱|inbox/i.test(getText(element))
-    })
-    return clickElement(inbox || null)
-  }
-  /**
-   * 刷新 163 收件箱列表。
-   *
-   * 优先点击页面刷新按钮；找不到按钮时使用页面刷新兜底。
-   *
-   * @return 刷新动作和短暂等待完成后 resolve。
-   */
-  const refreshInbox = async () => {
-    const refreshButton = Array.from(
-      document.querySelectorAll("button, a, [role='button'], .nui-btn")
-    ).find((element) => {
-      return isVisible(element) && /^刷新$|refresh/i.test(getText(element).replace(/\s/g, ""))
-    })
-    if (clickElement(refreshButton || null)) {
-      await wait(1200)
-      return
+  const findVisibleMailRows = () => {
+    const selectors = [
+      "div[sign='letter']",
+      "[role='option'][aria-label]",
+      "[role='listitem'][aria-label]",
+      "tr[aria-label]",
+      "li[aria-label]",
+      "div[aria-label]"
+    ]
+    const rows: HTMLElement[] = []
+    const seen = new Set<Element>()
+    for (const selector of selectors) {
+      for (const item of Array.from(document.querySelectorAll(selector))) {
+        if (seen.has(item) || !isVisible(item)) {
+          continue
+        }
+        const text = getText(item)
+        if (!text) {
+          continue
+        }
+        seen.add(item)
+        rows.push(item as HTMLElement)
+      }
     }
-    window.location.reload()
-    await wait(2500)
+
+    return rows
   }
   /**
    * 查找 163 邮箱列表里的验证码候选邮件。
@@ -183,6 +180,56 @@ export const pollMail163VerificationCodeInPage = async (
     return items
   }
   /**
+   * 等待 163 邮件列表出现。
+   *
+   * 这里只判断刷新动作是否让邮件列表可读，不主动切换 URL。
+   *
+   * @param timeout 最大等待时间，单位毫秒。
+   * @return 列表出现时返回 true。
+   */
+  const waitForMailListReady = async (timeout = 8000) => {
+    const started = Date.now()
+    while (Date.now() - started <= timeout) {
+      if (findVisibleMailRows().length > 0) {
+        return true
+      }
+
+      await wait(300)
+    }
+
+    return false
+  }
+  /**
+   * 点击 163 左上角“收信”按钮。
+   *
+   * “收信”按钮兼具进入收件箱和刷新列表的作用，所以首次进入和后续轮询
+   * 都复用这一条路径。
+   *
+   * @return 找到并点击“收信”按钮时返回 true。
+   */
+  const clickReceiveMail = () => {
+    const receiveButton = Array.from(
+      document.querySelectorAll("li[role='button'], .ra0, button, a, [role='button']")
+    ).find((element) => {
+      return isVisible(element) && /收\s*信|receive/i.test(getText(element))
+    })
+    return clickElement(receiveButton || null)
+  }
+  /**
+   * 刷新 163 收件箱列表。
+   *
+   * @return 刷新动作和等待列表完成后 resolve。
+   */
+  const refreshInbox = async () => {
+    if (!clickReceiveMail()) {
+      lastMessage = "未找到 163 邮箱“收信”按钮"
+      await wait(1200)
+      return
+    }
+
+    await waitForMailListReady(12000)
+  }
+  /**
    * 从邮件列表文本或正文里提取 6 位验证码。
    *
    * @param text 邮件列表行或邮件正文文本。
@@ -191,7 +238,7 @@ export const pollMail163VerificationCodeInPage = async (
   const extractVerificationCode = (text: string) => {
     const normalized = normalizeText(text)
     const labeledMatch = normalized.match(
-      /(?:verification\s+code|temporary\s+verification\s+code|your\s+chatgpt\s+code|login\s+code|one[-\s]*time\s+code|验证码|登录验证码|代码为)[^\d]{0,30}(\d{6})/i
+      /(?:login\s+code|log-in\s+code|verification\s+code|temporary\s+verification\s+code|your\s+chatgpt\s+code|one[-\s]*time\s+code|passcode|验证码|登录验证码|代码为|認証コード|確認コード)[^\d]{0,30}(\d{6})/i
     )
     if (labeledMatch?.[1]) {
       return labeledMatch[1]
@@ -278,27 +325,35 @@ export const pollMail163VerificationCodeInPage = async (
     return texts.sort((left, right) => right.length - left.length)
   }
   /**
-   * 打开候选邮件并从详情正文读取验证码。
+   * 打开候选邮件并读取详情正文。
    *
    * @param item 要打开的邮件列表行。
-   * @return 读取到的验证码；未找到时返回空字符串。
+   * @return 邮件正文文本和从正文中提取到的验证码。
    */
-  const openMailAndReadCode = async (item: HTMLElement) => {
+  const openMailAndRead = async (item: HTMLElement) => {
     item.click()
+    let openedText = ""
     for (let index = 0; index < 20; index += 1) {
       await wait(250)
       for (const text of collectOpenedMailText()) {
+        if (text.length > openedText.length) {
+          openedText = text
+        }
         const code = extractVerificationCode(text)
         if (code) {
-          clickInbox()
-          await wait(500)
-          return code
+          await refreshInbox()
+          return {
+            text,
+            code
+          }
         }
       }
     }
-    clickInbox()
-    await wait(500)
-    return ""
+    await refreshInbox()
+    return {
+      text: openedText,
+      code: ""
+    }
   }
   /**
    * 判断邮件文本是否属于当前 OpenAI 目标邮箱。
@@ -322,9 +377,6 @@ export const pollMail163VerificationCodeInPage = async (
     return normalized.includes(targetEmail) || Boolean(duckForwardHint && normalized.includes(duckForwardHint))
   }
 
-  clickInbox()
-  await wait(1000)
-
   while (Date.now() - startedAt <= timeoutMs) {
     await refreshInbox()
     const items = findMailItems()
@@ -339,13 +391,16 @@ export const pollMail163VerificationCodeInPage = async (
         lastMessage = "跳过非验证码邮件"
         continue
       }
-      if (!includesTargetEmail(text)) {
+      let code = extractVerificationCode(text)
+      let openedText = ""
+      if (!code || !includesTargetEmail(text)) {
+        const openedMail = await openMailAndRead(item)
+        openedText = openedMail.text
+        code = code || openedMail.code
+      }
+      if (!includesTargetEmail(`${text} ${openedText}`)) {
         lastMessage = `跳过非当前账号邮件（目标 ${targetEmail}）`
         continue
-      }
-      let code = extractVerificationCode(text)
-      if (!code) {
-        code = await openMailAndReadCode(item)
       }
       if (!code) {
         lastMessage = "候选邮件未提取到验证码"
