@@ -73,18 +73,18 @@ export type AccountRunResult = {
 export const STEP_COUNT = 6
 
 export const LOGIN_STORAGE_KEYS: AccountPageStorageKeys = {
-  cpaUrl: "codex-login:cpa-url",
-  cpaManagementKey: "codex-login:cpa-management-key",
-  accounts: "codex-login:accounts"
+  cpaUrl: "flowpilot:login:cpa-url",
+  cpaManagementKey: "flowpilot:login:cpa-management-key",
+  accounts: "flowpilot:login:accounts"
 }
 export const REGISTER_STORAGE_KEYS: AccountPageStorageKeys = {
-  cpaUrl: "codex-register:cpa-url",
-  cpaManagementKey: "codex-register:cpa-management-key",
-  accounts: "codex-register:accounts"
+  cpaUrl: "flowpilot:register:cpa-url",
+  cpaManagementKey: "flowpilot:register:cpa-management-key",
+  accounts: "flowpilot:register:accounts"
 }
-export const REGISTER_ALARM_NAME = "codex-register:auto-run"
-export const REGISTER_ALARM_STORAGE_KEY = "codex-register:alarm-config"
-export const REGISTER_RUN_LOCK_STORAGE_KEY = "codex-register:run-lock"
+export const REGISTER_ALARM_NAME = "flowpilot:register:auto-run"
+export const REGISTER_ALARM_STORAGE_KEY = "flowpilot:register:alarm-config"
+export const REGISTER_RUN_LOCK_STORAGE_KEY = "flowpilot:register:run-lock"
 export const REGISTER_RUN_LOCK_STALE_MS = 2 * 60 * 60 * 1000
 export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
   enabled: false,

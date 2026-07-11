@@ -1,8 +1,8 @@
 {
-  "name": "codex-login",
-  "displayName": "Codex login",
+  "name": "flowpilot",
+  "displayName": "FlowPilot",
   "version": "0.0.1",
-  "description": "Codex login extension for local learning and personal use",
+  "description": "个人本地使用的账号登录、注册和验证流程自动化侧边栏工具",
   "author": "xuhq",
   "scripts": {
     "dev": "plasmo dev",
@@ -40,7 +40,7 @@
       "https://*/*"
     ],
     "action": {
-      "default_title": "Codex login"
+      "default_title": "FlowPilot"
     }
   }
 }

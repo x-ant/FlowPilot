@@ -73,7 +73,7 @@ export const pollMail2925VerificationCodeInPage = async (
             extra
           }
 
-    console.info(`[codex-login][2925验证码] ${message}`, logExtra)
+    console.info(`[flowpilot][2925验证码] ${message}`, logExtra)
   }
   const wait = (timeout: number) => {
     return new Promise<void>((resolve) => {

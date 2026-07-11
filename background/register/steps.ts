@@ -1092,12 +1092,12 @@ const detectRegisterEmailSubmittedInPage = () => {
 }
 
 /**
- * 创建 codex-register 调试流程 runner。
+ * 创建 FlowPilot 注册调试流程 runner。
  *
  * runner 中每个方法对应一个注册/登录原子步骤，侧边栏调试按钮直接调用这些方法。
  *
  * @param context 当前运行上下文，主要用于中断信号。
- * @return codex-register 各步骤的执行函数集合。
+ * @return FlowPilot 注册流程各步骤的执行函数集合。
  */
 export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const { fetchMail2925VerificationCode } = createMail2925Runner(context)
@@ -2556,7 +2556,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   /**
    * Step 7：把注册 OAuth 回调地址提交回 CPA。
    *
-   * 复用 codex-login 的最后一步，只负责把 Step 6 成功后的 localhost 回调地址
+   * 复用登录流程的最后一步，只负责把 Step 6 成功后的 localhost 回调地址
    * 回填给 CPA 管理接口。
    *
    * @param targetUrl CPA OAuth 页面地址。

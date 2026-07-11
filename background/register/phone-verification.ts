@@ -340,7 +340,7 @@ const logHeroSmsRawSample = (
   actionLabel: string,
   details: Record<string, unknown>
 ) => {
-  console.info(`[codex-login][HeroSMS raw][${phase}] ${actionLabel}`, details)
+  console.info(`[flowpilot][HeroSMS raw][${phase}] ${actionLabel}`, details)
 }
 
 const logHeroSmsProgress = (

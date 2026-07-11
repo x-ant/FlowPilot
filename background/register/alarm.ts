@@ -25,7 +25,7 @@ import {
   type RegisterStopStrategy
 } from "./batch-runner"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
-const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
+const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
 
 const log = createConsoleLogger("register-alarm")
 
@@ -574,7 +574,7 @@ export const setupRegisterAlarm = () => {
     }
   })
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "codex-register:alarm-save") {
+    if (message?.type === "flowpilot:register:alarm-save") {
       void (async () => {
         const config = normalizeRegisterAlarmConfig(message.config)
         await saveRegisterAlarmConfig(config)
@@ -588,7 +588,7 @@ export const setupRegisterAlarm = () => {
       return true
     }
 
-    if (message?.type === "codex-register:alarm-run-now") {
+    if (message?.type === "flowpilot:register:alarm-run-now") {
       void runRegisterAlarmNow("手动测试")
       sendResponse({
         ok: true,
@@ -597,7 +597,7 @@ export const setupRegisterAlarm = () => {
       return true
     }
 
-    if (message?.type === "codex-register:batch-start") {
+    if (message?.type === "flowpilot:register:batch-start") {
       void (async () => {
         const selectedEmails = Array.isArray(message.selectedEmails)
           ? message.selectedEmails.map((email: unknown) => String(email))
@@ -613,7 +613,7 @@ export const setupRegisterAlarm = () => {
       return true
     }
 
-    if (message?.type === "codex-register:batch-stop") {
+    if (message?.type === "flowpilot:register:batch-stop") {
       void (async () => {
         const strategy: RegisterStopStrategy =
           message.strategy === "after_phone" ||
@@ -625,7 +625,7 @@ export const setupRegisterAlarm = () => {
       return true
     }
 
-    if (message?.type === "codex-register:run-status") {
+    if (message?.type === "flowpilot:register:run-status") {
       void (async () => {
         sendResponse({
           ok: true,
@@ -635,7 +635,7 @@ export const setupRegisterAlarm = () => {
       return true
     }
 
-    if (message?.type === "codex-register:clear-run-lock") {
+    if (message?.type === "flowpilot:register:clear-run-lock") {
       void (async () => {
         sendResponse(await clearStaleRegisterRunLock())
       })()

@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-- 项目名称：codex-login。
+- 项目名称：FlowPilot。
 - 项目类型：Chrome 浏览器扩展 / Plasmo extension。
 - 开发环境：Windows。
 - 前端：React 18 + TypeScript + Ant Design。
@@ -15,8 +15,8 @@
 ## 当前功能范围
 
 - 侧边栏包含两个功能页：
-  - `codex-login`：批量登录已有账号。
-  - `codex-register`：批量注册账号，并支持后台自动触发。
+  - 登录流程：批量登录已有账号。
+  - 注册流程：批量注册账号，并支持后台自动触发。
 - 两个功能页复用同一套账号管理组件：
   - 添加、编辑、删除账号。
   - 多选账号。
@@ -57,16 +57,16 @@
 - `sidepanel.tsx`：侧边栏总入口，负责页面切换、顶部状态和执行日志。
 - `sidepanel/shared.ts`：侧边栏共享类型、存储 key、账号规范化和进度工具。
 - `sidepanel/account-management/`：登录页和注册页复用的账号列表、账号表单、账号状态 hook。
-- `sidepanel/CodexLoginPage.tsx`：登录页 UI、批量登录和登录调试步骤。
-- `sidepanel/CodexRegisterPage.tsx`：注册页 UI、注册调试步骤、自动触发配置入口。
+- `sidepanel/pages/CodexLoginPage.tsx`：登录页 UI、批量登录和登录调试步骤。
+- `sidepanel/pages/CodexRegisterPage.tsx`：注册页 UI、注册调试步骤、自动触发配置入口。
 - `sidepanel/cpa-config/`：CPA 地址和管理密钥表单。
 - `sidepanel/hero-sms-config/`：HeroSMS 接码配置。
-- `background/codex-login.ts`：登录流程的后台步骤。
-- `background/codex-register.ts`：注册流程的后台步骤。
-- `background/register-batch-runner.ts`：注册批量执行器，供后台自动任务复用。
-- `background/register-alarm.ts`：注册自动触发、任务锁和后台消息处理。
-- `background/mail-2925.ts`、`background/mail-2925-page-*`：2925 邮箱登录和验证码读取。
-- `background/register-phone-verification.ts`：HeroSMS 买号、验证码轮询和手机号验证。
+- `background/login/steps.ts`：登录流程的后台步骤。
+- `background/register/steps.ts`：注册流程的后台步骤。
+- `background/register/batch-runner.ts`：注册批量执行器，供后台自动任务复用。
+- `background/register/alarm.ts`：注册自动触发、任务锁和后台消息处理。
+- `background/integrations/mail-2925.ts`、`background/integrations/mail-2925-page-*`：2925 邮箱登录和验证码读取。
+- `background/register/phone-verification.ts`：HeroSMS 买号、验证码轮询和手机号验证。
 - `background/utils/`：标签页、页面注入、会话清理、取消执行等小工具。
 - `shared/logging.ts`：UI 日志和 console 日志工具。
 
@@ -123,9 +123,9 @@ npm run build
 1. `sidepanel.tsx`：理解侧边栏如何组织页面和日志。
 2. `sidepanel/shared.ts`：理解账号状态、存储 key 和进度模型。
 3. `sidepanel/account-management/useAccountPageState.ts`：理解账号增删改查和本地保存。
-4. `sidepanel/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
-5. `background/codex-login.ts`：理解登录流程每一步做什么。
-6. `sidepanel/CodexRegisterPage.tsx` 和 `background/register-batch-runner.ts`：理解注册页面和后台批量任务如何分工。
+4. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
+5. `background/login/steps.ts`：理解登录流程每一步做什么。
+6. `sidepanel/pages/CodexRegisterPage.tsx` 和 `background/register/batch-runner.ts`：理解注册页面和后台批量任务如何分工。
 
 ## 协作者背景
 

@@ -8,11 +8,11 @@ import {
 } from "../../background/register/phone-verification"
 import type { UiLogger } from "../../shared/logging"
 
-const REGISTER_HERO_SMS_STORAGE_KEY = "codex-register:hero-sms-settings"
+const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
 const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
-  "codex-register:hero-sms-countries-cache"
+  "flowpilot:register:hero-sms-countries-cache"
 const REGISTER_HERO_SMS_OPERATORS_CACHE_KEY =
-  "codex-register:hero-sms-operators-cache"
+  "flowpilot:register:hero-sms-operators-cache"
 const HERO_SMS_COUNTRIES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const HERO_SMS_OPERATORS_CACHE_TTL_MS = 60 * 60 * 1000
 

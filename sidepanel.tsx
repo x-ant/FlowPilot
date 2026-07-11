@@ -50,7 +50,7 @@ import { getStorage } from "./shared/account-state"
  * @return 侧边栏 React 页面。
  */
 function SidePanel() {
-  const [activePage, setActivePage] = useState<FlowPage>("codex-login")
+  const [activePage, setActivePage] = useState<FlowPage>("flowpilot-login")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
   const [logsLoaded, setLogsLoaded] = useState(false)
@@ -138,9 +138,11 @@ function SidePanel() {
       })
     })
   }, [appendLogToStorage])
+  const activePageLabel = useMemo(() => {
+    return activePage === "flowpilot-register" ? "注册流程" : "登录流程"
+  }, [activePage])
   const scopedLog = useMemo(() => {
-    const prefix =
-      activePage === "codex-register" ? "[codex-register]" : "[codex-login]"
+    const prefix = activePage === "flowpilot-register" ? "[注册流程]" : "[登录流程]"
 
     return createUiLogger((level, message) => {
       log[level](`${prefix} ${message}`)
@@ -175,9 +177,9 @@ function SidePanel() {
       [ACTIVE_PAGE_STORAGE_KEY, EXECUTION_LOG_STORAGE_KEY],
       (result) => {
         setActivePage(
-          result?.[ACTIVE_PAGE_STORAGE_KEY] === "codex-register"
-            ? "codex-register"
-            : "codex-login"
+          result?.[ACTIVE_PAGE_STORAGE_KEY] === "flowpilot-register"
+            ? "flowpilot-register"
+            : "flowpilot-login"
         )
         setLogs(normalizeStoredLogs(result?.[EXECUTION_LOG_STORAGE_KEY]))
         setLogsLoaded(true)
@@ -221,12 +223,12 @@ function SidePanel() {
    */
   const handleActivePageChange = (value: string) => {
     const nextPage: FlowPage =
-      value === "codex-register" ? "codex-register" : "codex-login"
+      value === "flowpilot-register" ? "flowpilot-register" : "flowpilot-login"
     setActivePage(nextPage)
     getStorage()?.set({
       [ACTIVE_PAGE_STORAGE_KEY]: nextPage
     })
-    setStatus(nextPage === "codex-register" ? "已打开注册页" : "已打开登录页")
+    setStatus(nextPage === "flowpilot-register" ? "已打开注册页" : "已打开登录页")
   }
 
   /**
@@ -315,8 +317,8 @@ function SidePanel() {
       <main className="sidepanel-shell">
         <header className="panel-header">
           <div className="brand-block">
-            <h1 className="brand-title">{activePage}</h1>
-            <p className="brand-subtitle">多账号登录助手</p>
+            <h1 className="brand-title">FlowPilot</h1>
+            <p className="brand-subtitle">{activePageLabel} · 本地账号流程助手</p>
           </div>
           <Tag color="processing">{status}</Tag>
         </header>
@@ -333,7 +335,7 @@ function SidePanel() {
             onChange={handleActivePageChange}
           />
 
-          {activePage === "codex-register" ? (
+          {activePage === "flowpilot-register" ? (
             <CodexRegisterPage
               log={scopedLog}
               setStatus={setStatus}

@@ -218,7 +218,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       const response = await sendRegisterAlarmMessage<
         RegisterRunStatus & { ok: boolean }
       >({
-        type: "codex-register:run-status"
+        type: "flowpilot:register:run-status"
       })
       setRegisterRunStatus({
         lock: response.lock,
@@ -886,7 +886,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         message: string
         config?: RegisterAlarmConfig
       }>({
-        type: "codex-register:alarm-save",
+        type: "flowpilot:register:alarm-save",
         config: nextConfig
       })
       const savedConfig = normalizeRegisterAlarmConfig(
@@ -918,7 +918,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ok: boolean
         message: string
       }>({
-        type: "codex-register:alarm-run-now"
+        type: "flowpilot:register:alarm-run-now"
       })
       setStatus(response.message)
       log.info(response.message)
@@ -939,7 +939,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ok: boolean
         message: string
       }>({
-        type: "codex-register:clear-run-lock"
+        type: "flowpilot:register:clear-run-lock"
       })
       setStatus(response.message)
       log[response.ok ? "info" : "warn"](response.message)
@@ -1020,7 +1020,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ok: boolean
         message: string
       }>({
-        type: "codex-register:batch-start",
+        type: "flowpilot:register:batch-start",
         selectedEmails
       })
       setStatus(response.message)
@@ -1046,7 +1046,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         ok: boolean
         message: string
       }>({
-        type: "codex-register:batch-stop",
+        type: "flowpilot:register:batch-stop",
         strategy
       })
       setStatus(response.message)
