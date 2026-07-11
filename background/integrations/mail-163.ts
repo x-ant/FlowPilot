@@ -27,7 +27,34 @@ export type FetchMail163VerificationCodeOptions = {
  */
 const isMail163Url = (rawUrl?: string) => {
   try {
-    return new URL(String(rawUrl || "")).hostname.toLowerCase() === MAIL163_HOSTNAME
+    return (
+      new URL(String(rawUrl || "")).hostname.toLowerCase() === MAIL163_HOSTNAME
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 判断 163 标签页是否已经是收件箱列表。
+ *
+ * 163 已登录后的收件箱也会使用 `/js6/main.jsp`，需要优先识别
+ * `mbox.ListModule`，避免把真实收件箱误判为登录页。
+ *
+ * @param rawUrl 标签页当前 URL。
+ * @return URL 指向 163 收件箱列表时返回 true。
+ */
+const isMail163InboxUrl = (rawUrl?: string) => {
+  try {
+    const url = new URL(String(rawUrl || ""))
+    if (url.hostname.toLowerCase() !== MAIL163_HOSTNAME) {
+      return false
+    }
+
+    return (
+      url.pathname.startsWith("/js6/main.jsp") &&
+      decodeURIComponent(url.hash || "").includes("mbox.ListModule")
+    )
   } catch {
     return false
   }
@@ -49,7 +76,11 @@ const isMail163LoginUrl = (rawUrl?: string) => {
       return false
     }
 
-    return url.pathname === "/" || url.pathname.startsWith("/js6/main.jsp")
+    if (isMail163InboxUrl(rawUrl)) {
+      return false
+    }
+
+    return url.pathname === "/"
   } catch {
     return false
   }
