@@ -92,6 +92,15 @@ export const useAccountPageState = ({
     persistState(cpaUrl, accounts, nextCpaManagementKey)
   }
 
+  const setCpaConfig = (
+    nextCpaUrl: string,
+    nextCpaManagementKey: string
+  ) => {
+    setCpaUrlState(nextCpaUrl)
+    setCpaManagementKeyState(nextCpaManagementKey)
+    persistState(nextCpaUrl, accounts, nextCpaManagementKey)
+  }
+
   const setAccounts = (
     nextValue:
       | ManagedAccount[]
@@ -185,6 +194,13 @@ export const useAccountPageState = ({
 
   const handleCpaManagementKeyChange = (nextCpaManagementKey: string) => {
     setCpaManagementKey(nextCpaManagementKey)
+  }
+
+  const handleCpaConfigChange = (
+    nextCpaUrl: string,
+    nextCpaManagementKey: string
+  ) => {
+    setCpaConfig(nextCpaUrl, nextCpaManagementKey)
   }
 
   /**
@@ -411,6 +427,7 @@ export const useAccountPageState = ({
     isSomeAccountsSelected,
     setCpaUrl,
     setCpaManagementKey,
+    setCpaConfig,
     setAccounts,
     syncAccounts,
     setRunningEmail,
@@ -419,6 +436,7 @@ export const useAccountPageState = ({
     resetManagedAccountState,
     handleCpaUrlChange,
     handleCpaManagementKeyChange,
+    handleCpaConfigChange,
     handleSubmitAccount,
     handleEditAccount,
     handleCancelEdit,

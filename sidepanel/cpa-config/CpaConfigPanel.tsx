@@ -7,16 +7,14 @@ type CpaConfigPanelProps = {
   cpaUrl: string
   cpaManagementKey: string
   disabled: boolean
-  onCpaUrlChange: (cpaUrl: string) => void
-  onCpaManagementKeyChange: (cpaManagementKey: string) => void
+  onCpaConfigChange: (cpaUrl: string, cpaManagementKey: string) => void
 }
 
 export function CpaConfigPanel({
   cpaUrl,
   cpaManagementKey,
   disabled,
-  onCpaUrlChange,
-  onCpaManagementKeyChange
+  onCpaConfigChange
 }: CpaConfigPanelProps) {
   const [form] = Form.useForm<LoginFormValues>()
 
@@ -31,14 +29,17 @@ export function CpaConfigPanel({
         {
           key: "cpa",
           label: "CPA 地址",
+          forceRender: true,
           children: (
             <Form
               form={form}
               layout="vertical"
               requiredMark={false}
               onValuesChange={(_, values) => {
-                onCpaUrlChange(String(values.cpaUrl || ""))
-                onCpaManagementKeyChange(String(values.cpaManagementKey || ""))
+                onCpaConfigChange(
+                  String(values.cpaUrl || ""),
+                  String(values.cpaManagementKey || "")
+                )
               }}>
               <Form.Item
                 label="CPA 地址"

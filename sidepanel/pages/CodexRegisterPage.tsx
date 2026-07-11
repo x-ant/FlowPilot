@@ -1268,7 +1268,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             ),
             children: (
               <div className="debug-panel">
-                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Space
+                  orientation="vertical"
+                  size={12}
+                  style={{ width: "100%" }}>
                   <Space size={12} wrap>
                     <Switch
                       checked={alarmConfig.enabled}
@@ -1374,8 +1377,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         cpaUrl={cpaUrl}
         cpaManagementKey={cpaManagementKey}
         disabled={disabled}
-        onCpaUrlChange={accountPage.handleCpaUrlChange}
-        onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
+        onCpaConfigChange={accountPage.handleCpaConfigChange}
       />
 
       <AccountFormPanel accountPage={accountPage} disabled={disabled} />

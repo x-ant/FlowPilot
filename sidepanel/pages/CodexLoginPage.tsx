@@ -743,8 +743,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         cpaUrl={cpaUrl}
         cpaManagementKey={cpaManagementKey}
         disabled={disabled}
-        onCpaUrlChange={accountPage.handleCpaUrlChange}
-        onCpaManagementKeyChange={accountPage.handleCpaManagementKeyChange}
+        onCpaConfigChange={accountPage.handleCpaConfigChange}
       />
 
       <AccountFormPanel accountPage={accountPage} disabled={disabled} />

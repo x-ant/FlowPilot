@@ -66,6 +66,7 @@ export function AccountFormPanel({
         {
           key: ACCOUNT_PANEL_KEY,
           label: "账号管理",
+          forceRender: true,
           children: (
             <Form
               form={form}
