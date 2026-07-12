@@ -431,31 +431,39 @@ const startRegisterBatchJob = async ({
 
 export const runRegisterAlarmNow = async (source = "alarm") => {
   const config = await getRegisterAlarmConfig()
-  await writeRegisterExecutionLog("info", `自动注册已触发：${source}`)
-  await patchAlarmConfig({
-    lastTriggeredAt: Date.now(),
-    lastMessage: `自动注册已触发：${source}`
-  })
+  const isScheduledAlarm = source === "alarm"
+  const triggerLabel = isScheduledAlarm ? "自动注册" : "单次注册"
+  await writeRegisterExecutionLog("info", `${triggerLabel}已触发：${source}`)
+  if (isScheduledAlarm) {
+    await patchAlarmConfig({
+      lastTriggeredAt: Date.now(),
+      lastMessage: `${triggerLabel}已触发：${source}`
+    })
+  }
 
   try {
     const result = await startRegisterBatchJob({
-      source: "alarm",
+      source: isScheduledAlarm ? "alarm" : "manual",
       selectedEmails: config.selectedEmails,
       targetAllWhenNoSelection: true,
-      triggerLabel: "自动注册"
+      triggerLabel
     })
-    await patchAlarmConfig({
-      lastMessage: result.message
-    })
+    if (isScheduledAlarm) {
+      await patchAlarmConfig({
+        lastMessage: result.message
+      })
+    }
     if (!result.ok && config.enabled && config.mode === "daily") {
       await scheduleRegisterAlarm()
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "自动注册执行失败"
+    const message = error instanceof Error ? error.message : `${triggerLabel}执行失败`
     log.warn(message)
-    await patchAlarmConfig({
-      lastMessage: message
-    })
+    if (isScheduledAlarm) {
+      await patchAlarmConfig({
+        lastMessage: message
+      })
+    }
     if (config.enabled && config.mode === "daily") {
       await scheduleRegisterAlarm()
     }
@@ -592,7 +600,7 @@ export const setupRegisterAlarm = () => {
       void runRegisterAlarmNow("手动测试")
       sendResponse({
         ok: true,
-        message: "已触发自动注册测试"
+        message: "已触发单次注册"
       })
       return true
     }

@@ -960,8 +960,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       log.info(response.message)
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "触发自动注册测试失败"
-      setStatus("触发自动注册测试失败")
+        error instanceof Error ? error.message : "触发单次注册失败"
+      setStatus("触发单次注册失败")
       log.warn(message)
     } finally {
       setIsAlarmTesting(false)

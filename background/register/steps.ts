@@ -704,6 +704,20 @@ const submitRegisterProfileInPage = (
   }
 
   /**
+   * 按上下文语义查找第一个可操作输入控件。
+   *
+   * @param predicate 字段语义判断函数。
+   * @return 命中的输入控件；找不到返回 undefined。
+   */
+  const findInputByContext = (predicate: (element: Element) => boolean) => {
+    return Array.from(
+      document.querySelectorAll("input,[role='spinbutton']")
+    ).find((element) => {
+      return !isUnavailable(element) && predicate(element)
+    }) as HTMLElement | undefined
+  }
+
+  /**
    * 用原生 setter 写入 input/select 的值，并派发 React 能感知的事件。
    *
    * @param input 要写入的输入框或下拉框。
@@ -896,6 +910,17 @@ const submitRegisterProfileInPage = (
   }
 
   /**
+   * 判断输入框是否是“年龄”单字段。
+   *
+   * @param element 候选输入控件。
+   * @return 命中年龄语义时返回 true。
+   */
+  const isAgeInput = (element: Element) => {
+    const text = getFieldContextText(element)
+    return !isBirthYearInput(element) && /年龄|你的年龄是多少|howold|age/.test(text)
+  }
+
+  /**
    * 兼容多种生日字段结构，优先填写显式年月日，其次写隐藏 birthday 字段。
    *
    * @return 成功填写的字段类型描述；找不到返回 undefined。
@@ -1080,14 +1105,8 @@ const submitRegisterProfileInPage = (
     await fillField(nameInput, fullName)
 
     const profileMode = await waitFor(async () => {
-      const birthdayMode = await fillBirthdayField()
-      if (birthdayMode) {
-        return birthdayMode
-      }
-
       const ageInput = findInput([
         "input[name='age']",
-        "input[type='number']",
         "input[placeholder*='年龄']",
         "input[placeholder*='age' i]",
         "input[aria-label*='年龄']",
@@ -1098,7 +1117,32 @@ const submitRegisterProfileInPage = (
         return "年龄字段"
       }
 
-      return undefined
+      const contextAgeInput = findInputByContext(isAgeInput)
+      if (contextAgeInput) {
+        await fillField(contextAgeInput, String(age))
+        return "年龄字段"
+      }
+
+      const contextBirthYearInput = findInputByContext(isBirthYearInput)
+      if (contextBirthYearInput) {
+        await fillField(contextBirthYearInput, getBirthdayFromAge().year)
+        return "出生年份字段"
+      }
+
+      const numberInput = findInput(["input[type='number']"])
+      if (numberInput) {
+        if (isBirthYearInput(numberInput)) {
+          await fillField(numberInput, getBirthdayFromAge().year)
+          return "出生年份字段"
+        }
+
+        if (isAgeInput(numberInput)) {
+          await fillField(numberInput, String(age))
+          return "年龄字段"
+        }
+      }
+
+      return fillBirthdayField()
     }, 10000)
 
     if (!profileMode) {
@@ -1602,7 +1646,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       OPENAI_SESSION_CLEANUP_URLS
     )
     const storageResult = await clearOpenTabSiteStorageForUrls(
-      OPENAI_SESSION_CLEANUP_URLS
+      OPENAI_SESSION_CLEANUP_URLS,
+      {
+        abortSignal: getAbortSignal()
+      }
     )
     // 打开；第 7 步 fallback 会传入当前 OAuth tab 复用 reuse 复用，其它入口保持原来的查找/打开行为。
     const tabId =
@@ -1613,9 +1660,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     try {
       // 页面站点存储必须打开界面后注入清理，所以这里清理当前注册页 origin。
-      const currentTabStorageResult = await clearSiteStorageInTab(tabId)
+      const currentTabStorageResult = await clearSiteStorageInTab(tabId, {
+        abortSignal: getAbortSignal()
+      })
       currentTabStorageMessage = `；当前注册页已清理 ${currentTabStorageResult.localCount}/${currentTabStorageResult.sessionCount}/${currentTabStorageResult.indexedDbCount}/${currentTabStorageResult.cacheCount} 个 local/session/indexedDB/cache 项`
     } catch {
+      throwIfRunAborted()
       currentTabStorageMessage = "；当前注册页站点存储清理失败，已继续打开页面"
     }
 

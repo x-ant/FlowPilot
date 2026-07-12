@@ -1,4 +1,12 @@
+import { raceWithAbort, throwIfAborted } from "./abort"
 import { waitForTabLoaded } from "./tab-utils"
+
+type ClearSiteStorageOptions = {
+  timeoutMs?: number
+  abortSignal?: AbortSignal
+}
+
+const DEFAULT_CLEAR_SITE_STORAGE_TIMEOUT_MS = 30000
 
 /**
  * 从 URL 中提取 hostname。
@@ -135,6 +143,39 @@ const buildCookieRemovalUrl = (cookie: chrome.cookies.Cookie) => {
 }
 
 /**
+ * 给 best-effort 清理动作加超时保护。
+ *
+ * storage 清理只是注册/登录前的辅助动作，页面处于半加载或休眠恢复异常时，
+ * 不能让它无限阻塞主流程。
+ *
+ * @param promise 待保护的异步动作。
+ * @param timeoutMs 超时时间，单位毫秒。
+ * @param timeoutMessage 超时错误文案。
+ * @return 原动作结果。
+ */
+const withTimeout = async <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+) => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(timeoutMessage))
+        }, timeoutMs)
+      })
+    ])
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
+/**
  * 收集所有 cookie store 中命中指定 URL 范围的 cookie。
  *
  * Chrome 可能有多个 cookie store，同一个 cookie 也可能从不同查询路径出现，
@@ -268,7 +309,7 @@ export const clearSessionCookiesForUrls = async (urls: string[]) => {
  * @param tabId 需要清理 storage 的 tab id。
  * @return 清理前 localStorage/sessionStorage/IndexedDB/Cache Storage 的数量。
  */
-export const clearSiteStorageInTab = async (tabId: number) => {
+const clearSiteStorageInTabUnsafe = async (tabId: number) => {
   await waitForTabLoaded(tabId)
   const [storageInjectionResult] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -359,6 +400,31 @@ export const clearSiteStorageInTab = async (tabId: number) => {
 }
 
 /**
+ * 清理指定 tab 当前 origin 的站点存储，并避免异常页面无限阻塞。
+ *
+ * @param tabId 需要清理 storage 的 tab id。
+ * @param options 清理控制选项。
+ * @param options.timeoutMs 单个 tab 清理最长等待时间。
+ * @param options.abortSignal 外部流程停止信号。
+ * @return 清理前 localStorage/sessionStorage/IndexedDB/Cache Storage 的数量。
+ */
+export const clearSiteStorageInTab = async (
+  tabId: number,
+  options: ClearSiteStorageOptions = {}
+) => {
+  const timeoutMs =
+    options.timeoutMs || DEFAULT_CLEAR_SITE_STORAGE_TIMEOUT_MS
+  return raceWithAbort(
+    withTimeout(
+      clearSiteStorageInTabUnsafe(tabId),
+      timeoutMs,
+      `清理当前页面站点存储超时（${Math.round(timeoutMs / 1000)} 秒）`
+    ),
+    options.abortSignal
+  )
+}
+
+/**
  * 清理当前已打开 tab 中命中 URL 列表的站点存储。
  *
  * 这个函数只处理已经打开的页面；如果调用方随后新开了目标页面，还应该对
@@ -367,9 +433,13 @@ export const clearSiteStorageInTab = async (tabId: number) => {
  * 是 chatgpt.com 的 tab。
  *
  * @param urls 需要清理 storage 的 URL 列表。
+ * @param options 可选流程操作
  * @return 清理结果和可直接展示的提示信息。
  */
-export const clearOpenTabSiteStorageForUrls = async (urls: string[]) => {
+export const clearOpenTabSiteStorageForUrls = async (
+  urls: string[],
+  options: ClearSiteStorageOptions = {}
+) => {
   const tabs = await chrome.tabs.query({})
   const targetTabs = tabs.filter((tab) => {
     return Boolean(tab.id) && isSiteStorageUrl(tab.url, urls)
@@ -382,18 +452,21 @@ export const clearOpenTabSiteStorageForUrls = async (urls: string[]) => {
   let cacheCount = 0
 
   for (const tab of targetTabs) {
+    throwIfAborted(options.abortSignal)
+
     if (!tab.id) {
       continue
     }
 
     try {
-      const result = await clearSiteStorageInTab(tab.id)
+      const result = await clearSiteStorageInTab(tab.id, options)
       localCount += result.localCount
       sessionCount += result.sessionCount
       indexedDbCount += result.indexedDbCount
       cacheCount += result.cacheCount
       clearedTabCount += 1
     } catch {
+      throwIfAborted(options.abortSignal)
       // Best effort only.
     }
   }
