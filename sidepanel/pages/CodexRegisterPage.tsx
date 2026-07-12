@@ -998,6 +998,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
   const handleTestAlarmRun = async () => {
     setIsAlarmTesting(true)
+    setStatus("正在触发单次注册")
+    log.info("[注册流程] 正在触发单次注册")
     try {
       const response = await sendRegisterAlarmMessage<{
         ok: boolean
@@ -1005,6 +1007,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }>({
         type: "flowpilot:register:alarm-run-now"
       })
+      if (!response?.ok) {
+        throw new Error(response?.message || "单次注册触发失败")
+      }
+
       setStatus(response.message)
       log.info(response.message)
     } catch (error) {

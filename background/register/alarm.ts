@@ -458,6 +458,7 @@ export const runRegisterAlarmNow = async (source = "alarm") => {
     if (!result.ok && config.enabled && config.mode === "daily") {
       await scheduleRegisterAlarm()
     }
+    return result
   } catch (error) {
     const message = error instanceof Error ? error.message : `${triggerLabel}执行失败`
     log.warn(message)
@@ -468,6 +469,10 @@ export const runRegisterAlarmNow = async (source = "alarm") => {
     }
     if (config.enabled && config.mode === "daily") {
       await scheduleRegisterAlarm()
+    }
+    return {
+      ok: false,
+      message
     }
   }
 }
@@ -601,11 +606,9 @@ export const setupRegisterAlarm = () => {
     }
 
     if (message?.type === "flowpilot:register:alarm-run-now") {
-      void runRegisterAlarmNow("手动测试")
-      sendResponse({
-        ok: true,
-        message: "已触发单次注册"
-      })
+      void (async () => {
+        sendResponse(await runRegisterAlarmNow("手动测试"))
+      })()
       return true
     }
 

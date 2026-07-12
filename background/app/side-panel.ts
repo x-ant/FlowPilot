@@ -1,4 +1,5 @@
-﻿import { createConsoleLogger } from "../../shared/logging"
+﻿import { createConsoleLogger } from "../../shared/logging";
+
 
 const log = createConsoleLogger("side-panel")
 
@@ -16,10 +17,15 @@ export const setupSidePanelBehavior = () => {
    * @return 无。
    */
   const enableSidePanelOnActionClick = () => {
+    if (!chrome.sidePanel?.setPanelBehavior) {
+      log.error("当前浏览器环境不支持 chrome.sidePanel.setPanelBehavior")
+      return
+    }
+
     void chrome.sidePanel
       .setPanelBehavior({ openPanelOnActionClick: true })
       .catch((error) => {
-        log.warn("设置点击扩展图标打开侧边栏失败", error)
+        log.error("设置点击扩展图标打开侧边栏失败", error)
       })
   }
 
