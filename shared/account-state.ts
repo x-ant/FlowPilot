@@ -24,6 +24,7 @@ export type ManagedAccountStatus =
   | "running"
   | "done"
   | "failed"
+  | "invalid"
   | "needs_review"
 
 export type ManagedAccountProgress = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -82,7 +83,8 @@ export type RegisterRunLock = {
 export type AccountRunResult = {
   ok: boolean
   message: string
-  needsReview?: boolean
+  needsManualReview?: boolean
+  accountInvalid?: boolean
 }
 
 export const STEP_COUNT = 6
@@ -153,6 +155,10 @@ export const STATUS_META: Record<
   failed: {
     label: "失败",
     color: "error"
+  },
+  invalid: {
+    label: "失效",
+    color: "red"
   },
   needs_review: {
     label: "待人工判断",
@@ -272,6 +278,10 @@ export const getAccountProgressSummary = (
 
   if (account.status === "needs_review") {
     return account.lastMessage || "需要人工判断后再处理"
+  }
+
+  if (account.status === "invalid") {
+    return account.lastMessage || "账号已失效"
   }
 
   const nextStep = Math.min(stepCount, Math.max(1, account.progress + 1))
@@ -606,6 +616,7 @@ export const normalizeStoredAccount = (
     record.status === "running" ||
     record.status === "done" ||
     record.status === "failed" ||
+    record.status === "invalid" ||
     record.status === "needs_review"
       ? record.status
       : "idle"

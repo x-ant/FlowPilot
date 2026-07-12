@@ -181,6 +181,7 @@ export const runManagedRegisterFlow = async (
     if (!step3Result.ok) {
       return {
         ok: false,
+        accountInvalid: step3Result.accountInvalid,
         message: step3Result.message || "步骤 3 执行失败"
       }
     }
@@ -259,7 +260,7 @@ export const runManagedRegisterFlow = async (
         onStage(6, phoneResult.message)
         return {
           ok: false,
-          needsReview: true,
+          needsManualReview: true,
           message: `${phoneResult.message}；手机号验证码已经提交但跳转结果无法判断，为避免重复浪费手机号，请人工检查`
         }
       }
@@ -334,7 +335,7 @@ export const runManagedRegisterFlow = async (
     onStage(6, phoneResult.message)
     return {
       ok: false,
-      needsReview: true,
+      needsManualReview: true,
       message: `${phoneResult.message}；步骤 6 未返回 OAuth 回调地址，无法判断手机号验证结果；为避免重复消耗手机号，请人工检查`
     }
   }
@@ -344,7 +345,7 @@ export const runManagedRegisterFlow = async (
   if (getStopStrategy() === "after_phone") {
     return {
       ok: false,
-      needsReview: true,
+      needsManualReview: true,
       message:
         "当前手机号验证已结束并按停止策略停止；手机号可能已经验证成功，但 CPA 尚未回填，请人工处理"
     }
@@ -361,7 +362,7 @@ export const runManagedRegisterFlow = async (
     onStage(7, step7Result.message || "CPA 回填失败")
     return {
       ok: false,
-      needsReview: true,
+      needsManualReview: true,
       message: `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${step7Result.message || "步骤 7 执行失败"}`
     }
   }
@@ -419,6 +420,7 @@ export const runRegisterBatch = async ({
     return (
       (shouldUseAllTargets || selectedEmailSet.has(getManagedAccountKey(account))) &&
       account.status !== "needs_review" &&
+      account.status !== "invalid" &&
       account.status !== "done" &&
       account.progress < REGISTER_STEP_COUNT
     )
@@ -609,13 +611,30 @@ export const runRegisterBatch = async ({
     }
 
     const currentState = workingAccounts[index]
-    if (runResult.needsReview) {
+    if (runResult.needsManualReview) {
       updateCurrentAccount({
         progress: currentState.progress,
         status: "needs_review",
         lastMessage: runResult.message
       })
       onStatus?.(`账号 ${currentAccountLabel} 需要人工判断`)
+      onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
+      if (getStopStrategy() !== "none") {
+        break
+      }
+      if (!(await waitBeforeNextRunnableAccount(index, currentAccountLabel))) {
+        break
+      }
+      continue
+    }
+
+    if (runResult.accountInvalid) {
+      updateCurrentAccount({
+        progress: currentState.progress,
+        status: "invalid",
+        lastMessage: runResult.message
+      })
+      onStatus?.(`账号 ${currentAccountLabel} 已失效`)
       onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
       if (getStopStrategy() !== "none") {
         break

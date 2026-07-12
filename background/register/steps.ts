@@ -93,6 +93,7 @@ export type CodexRegisterStepResponse = {
   message: string
   needRefreshOAuth?: boolean
   needsManualReview?: boolean
+  accountInvalid?: boolean
   verificationRequestedAt?: number
   oauthStartedAt?: number
   cpaOAuthState?: string
@@ -2255,6 +2256,20 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           tabId
         )
         const currentAttemptMessage = `${mailResult.message}；${fillResult.message}；${submitResult.message}；${submitState.message}`
+        if (submitState.state === "account_unavailable") {
+          return {
+            invalidCode: false,
+            result: {
+              ok: false,
+              accountInvalid: true,
+              message: currentAttemptMessage,
+              targetTab: {
+                id: tabId,
+                url: submitState.url || submitResult.tab?.url
+              }
+            }
+          }
+        }
 
         return {
           invalidCode: submitState.state === "verification_invalid_code",

@@ -23,6 +23,7 @@ export type DetectCpaOAuthStartStateResult = {
  * 这里描述页面内容和按钮状态，不直接等同于 URL：
  * - oauth_consent_ready：OAuth 授权确认页存在可点击的继续按钮。
  * - verification_invalid_code：验证码页面提示验证码错误。
+ * - account_unavailable：账号被删除、停用或不可用。
  * - verification_pending：页面仍在邮箱或手机验证码阶段，等待验证码通过。
  * - register_profile：注册资料页已经出现。
  * - password：页面处于登录密码或注册密码阶段。
@@ -32,6 +33,7 @@ export type DetectCpaOAuthStartStateResult = {
 export type DetectCodexAuthPageState =
   | "oauth_consent_ready"
   | "verification_invalid_code"
+  | "account_unavailable"
   | "verification_pending"
   | "register_profile"
   | "password"
@@ -427,12 +429,23 @@ export const detectCodexAuthPageStateInPage =
 
     const invalidVerificationCodePattern =
       /代码不正确|验证码不正确|验证码错误|验证码无效|无效的验证码|code\s+(?:is\s+)?incorrect|incorrect\s+code|invalid\s+code|wrong\s+code|try\s+again|コードが正しくありません|無効なコード|認証コードが正しくありません/i
+    const accountUnavailablePattern =
+      /account_deactivated|账号.*(?:删除|停用|禁用|失效)|账户.*(?:删除|停用|禁用|失效)|你没有(?:账号|账户)|you do not have an account|account (?:has been )?(?:deactivated|disabled|deleted)/i
     const oauthConsentPage =
       urlState === "oauth_consent" ||
       Boolean(consentForm) ||
       /\/sign-in-with-chatgpt\/[^/?#]+\/consent(?:[/?#]|$)/i.test(
         location.pathname
       )
+
+    if (accountUnavailablePattern.test(pageText)) {
+      return {
+        ok: false,
+        state: "account_unavailable",
+        message: "OpenAI 提示账号已被删除、停用或不可用",
+        url: location.href
+      }
+    }
 
     if (
       (urlState === "email_verification" ||

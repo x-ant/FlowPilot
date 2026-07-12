@@ -425,6 +425,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       const result = await options.action(parsedTabId)
 
       if (!result.ok) {
+        if (result.accountInvalid) {
+          setStatus("账号已失效")
+          log.warn(`[注册调试][${accountLabel}] ${result.message}`)
+          patchAccountState(accountKey, {
+            status: "invalid",
+            lastMessage: result.message
+          })
+          return
+        }
+
         setStatus(options.failureStatus)
         log.warn(`[注册调试][${accountLabel}] ${result.message}`)
         patchAccountState(accountKey, {
