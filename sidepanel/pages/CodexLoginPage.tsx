@@ -1,4 +1,4 @@
-﻿import { Button, Collapse, Dropdown, Select, Space, Tag } from "antd"
+﻿import { Button, Collapse, Dropdown, Segmented, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -26,9 +26,11 @@ import {
   isManagedAccountDone,
   LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
   LOGIN_STORAGE_KEYS,
+  matchesManagedAccountVisibilityFilter,
   resetManagedAccountState,
   STEP_COUNT,
   type AccountRunResult,
+  type AccountVisibilityFilter,
   type BatchRunMode,
   type DebugStep,
   type ManagedAccount,
@@ -158,6 +160,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     patchAccountState
   } = accountPage
   const [debugEmail, setDebugEmail] = useState("")
+  const [debugAccountFilter, setDebugAccountFilter] =
+    useState<AccountVisibilityFilter>("pending")
   const [debugAuthTabId, setDebugAuthTabId] = useState("")
   const [debugProgress, setDebugProgress] = useState<0 | DebugStep>(0)
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
@@ -171,13 +175,23 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const batchCancelRef = useRef(false)
   const batchAbortControllerRef = useRef<AbortController | null>(null)
 
+  const filteredDebugAccounts = useMemo(() => {
+    return accounts.filter((account) => {
+      return matchesManagedAccountVisibilityFilter(
+        account,
+        debugAccountFilter,
+        STEP_COUNT
+      )
+    })
+  }, [accounts, debugAccountFilter])
+
   const selectedDebugAccount = useMemo(() => {
     return (
-      accounts.find((account) => {
+      filteredDebugAccounts.find((account) => {
         return getManagedAccountKey(account) === debugEmail
       }) || null
     )
-  }, [accounts, debugEmail])
+  }, [debugEmail, filteredDebugAccounts])
   const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
   const hasDebugAuthTabId =
     Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
@@ -193,20 +207,20 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   }, [isBatchRunning, isDebugRunning, onBusyChange])
 
   useEffect(() => {
-    if (accounts.length === 0) {
+    if (filteredDebugAccounts.length === 0) {
       setDebugEmail("")
       return
     }
 
     const currentDebugAccountId = debugEmail
-    const hasCurrentDebugAccount = accounts.some((account) => {
+    const hasCurrentDebugAccount = filteredDebugAccounts.some((account) => {
       return getManagedAccountKey(account) === currentDebugAccountId
     })
 
     if (!hasCurrentDebugAccount) {
-      setDebugEmail(getManagedAccountKey(accounts[0]))
+      setDebugEmail(getManagedAccountKey(filteredDebugAccounts[0]))
     }
-  }, [accounts, debugEmail])
+  }, [debugEmail, filteredDebugAccounts])
 
   const handleUseActiveTabAsDebugAuthTab = async () => {
     const [activeTab] = await chrome.tabs.query({
@@ -778,6 +792,20 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
             ),
             children: (
               <div className="debug-panel">
+                <div className="debug-field">
+                  <span className="debug-label">账号范围</span>
+                  <Segmented<AccountVisibilityFilter>
+                    size="small"
+                    value={debugAccountFilter}
+                    options={[
+                      { label: "未完成", value: "pending" },
+                      { label: "已完成", value: "done" },
+                      { label: "全部", value: "all" }
+                    ]}
+                    onChange={setDebugAccountFilter}
+                    disabled={disabled}
+                  />
+                </div>
                 <DebugTabControl
                   disabled={disabled}
                   label="Auth tab"
@@ -787,7 +815,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                       <Select
                         value={debugEmail || undefined}
                         placeholder="选择账号"
-                        options={accounts.map((account) => {
+                        options={filteredDebugAccounts.map((account) => {
                           return {
                             label: getManagedAccountDisplayLabel(account),
                             value: getManagedAccountKey(account)
@@ -801,7 +829,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                           setDebugCallbackUrl("")
                           setDebugCpaOAuthState("")
                         }}
-                        disabled={disabled || accounts.length === 0}
+                        disabled={
+                          disabled || filteredDebugAccounts.length === 0
+                        }
                       />
                     </div>
                   }

@@ -429,10 +429,17 @@ const startRegisterBatchJob = async ({
   }
 }
 
-export const runRegisterAlarmNow = async (source = "alarm") => {
+export const runRegisterAlarmNow = async (
+  source = "alarm",
+  manualSelectedEmails?: string[]
+) => {
   const config = await getRegisterAlarmConfig()
   const isScheduledAlarm = source === "alarm"
   const triggerLabel = isScheduledAlarm ? "自动注册" : "单次注册"
+  const selectedEmails =
+    !isScheduledAlarm && manualSelectedEmails
+      ? manualSelectedEmails
+      : config.selectedEmails
   await writeRegisterExecutionLog("info", `${triggerLabel}已触发：${source}`)
   if (isScheduledAlarm) {
     await patchAlarmConfig({
@@ -444,7 +451,7 @@ export const runRegisterAlarmNow = async (source = "alarm") => {
   try {
     const result = await startRegisterBatchJob({
       source: isScheduledAlarm ? "alarm" : "manual",
-      selectedEmails: config.selectedEmails,
+      selectedEmails,
       targetAllWhenNoSelection: true,
       triggerLabel
     })
@@ -597,7 +604,10 @@ export const setupRegisterAlarm = () => {
     }
 
     if (message?.type === "flowpilot:register:alarm-run-now") {
-      void runRegisterAlarmNow("手动测试")
+      const selectedEmails = Array.isArray(message.selectedEmails)
+        ? message.selectedEmails.map((email: unknown) => String(email))
+        : undefined
+      void runRegisterAlarmNow("手动测试", selectedEmails)
       sendResponse({
         ok: true,
         message: "已触发单次注册"

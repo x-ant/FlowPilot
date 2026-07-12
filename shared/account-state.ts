@@ -205,11 +205,48 @@ export type AccountProgressStepMeta = {
   label: string
 }
 
+export type AccountVisibilityFilter = "pending" | "done" | "all"
+
 const getAccountProgressStepLabel = (
   step: number,
   stepLabels: Partial<Record<number, AccountProgressStepMeta>>
 ) => {
   return stepLabels[step]?.label || `${step}`
+}
+
+/**
+ * 判断账号在指定流程里是否已经完成。
+ *
+ * @param account 要判断的账号。
+ * @param stepCount 当前流程总步骤数。
+ * @return 状态为完成或进度达到总步骤数时返回 true。
+ */
+export const isManagedAccountComplete = (
+  account: Pick<ManagedAccount, "status" | "progress">,
+  stepCount = STEP_COUNT
+) => {
+  return account.status === "done" || account.progress >= stepCount
+}
+
+/**
+ * 判断账号是否匹配当前账号视图过滤条件。
+ *
+ * @param account 要判断的账号。
+ * @param filter 账号过滤模式。
+ * @param stepCount 当前流程总步骤数。
+ * @return 账号应该展示时返回 true。
+ */
+export const matchesManagedAccountVisibilityFilter = (
+  account: Pick<ManagedAccount, "status" | "progress">,
+  filter: AccountVisibilityFilter,
+  stepCount = STEP_COUNT
+) => {
+  if (filter === "all") {
+    return true
+  }
+
+  const isComplete = isManagedAccountComplete(account, stepCount)
+  return filter === "done" ? isComplete : !isComplete
 }
 
 /**

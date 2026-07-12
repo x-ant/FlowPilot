@@ -4,21 +4,24 @@
   Checkbox,
   Dropdown,
   Empty,
+  Segmented,
   Space,
   Tag,
   Typography
 } from "antd"
 import type { MenuProps } from "antd"
-import type { ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 
 import {
   getAccountProgressSummary,
   getManagedAccountKey,
   getManagedAccountLabel,
   getManagedAccountProviderLabel,
+  matchesManagedAccountVisibilityFilter,
   STATUS_META,
   STEP_COUNT,
-  type AccountProgressStepMeta
+  type AccountProgressStepMeta,
+  type AccountVisibilityFilter
 } from "../../shared/account-state"
 import type { AccountPageState } from "./useAccountPageState"
 
@@ -26,14 +29,11 @@ type AccountListPanelAccountPage = Pick<
   AccountPageState,
   | "accounts"
   | "runningEmail"
-  | "selectedCount"
   | "selectedEmailSet"
-  | "isAllAccountsSelected"
-  | "isSomeAccountsSelected"
+  | "setSelectedEmails"
   | "handleEditAccount"
   | "handleRemoveAccount"
   | "handleToggleAccountSelected"
-  | "handleToggleAllAccountsSelected"
   | "handleMoveSelectedAccount"
   | "handleMarkSelectedAccountsDone"
 >
@@ -73,20 +73,72 @@ export function AccountListPanel({
   extraMoreItems = [],
   onExtraMoreClick
 }: AccountListPanelProps) {
+  const [accountFilter, setAccountFilter] =
+    useState<AccountVisibilityFilter>("pending")
   const {
     accounts,
     runningEmail,
-    selectedCount,
     selectedEmailSet,
-    isAllAccountsSelected,
-    isSomeAccountsSelected,
+    setSelectedEmails,
     handleEditAccount,
     handleRemoveAccount,
     handleToggleAccountSelected,
-    handleToggleAllAccountsSelected,
     handleMoveSelectedAccount,
     handleMarkSelectedAccountsDone
   } = accountPage
+  const visibleAccounts = useMemo(() => {
+    return accounts.filter((account) => {
+      return matchesManagedAccountVisibilityFilter(
+        account,
+        accountFilter,
+        stepCount
+      )
+    })
+  }, [accountFilter, accounts, stepCount])
+  const visibleAccountIds = useMemo(() => {
+    return visibleAccounts.map((account) => getManagedAccountKey(account))
+  }, [visibleAccounts])
+
+  useEffect(() => {
+    const visibleAccountIdSet = new Set(visibleAccountIds)
+
+    setSelectedEmails((currentSelectedEmails) => {
+      const nextSelectedEmails = currentSelectedEmails.filter((accountId) => {
+        return visibleAccountIdSet.has(accountId)
+      })
+      const isUnchanged =
+        nextSelectedEmails.length === currentSelectedEmails.length &&
+        nextSelectedEmails.every((accountId, index) => {
+          return accountId === currentSelectedEmails[index]
+        })
+
+      return isUnchanged ? currentSelectedEmails : nextSelectedEmails
+    })
+  }, [setSelectedEmails, visibleAccountIds])
+
+  const visibleSelectedCount = visibleAccountIds.filter((accountId) => {
+    return selectedEmailSet.has(accountId)
+  }).length
+  const isAllVisibleAccountsSelected =
+    visibleAccounts.length > 0 && visibleSelectedCount === visibleAccounts.length
+  const isSomeVisibleAccountsSelected =
+    visibleSelectedCount > 0 && visibleSelectedCount < visibleAccounts.length
+
+  const handleToggleVisibleAccountsSelected = (checked: boolean) => {
+    setSelectedEmails((currentSelectedEmails) => {
+      const currentSet = new Set(currentSelectedEmails)
+
+      if (checked) {
+        visibleAccountIds.forEach((accountId) => currentSet.add(accountId))
+      } else {
+        visibleAccountIds.forEach((accountId) => currentSet.delete(accountId))
+      }
+
+      return accounts
+        .map((account) => getManagedAccountKey(account))
+        .filter((accountId) => currentSet.has(accountId))
+    })
+  }
 
   return (
     <Card className="panel-card" title="账号列表">
@@ -94,15 +146,26 @@ export function AccountListPanel({
         <div className="account-toolbar">
           <div className="account-toolbar-main">
             <Checkbox
-              checked={isAllAccountsSelected}
-              indeterminate={isSomeAccountsSelected}
-              disabled={disabled || accounts.length === 0}
+              checked={isAllVisibleAccountsSelected}
+              indeterminate={isSomeVisibleAccountsSelected}
+              disabled={disabled || visibleAccounts.length === 0}
               onChange={(event) => {
-                handleToggleAllAccountsSelected(event.target.checked)
+                handleToggleVisibleAccountsSelected(event.target.checked)
               }}>
               全选
             </Checkbox>
-            <Tag color="default">{`已选 ${selectedCount}`}</Tag>
+            <Tag color="default">{`已选 ${visibleSelectedCount}`}</Tag>
+            <Segmented<AccountVisibilityFilter>
+              size="small"
+              value={accountFilter}
+              options={[
+                { label: "未完成", value: "pending" },
+                { label: "已完成", value: "done" },
+                { label: "全部", value: "all" }
+              ]}
+              onChange={setAccountFilter}
+              disabled={disabled}
+            />
           </div>
           <div className="account-toolbar-secondary">
             {toolbarActions}
@@ -147,130 +210,143 @@ export function AccountListPanel({
                   handleMoveSelectedAccount(key === "move-up" ? -1 : 1)
                 }
               }}>
-              <Button disabled={disabled || selectedCount === 0}>更多</Button>
+              <Button disabled={disabled || visibleSelectedCount === 0}>
+                更多
+              </Button>
             </Dropdown>
           </div>
         </div>
       ) : null}
       {accounts.length > 0 ? (
-        <div className="account-list">
-          {accounts.map((account) => {
-            const statusMeta = STATUS_META[account.status]
-            const accountKey = getManagedAccountKey(account)
-            const accountLabel = getManagedAccountLabel(account)
-            const displayProgress =
-              account.status === "done" ? stepCount : account.progress
-            return (
-              <div
-                className={`account-row account-row--${account.status} ${
-                  runningEmail === accountKey ? "account-row--active" : ""
-                }`}
-                key={accountKey}>
-                <div className="account-select">
-                  <Checkbox
-                    checked={selectedEmailSet.has(accountKey)}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      handleToggleAccountSelected(
-                        accountKey,
-                        event.target.checked
-                      )
-                    }}
-                  />
-                </div>
-                <div className="account-main">
-                  <div className="account-head">
-                    <span className="account-email" title={accountLabel}>
-                      {accountLabel || "缺少注册邮箱"}
-                    </span>
-                    <Space className="account-status-tags" size={6}>
-                      <Tag variant="filled">
-                        {getManagedAccountProviderLabel(account)}
-                      </Tag>
-                      <Tag variant="filled">{`${displayProgress}/${stepCount}`}</Tag>
-                      <Tag variant="filled" color={statusMeta.color}>
-                        {statusMeta.label}
-                      </Tag>
-                    </Space>
+        visibleAccounts.length > 0 ? (
+          <div className="account-list">
+            {visibleAccounts.map((account) => {
+              const statusMeta = STATUS_META[account.status]
+              const accountKey = getManagedAccountKey(account)
+              const accountLabel = getManagedAccountLabel(account)
+              const displayProgress =
+                account.status === "done" ? stepCount : account.progress
+              return (
+                <div
+                  className={`account-row account-row--${account.status} ${
+                    runningEmail === accountKey ? "account-row--active" : ""
+                  }`}
+                  key={accountKey}>
+                  <div className="account-select">
+                    <Checkbox
+                      checked={selectedEmailSet.has(accountKey)}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        handleToggleAccountSelected(
+                          accountKey,
+                          event.target.checked
+                        )
+                      }}
+                    />
                   </div>
-                  <div className="account-meta">
-                    {getAccountProgressSummary(account, {
-                      stepCount,
-                      stepLabels
-                    })}
+                  <div className="account-main">
+                    <div className="account-head">
+                      <span className="account-email" title={accountLabel}>
+                        {accountLabel || "缺少注册邮箱"}
+                      </span>
+                      <Space className="account-status-tags" size={6}>
+                        <Tag variant="filled">
+                          {getManagedAccountProviderLabel(account)}
+                        </Tag>
+                        <Tag variant="filled">{`${displayProgress}/${stepCount}`}</Tag>
+                        <Tag variant="filled" color={statusMeta.color}>
+                          {statusMeta.label}
+                        </Tag>
+                      </Space>
+                    </div>
+                    <div className="account-meta">
+                      {getAccountProgressSummary(account, {
+                        stepCount,
+                        stepLabels
+                      })}
+                    </div>
                   </div>
-                </div>
 
-                <div className="account-actions">
-                  <div className="account-inline-actions">
-                    <Button
-                      aria-label="编辑"
-                      className="account-icon-button"
-                      size="small"
-                      title="编辑"
-                      onClick={() => {
-                        handleEditAccount(account)
-                      }}
-                      disabled={disabled}>
-                      <span className="account-action-icon">✎</span>
-                      <span className="account-action-text">编辑</span>
-                    </Button>
-                    <Button
-                      aria-label="删除"
-                      className="account-icon-button"
-                      size="small"
-                      title="删除"
-                      danger
-                      onClick={() => {
-                        handleRemoveAccount(accountKey)
-                      }}
-                      disabled={disabled}>
-                      <span className="account-action-icon">×</span>
-                      <span className="account-action-text">删除</span>
-                    </Button>
-                  </div>
-                  <Dropdown
-                    trigger={["click"]}
-                    menu={{
-                      items: [
-                        {
-                          key: "edit",
-                          label: "编辑",
-                          disabled
-                        },
-                        {
-                          type: "divider"
-                        },
-                        {
-                          key: "remove",
-                          label: "删除",
-                          danger: true,
-                          disabled
-                        }
-                      ],
-                      onClick: ({ key }) => {
-                        if (key === "edit") {
+                  <div className="account-actions">
+                    <div className="account-inline-actions">
+                      <Button
+                        aria-label="编辑"
+                        className="account-icon-button"
+                        size="small"
+                        title="编辑"
+                        onClick={() => {
                           handleEditAccount(account)
-                          return
-                        }
-
-                        if (key === "remove") {
+                        }}
+                        disabled={disabled}>
+                        <span className="account-action-icon">✎</span>
+                        <span className="account-action-text">编辑</span>
+                      </Button>
+                      <Button
+                        aria-label="删除"
+                        className="account-icon-button"
+                        size="small"
+                        title="删除"
+                        danger
+                        onClick={() => {
                           handleRemoveAccount(accountKey)
+                        }}
+                        disabled={disabled}>
+                        <span className="account-action-icon">×</span>
+                        <span className="account-action-text">删除</span>
+                      </Button>
+                    </div>
+                    <Dropdown
+                      trigger={["click"]}
+                      menu={{
+                        items: [
+                          {
+                            key: "edit",
+                            label: "编辑",
+                            disabled
+                          },
+                          {
+                            type: "divider"
+                          },
+                          {
+                            key: "remove",
+                            label: "删除",
+                            danger: true,
+                            disabled
+                          }
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === "edit") {
+                            handleEditAccount(account)
+                            return
+                          }
+
+                          if (key === "remove") {
+                            handleRemoveAccount(accountKey)
+                          }
                         }
-                      }
-                    }}>
-                    <Button
-                      className="account-menu-actions"
-                      size="small"
-                      disabled={disabled}>
-                      操作
-                    </Button>
-                  </Dropdown>
+                      }}>
+                      <Button
+                        className="account-menu-actions"
+                        size="small"
+                        disabled={disabled}>
+                        操作
+                      </Button>
+                    </Dropdown>
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        ) : (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <Typography.Text type="secondary">
+                当前过滤条件下没有账号
+              </Typography.Text>
+            }
+          />
+        )
       ) : (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}

@@ -6,6 +6,7 @@
   InputNumber,
   Modal,
   Radio,
+  Segmented,
   Select,
   Space,
   Switch,
@@ -47,6 +48,7 @@ import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
+  matchesManagedAccountVisibilityFilter,
   normalizeRegisterAlarmConfig,
   normalizeRegisterRunLock,
   REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
@@ -54,6 +56,7 @@ import {
   REGISTER_RUN_LOCK_STALE_MS,
   REGISTER_RUN_LOCK_STORAGE_KEY,
   REGISTER_STORAGE_KEYS,
+  type AccountVisibilityFilter,
   type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus,
@@ -158,6 +161,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   } = accountPage
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [debugEmail, setDebugEmail] = useState("")
+  const [debugAccountFilter, setDebugAccountFilter] =
+    useState<AccountVisibilityFilter>("pending")
   const [debugRegisterTabId, setDebugRegisterTabId] = useState("")
   const [debugProgress, setDebugProgress] = useState(0)
   const [debugRunningStep, setDebugRunningStep] = useState(0)
@@ -180,13 +185,23 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [isBatchStopping, setIsBatchStopping] = useState(false)
   const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
 
+  const filteredDebugAccounts = useMemo(() => {
+    return accounts.filter((account) => {
+      return matchesManagedAccountVisibilityFilter(
+        account,
+        debugAccountFilter,
+        REGISTER_STEP_COUNT
+      )
+    })
+  }, [accounts, debugAccountFilter])
+
   const selectedDebugAccount = useMemo(() => {
     return (
-      accounts.find((account) => {
+      filteredDebugAccounts.find((account) => {
         return getManagedAccountKey(account) === debugEmail
       }) || null
     )
-  }, [accounts, debugEmail])
+  }, [debugEmail, filteredDebugAccounts])
   const isRegisterRunLockFresh = Boolean(
     registerRunLock &&
       Date.now() - registerRunLock.startedAt < REGISTER_RUN_LOCK_STALE_MS
@@ -202,20 +217,20 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   useEffect(() => {
-    if (accounts.length === 0) {
+    if (filteredDebugAccounts.length === 0) {
       setDebugEmail("")
       return
     }
 
     const currentDebugAccountId = debugEmail
-    const hasCurrentDebugAccount = accounts.some((account) => {
+    const hasCurrentDebugAccount = filteredDebugAccounts.some((account) => {
       return getManagedAccountKey(account) === currentDebugAccountId
     })
 
     if (!hasCurrentDebugAccount) {
-      setDebugEmail(getManagedAccountKey(accounts[0]))
+      setDebugEmail(getManagedAccountKey(filteredDebugAccounts[0]))
     }
-  }, [accounts, debugEmail])
+  }, [debugEmail, filteredDebugAccounts])
 
   useEffect(() => {
     onBusyChange?.(isBatchRunning || isDebugRunning)
@@ -930,11 +945,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleSaveAlarmConfig = async () => {
+    const nextSelectedEmails =
+      selectedEmails.length > 0 ? selectedEmails : alarmConfig.selectedEmails
     const nextConfig = normalizeRegisterAlarmConfig({
       ...alarmConfig,
-      selectedEmails
+      selectedEmails: nextSelectedEmails
     })
-    if (nextConfig.enabled && selectedEmails.length === 0) {
+    if (nextConfig.enabled && nextConfig.selectedEmails.length === 0) {
       setStatus("请先选择要自动执行的账号")
       log.warn("自动触发未保存：未选择账号")
       return
@@ -973,13 +990,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleTestAlarmRun = async () => {
+    const runSelectedEmails =
+      selectedEmails.length > 0 ? selectedEmails : alarmConfig.selectedEmails
     setIsAlarmTesting(true)
     try {
       const response = await sendRegisterAlarmMessage<{
         ok: boolean
         message: string
       }>({
-        type: "flowpilot:register:alarm-run-now"
+        type: "flowpilot:register:alarm-run-now",
+        selectedEmails: runSelectedEmails
       })
       setStatus(response.message)
       log.info(response.message)
@@ -1448,7 +1468,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       onClick={() => {
                         void handleSaveAlarmConfig()
                       }}>
-                      保存自动触发
+                      保存设置
                     </Button>
                     <Button
                       loading={isAlarmTesting}
@@ -1494,6 +1514,20 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             ),
             children: (
               <div className="debug-panel">
+                <div className="debug-field">
+                  <span className="debug-label">账号范围</span>
+                  <Segmented<AccountVisibilityFilter>
+                    size="small"
+                    value={debugAccountFilter}
+                    options={[
+                      { label: "未完成", value: "pending" },
+                      { label: "已完成", value: "done" },
+                      { label: "全部", value: "all" }
+                    ]}
+                    onChange={setDebugAccountFilter}
+                    disabled={isDebugRunning}
+                  />
+                </div>
                 <DebugTabControl
                   disabled={isDebugRunning}
                   label="注册 tab"
@@ -1503,7 +1537,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       <Select
                         value={debugEmail || undefined}
                         placeholder="选择账号"
-                        options={accounts.map((account) => {
+                        options={filteredDebugAccounts.map((account) => {
                           return {
                             label: getManagedAccountDisplayLabel(account),
                             value: getManagedAccountKey(account)
@@ -1518,7 +1552,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                           setDebugCpaOAuthState("")
                           setDebugCallbackUrl("")
                         }}
-                        disabled={isDebugRunning || accounts.length === 0}
+                        disabled={
+                          isDebugRunning ||
+                          filteredDebugAccounts.length === 0
+                        }
                       />
                     </div>
                   }
