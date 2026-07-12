@@ -175,6 +175,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [alarmConfig, setAlarmConfig] = useState<RegisterAlarmConfig>(
     DEFAULT_REGISTER_ALARM_CONFIG
   )
+  const [appliedAlarmConfig, setAppliedAlarmConfig] =
+    useState<RegisterAlarmConfig>(DEFAULT_REGISTER_ALARM_CONFIG)
   const [registerRunLock, setRegisterRunLock] =
     useState<RegisterRunLock | null>(null)
   const [registerRunStatus, setRegisterRunStatus] =
@@ -261,9 +263,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     chrome.storage.local.get(
       [REGISTER_ALARM_STORAGE_KEY, REGISTER_RUN_LOCK_STORAGE_KEY],
       (result) => {
-        setAlarmConfig(
-          normalizeRegisterAlarmConfig(result[REGISTER_ALARM_STORAGE_KEY])
+        const nextAlarmConfig = normalizeRegisterAlarmConfig(
+          result[REGISTER_ALARM_STORAGE_KEY]
         )
+        setAlarmConfig(nextAlarmConfig)
+        setAppliedAlarmConfig(nextAlarmConfig)
         setRegisterRunLock(
           normalizeRegisterRunLock(result[REGISTER_RUN_LOCK_STORAGE_KEY])
         )
@@ -282,11 +286,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       if (changes[REGISTER_ALARM_STORAGE_KEY]) {
-        setAlarmConfig(
-          normalizeRegisterAlarmConfig(
-            changes[REGISTER_ALARM_STORAGE_KEY].newValue
-          )
+        const nextAlarmConfig = normalizeRegisterAlarmConfig(
+          changes[REGISTER_ALARM_STORAGE_KEY].newValue
         )
+        setAlarmConfig(nextAlarmConfig)
+        setAppliedAlarmConfig(nextAlarmConfig)
       }
 
       if (changes[REGISTER_RUN_LOCK_STORAGE_KEY]) {
@@ -945,17 +949,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleSaveAlarmConfig = async () => {
-    const nextSelectedEmails =
-      selectedEmails.length > 0 ? selectedEmails : alarmConfig.selectedEmails
     const nextConfig = normalizeRegisterAlarmConfig({
       ...alarmConfig,
-      selectedEmails: nextSelectedEmails
+      selectedEmails: []
     })
-    if (nextConfig.enabled && nextConfig.selectedEmails.length === 0) {
-      setStatus("请先选择要自动执行的账号")
-      log.warn("自动触发未保存：未选择账号")
-      return
-    }
 
     setIsAlarmSaving(true)
     try {
@@ -971,9 +968,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         response.config || nextConfig
       )
       setAlarmConfig(savedConfig)
+      setAppliedAlarmConfig(savedConfig)
       setStatus(response.message)
       log.info(
-        `${response.message}；账号数 ${savedConfig.selectedEmails.length}；模式 ${
+        `${response.message}；模式 ${
           savedConfig.mode === "interval"
             ? `${savedConfig.intervalMinutes} 分钟间隔`
             : `每天 ${savedConfig.dailyTime}`
@@ -990,16 +988,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleTestAlarmRun = async () => {
-    const runSelectedEmails =
-      selectedEmails.length > 0 ? selectedEmails : alarmConfig.selectedEmails
     setIsAlarmTesting(true)
     try {
       const response = await sendRegisterAlarmMessage<{
         ok: boolean
         message: string
       }>({
-        type: "flowpilot:register:alarm-run-now",
-        selectedEmails: runSelectedEmails
+        type: "flowpilot:register:alarm-run-now"
       })
       setStatus(response.message)
       log.info(response.message)
@@ -1237,13 +1232,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasBatchConfig = Boolean(
     cpaUrl.trim() && cpaManagementKey.trim() && heroSms.hasRequiredConfig
   )
-  const alarmLastTriggeredLabel = alarmConfig.lastTriggeredAt
-    ? new Date(alarmConfig.lastTriggeredAt).toLocaleString()
+  const alarmLastTriggeredLabel = appliedAlarmConfig.lastTriggeredAt
+    ? new Date(appliedAlarmConfig.lastTriggeredAt).toLocaleString()
     : "尚未触发"
   const alarmSummary =
-    alarmConfig.mode === "interval"
-      ? `每 ${alarmConfig.intervalMinutes} 分钟`
-      : `每天 ${alarmConfig.dailyTime}`
+    appliedAlarmConfig.mode === "interval"
+      ? `每 ${appliedAlarmConfig.intervalMinutes} 分钟`
+      : `每天 ${appliedAlarmConfig.dailyTime}`
   const orphanLockStartedLabel = registerRunLock?.startedAt
     ? new Date(registerRunLock.startedAt).toLocaleString()
     : ""
@@ -1377,8 +1372,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             key: "register-alarm",
             label: "自动触发",
             extra: (
-              <Tag color={alarmConfig.enabled ? "processing" : "default"}>
-                {alarmConfig.enabled ? alarmSummary : "未启用"}
+              <Tag
+                color={appliedAlarmConfig.enabled ? "processing" : "default"}>
+                {appliedAlarmConfig.enabled ? alarmSummary : "未启用"}
               </Tag>
             ),
             children: (
@@ -1449,15 +1445,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                   )}
 
                   <Space size={8} wrap>
-                    <Tag color="default">
-                      {`已保存账号 ${alarmConfig.selectedEmails.length}`}
-                    </Tag>
-                    <Tag color="default">{`当前勾选 ${selectedCount}`}</Tag>
                     <Tag color="default">{`上次 ${alarmLastTriggeredLabel}`}</Tag>
                   </Space>
 
-                  {alarmConfig.lastMessage ? (
-                    <div className="debug-label">{alarmConfig.lastMessage}</div>
+                  {appliedAlarmConfig.lastMessage ? (
+                    <div className="debug-label">
+                      {appliedAlarmConfig.lastMessage}
+                    </div>
                   ) : null}
 
                   <Space size={8} wrap>
@@ -1468,7 +1462,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       onClick={() => {
                         void handleSaveAlarmConfig()
                       }}>
-                      保存设置
+                      应用定时设置
                     </Button>
                     <Button
                       loading={isAlarmTesting}
