@@ -301,7 +301,7 @@ export function AccountFormPanel({
 
     try {
       const result = await onFetchDuckEmail({
-        baselineEmail: form.getFieldValue("email"),
+        previousEmail: form.getFieldValue("email"),
         generateNew: true
       })
       form.setFieldsValue({

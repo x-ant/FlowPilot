@@ -1045,7 +1045,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
    * 这里生成后只回填账号表单；保存账号后，注册执行流程仍然从账号列表读取邮箱。
    *
    * @param options Duck 邮箱生成选项。
-   * @param options.baselineEmail 当前表单已有邮箱，用于避免重复返回旧值。
+   * @param options.previousEmail 点击生成前表单里的邮箱，用于避免重复返回旧值。
    * @param options.generateNew 是否要求 DuckDuckGo 生成新邮箱。
    * @return 生成成功的 Duck 邮箱和展示消息。
    */

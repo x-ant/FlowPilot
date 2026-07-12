@@ -11,7 +11,7 @@ export type DuckEmailResult = {
 }
 
 export type FetchDuckEmailOptions = {
-  baselineEmail?: string
+  previousEmail?: string
   generateNew?: boolean
 }
 
@@ -56,7 +56,7 @@ export const createDuckEmailRunner = (context: RunContext = {}) => {
    * 打开 DuckDuckGo 页面并获取一个 Duck 邮箱。
    *
    * @param options 获取选项。
-   * @param options.baselineEmail 当前表单已有邮箱，用于避免重复返回旧值。
+   * @param options.previousEmail 点击生成前表单里的邮箱，用于避免重复返回旧值。
    * @param options.generateNew 是否生成新邮箱；默认生成新邮箱。
    * @return 成功读取到的 Duck 邮箱和展示消息。
    */
@@ -80,7 +80,7 @@ export const createDuckEmailRunner = (context: RunContext = {}) => {
         func: fetchDuckEmailInPage,
         args: [
           {
-            baselineEmail: options.baselineEmail || "",
+            previousEmail: options.previousEmail || "",
             generateNew: options.generateNew ?? true
           }
         ]

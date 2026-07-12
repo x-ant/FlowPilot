@@ -1,5 +1,5 @@
 export type FetchDuckEmailPayload = {
-  baselineEmail?: string
+  previousEmail?: string
   generateNew?: boolean
 }
 
@@ -17,7 +17,7 @@ export type FetchDuckEmailResult = {
  * 不依赖扩展侧的模块导入。
  *
  * @param payload 页面执行参数。
- * @param payload.baselineEmail 当前表单里已有的邮箱，用于避免拿到旧地址。
+ * @param payload.previousEmail 点击生成前表单里的邮箱，用于避免拿到旧地址。
  * @param payload.generateNew 是否点击页面生成按钮获取新地址。
  * @return Duck 邮箱读取结果，成功时包含 `@duck.com` 地址。
  */
@@ -25,7 +25,7 @@ export const fetchDuckEmailInPage = async (
   payload: FetchDuckEmailPayload
 ): Promise<FetchDuckEmailResult> => {
   const generateNew = payload?.generateNew !== false
-  const baselineEmail = String(payload?.baselineEmail || "")
+  const previousEmail = String(payload?.previousEmail || "")
     .trim()
     .toLowerCase()
   const duckEmailPattern = /([a-z0-9._%+-]+@duck\.com)/i
@@ -145,6 +145,14 @@ export const fetchDuckEmailInPage = async (
   /**
    * 等待页面邮箱从旧值变化到可用的新值。
    *
+   * 因为 DuckDuckGo 页面生成邮箱时，DOM 可能有一个短暂刷新过程。页面文本可能一瞬间读到旧值、空值、临时值，或者刚更新但还没稳定。
+   * 不要第一次看到新邮箱就立刻返回，至少连续两次读到同一个新邮箱，才认为它稳定可用。
+   *
+   * 第二次读到相同邮箱就会 stableCount = 2，就说明可以返回了
+   * if (email === stableEmail) {
+   *   stableCount += 1
+   * }
+   *
    * @param blockedEmails 不允许返回的旧邮箱列表。
    * @return 稳定读取到的新 Duck 邮箱；超时返回空字符串。
    */
@@ -206,7 +214,7 @@ export const fetchDuckEmailInPage = async (
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     ;(button as HTMLElement).click()
     const nextEmail = await waitForEmailChange(
-      [currentEmail, baselineEmail].filter(Boolean)
+      [currentEmail, previousEmail].filter(Boolean)
     )
 
     if (nextEmail) {
