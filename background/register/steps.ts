@@ -2432,11 +2432,50 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
 
     const reusableTabId = targetTabId ?? (await findReusableOpenAiTabId())
+    const previousReusableTab = reusableTabId
+      ? await chrome.tabs.get(reusableTabId).catch(() => undefined)
+      : undefined
+    const previousReusableUrl = String(previousReusableTab?.url || "")
     const result = await openCodexAuthLink(normalizedTargetUrl, {
       cleanupSession: false,
       managementKey,
       targetTabId: reusableTabId
     })
+    if (
+      result.ok &&
+      typeof result.targetTab?.id === "number" &&
+      previousReusableUrl
+    ) {
+      const changedUrl = await waitForTabMatchingUrl(
+        result.targetTab.id,
+        (url) => {
+          return Boolean(url && url !== previousReusableUrl)
+        },
+        {
+          timeoutMs: 10000,
+          intervalMs: 300,
+          signal: getAbortSignal()
+        }
+      )
+
+      if (!changedUrl) {
+        const currentTab = await chrome.tabs
+          .get(result.targetTab.id)
+          .catch(() => undefined)
+        return {
+          ok: false,
+          message: `${result.message}；复用 tab 打开 OAuth 后 10 秒内仍停留在旧 URL，已停止后续判断，旧 URL：${previousReusableUrl}，当前 URL：${
+            currentTab?.url || "unknown"
+          }`,
+          targetTab: {
+            id: result.targetTab.id,
+            url: currentTab?.url || result.targetTab.url
+          }
+        }
+      }
+
+      result.targetTab.url = changedUrl
+    }
 
     return {
       ok: result.ok,
