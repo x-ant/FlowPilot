@@ -19,6 +19,11 @@ import type {
 } from "../types"
 import { abortableSleep, raceWithAbort, throwIfAborted } from "../utils/abort"
 import {
+  getOpenAiAuthUrlState,
+  isCodexOAuthCallbackUrl,
+  isOpenAiLoginPasswordUrl
+} from "../utils/openai-auth-url"
+import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
@@ -132,32 +137,6 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     "https://chatgpt.com/",
     "https://www.chatgpt.com/"
   ]
-  /**
-   * 判断是否是 Codex OAuth 完成后跳转出的本机回调地址。
-   *
-   * @param rawUrl 浏览器标签页当前 URL。
-   * @return 如果是带 code/state 的 localhost 回调地址则返回 true。
-   */
-  const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
-    try {
-      const parsed = new URL(String(rawUrl || ""))
-      if (!["http:", "https:"].includes(parsed.protocol)) {
-        return false
-      }
-
-      if (!["/auth/callback", "/codex/callback"].includes(parsed.pathname)) {
-        return false
-      }
-
-      const code = parsed.searchParams.get("code")?.trim()
-      const state = parsed.searchParams.get("state")?.trim()
-
-      return Boolean(code && state)
-    } catch {
-      return false
-    }
-  }
-
   type CodexAuthTabStateResult = {
     ok: boolean
     state: DetectCodexAuthPageState | "callback"
@@ -241,14 +220,48 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   ): Promise<CodexAuthTabStateResult> => {
     const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
     const currentUrl = String(currentTab?.url || "")
+    const urlState = getOpenAiAuthUrlState(currentUrl)
 
-    if (isCodexOAuthCallbackUrl(currentUrl)) {
-      return {
-        ok: true,
-        state: "callback",
-        message: "当前页面已跳转到 localhost 回调地址",
-        url: currentUrl
-      }
+    switch (urlState) {
+      case "oauth_callback":
+        return {
+          ok: true,
+          state: "callback",
+          message: "当前页面已跳转到 localhost 回调地址",
+          url: currentUrl
+        }
+      case "login_password":
+      case "register_password":
+        return {
+          ok: false,
+          state: "password",
+          message: isOpenAiLoginPasswordUrl(currentUrl)
+            ? "当前 URL 已进入登录密码页"
+            : "当前 URL 已进入密码页",
+          url: currentUrl
+        }
+      case "email_verification":
+        return {
+          ok: false,
+          state: "verification_pending",
+          message: "当前 URL 已进入邮箱验证码页",
+          url: currentUrl
+        }
+      case "oauth_consent":
+        return {
+          ok: true,
+          state: "oauth_consent_ready",
+          message: "当前 URL 已进入 OAuth 授权确认页",
+          url: currentUrl
+        }
+      case "phone_number_entry":
+      case "phone_verification":
+        return {
+          ok: false,
+          state: "extra_verification",
+          message: "当前 URL 已进入手机号验证相关页面",
+          url: currentUrl
+        }
     }
 
     try {

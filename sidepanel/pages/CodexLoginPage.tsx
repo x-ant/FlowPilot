@@ -722,6 +722,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       <AccountListPanel
         accountPage={accountPage}
         disabled={disabled}
+        showEmailGenerator={false}
         toolbarActions={
           isBatchRunning ? (
             <Button

@@ -15,6 +15,17 @@ import {
 } from "./phone-verification"
 import { abortableSleep } from "../utils/abort"
 import {
+  getOpenAiAuthUrlState,
+  isCodexOAuthCallbackUrl,
+  isOpenAiAddPhoneUrl,
+  isOpenAiChooseAccountUrl,
+  isOpenAiCodexConsentUrl,
+  isOpenAiEmailVerificationUrl,
+  isOpenAiPhoneVerificationUrl,
+  isOpenAiRegisterPasswordUrl,
+  isOpenAiRegisterProfileUrl
+} from "../utils/openai-auth-url"
+import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
@@ -153,19 +164,6 @@ const formatHeroSmsActivationSummary = (activation: HeroSmsActivation) => {
     .join("，")
 }
 
-const isCodexOAuthCallbackUrl = (rawUrl?: string) => {
-  try {
-    const url = new URL(String(rawUrl || ""))
-    return (
-      /^https?:$/.test(url.protocol) &&
-      ["localhost", "127.0.0.1"].includes(url.hostname) &&
-      url.pathname === "/auth/callback"
-    )
-  } catch {
-    return false
-  }
-}
-
 const isChatGptPageUrl = (rawUrl?: string) => {
   try {
     const url = new URL(String(rawUrl || ""))
@@ -201,29 +199,6 @@ const detectChatGptEntryPageReadyInPage = () => {
   return {
     ok: true,
     message: "ChatGPT 页面已加载并可注入"
-  }
-}
-
-const isOpenAiAddPhoneUrl = (rawUrl?: string) => {
-  try {
-    const url = new URL(String(rawUrl || ""))
-    return (
-      url.origin === "https://auth.openai.com" && url.pathname === "/add-phone"
-    )
-  } catch {
-    return false
-  }
-}
-
-const isOpenAiPhoneVerificationUrl = (rawUrl?: string) => {
-  try {
-    const url = new URL(String(rawUrl || ""))
-    return (
-      url.origin === "https://auth.openai.com" &&
-      url.pathname === "/phone-verification"
-    )
-  } catch {
-    return false
   }
 }
 
@@ -1227,6 +1202,19 @@ const submitRegisterProfileInPage = (
  * @return 已进入下一页时返回说明文案，否则返回空字符串。
  */
 const detectRegisterEmailSubmittedInPage = () => {
+  const pathname = window.location.pathname
+  if (pathname === "/create-account/password") {
+    return "当前 URL 已进入创建密码页，第二步无需重复提交邮箱"
+  }
+
+  if (pathname === "/email-verification") {
+    return "当前 URL 已进入邮箱验证码页，第二步无需重复提交"
+  }
+
+  if (pathname === "/about-you") {
+    return "当前 URL 已进入注册资料页，第二步无需重复提交"
+  }
+
   /**
    * 清理页面文本里的多余空白。
    *
@@ -1309,6 +1297,31 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   const detectRegisterAuthState = async (tabId: number) => {
     const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
     const currentUrl = String(currentTab?.url || "")
+    const urlState = getOpenAiAuthUrlState(currentUrl)
+
+    switch (urlState) {
+      case "login_password":
+      case "register_password":
+        return {
+          state: "password",
+          message: isOpenAiRegisterPasswordUrl(currentUrl)
+            ? "当前 URL 已进入创建密码页"
+            : "当前 URL 已进入密码页",
+          url: currentUrl
+        }
+      case "email_verification":
+        return {
+          state: "verification_pending",
+          message: "当前 URL 已进入邮箱验证码页",
+          url: currentUrl
+        }
+      case "register_profile":
+        return {
+          state: "register_profile",
+          message: "当前 URL 已进入注册资料页",
+          url: currentUrl
+        }
+    }
 
     try {
       await waitForTabLoaded(tabId)
@@ -1749,18 +1762,20 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
-    try {
-      await waitForTabLoaded(tabId)
-      const [detectResult] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: detectCodexAuthPageStateInPage
-      })
-      const detected = detectResult?.result
-      if (detected?.state !== "oauth_consent_ready") {
+    if (!isOpenAiCodexConsentUrl(currentUrl)) {
+      try {
+        await waitForTabLoaded(tabId)
+        const [detectResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: detectCodexAuthPageStateInPage
+        })
+        const detected = detectResult?.result
+        if (detected?.state !== "oauth_consent_ready") {
+          return null
+        }
+      } catch {
         return null
       }
-    } catch {
-      return null
     }
 
     const consentResult = await confirmCodexOAuthConsent(tabId)
@@ -2283,6 +2298,27 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    const profileUrl = await waitForTabMatchingUrl(
+      tabId,
+      isOpenAiRegisterProfileUrl,
+      {
+        timeoutMs: 15000,
+        intervalMs: 300,
+        signal: getAbortSignal()
+      }
+    )
+    if (!profileUrl) {
+      const currentTab = await chrome.tabs.get(tabId)
+      return {
+        ok: false,
+        message: "15 秒内未进入注册资料页 https://auth.openai.com/about-you",
+        targetTab: {
+          id: tabId,
+          url: currentTab.url
+        }
+      }
+    }
+
     await waitForTabLoaded(tabId)
     const [profileResult] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -2428,6 +2464,52 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    const authUrl = await waitForTabMatchingUrl(
+      tabId,
+      (url) => {
+        return (
+          isOpenAiChooseAccountUrl(url) ||
+          isOpenAiAddPhoneUrl(url) ||
+          isOpenAiPhoneVerificationUrl(url) ||
+          isOpenAiCodexConsentUrl(url)
+        )
+      },
+      {
+        timeoutMs: 15000,
+        intervalMs: 300,
+        signal: getAbortSignal()
+      }
+    )
+    const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+    const currentUrl = authUrl || currentTab?.url || ""
+    if (
+      isOpenAiAddPhoneUrl(currentUrl) ||
+      isOpenAiPhoneVerificationUrl(currentUrl) ||
+      isOpenAiCodexConsentUrl(currentUrl)
+    ) {
+      return {
+        ok: true,
+        message: `当前 URL 已越过账号选择页，无需重复选择账号：${currentUrl}`,
+        targetTab: {
+          id: tabId,
+          url: currentUrl
+        }
+      }
+    }
+
+    if (!isOpenAiChooseAccountUrl(currentUrl)) {
+      return {
+        ok: false,
+        message: `15 秒内未进入账号选择页 https://auth.openai.com/choose-an-account；当前 URL：${
+          currentUrl || "unknown"
+        }`,
+        targetTab: {
+          id: tabId,
+          url: currentUrl
+        }
+      }
+    }
+
     const targetAccountResult = await runPageActionInTab(tabId, {
       button: {
         texts: [normalizedEmail]
@@ -2437,10 +2519,32 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       failureMessage: `未找到目标账号卡片 ${normalizedEmail}`
     })
     if (targetAccountResult.ok) {
+      const nextUrl = await waitForTabMatchingUrl(
+        tabId,
+        (url) => {
+          return (
+            isOpenAiAddPhoneUrl(url) ||
+            isOpenAiPhoneVerificationUrl(url) ||
+            isOpenAiCodexConsentUrl(url)
+          )
+        },
+        {
+          timeoutMs: 10000,
+          intervalMs: 300,
+          signal: getAbortSignal()
+        }
+      )
       return {
         ok: true,
-        message: targetAccountResult.message,
-        targetTab: targetAccountResult.tab
+        message: nextUrl
+          ? `${targetAccountResult.message}；已进入下一步 URL：${nextUrl}`
+          : targetAccountResult.message,
+        targetTab: nextUrl
+          ? {
+              id: tabId,
+              url: nextUrl
+            }
+          : targetAccountResult.tab
       }
     }
 
@@ -2478,6 +2582,45 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     const skippedPhoneResult = await completeOAuthConsentIfReady(tabId)
     if (skippedPhoneResult) {
       return skippedPhoneResult
+    }
+
+    const phoneEntryUrl = await waitForTabMatchingUrl(
+      tabId,
+      (url) => {
+        return (
+          isOpenAiAddPhoneUrl(url) ||
+          isOpenAiCodexConsentUrl(url) ||
+          isCodexOAuthCallbackUrl(url)
+        )
+      },
+      {
+        timeoutMs: 15000,
+        intervalMs: 300,
+        signal: getAbortSignal()
+      }
+    )
+    if (
+      isOpenAiCodexConsentUrl(phoneEntryUrl) ||
+      isCodexOAuthCallbackUrl(phoneEntryUrl)
+    ) {
+      const consentResult = await completeOAuthConsentIfReady(tabId)
+      if (consentResult) {
+        return consentResult
+      }
+    }
+
+    if (!isOpenAiAddPhoneUrl(phoneEntryUrl)) {
+      const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+      return {
+        ok: false,
+        message: `未进入手机号填写页 https://auth.openai.com/add-phone，已停止买号；当前 URL：${
+          currentTab?.url || phoneEntryUrl || "unknown"
+        }`,
+        targetTab: {
+          id: tabId,
+          url: currentTab?.url || phoneEntryUrl
+        }
+      }
     }
 
     let activation: HeroSmsActivation | null = null

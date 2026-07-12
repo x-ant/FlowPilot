@@ -17,6 +17,18 @@ export type DetectCpaOAuthStartStateResult = {
   url: string
 }
 
+/**
+ * 注入 OpenAI 页面后识别到的页面处理状态。
+ *
+ * 这里描述页面内容和按钮状态，不直接等同于 URL：
+ * - oauth_consent_ready：OAuth 授权确认页存在可点击的继续按钮。
+ * - verification_invalid_code：验证码页面提示验证码错误。
+ * - verification_pending：页面仍在邮箱或手机验证码阶段，等待验证码通过。
+ * - register_profile：注册资料页已经出现。
+ * - password：页面处于登录密码或注册密码阶段。
+ * - extra_verification：遇到手机号等额外验证页。
+ * - other：当前页面无法按已知流程处理。
+ */
 export type DetectCodexAuthPageState =
   | "oauth_consent_ready"
   | "verification_invalid_code"
@@ -313,6 +325,53 @@ export const detectCodexAuthPageStateInPage =
     const pageText = normalizeText(
       document.body?.innerText || document.body?.textContent || ""
     )
+    const getOpenAiAuthUrlState = (rawUrl: string) => {
+      try {
+        const url = new URL(rawUrl)
+        if (url.origin !== "https://auth.openai.com") {
+          return "other"
+        }
+
+        if (url.pathname === "/log-in") {
+          return "login_email_entry"
+        }
+
+        if (url.pathname === "/log-in/password") {
+          return "login_password"
+        }
+
+        if (url.pathname === "/create-account/password") {
+          return "register_password"
+        }
+
+        if (url.pathname === "/email-verification") {
+          return "email_verification"
+        }
+
+        if (url.pathname === "/about-you") {
+          return "register_profile"
+        }
+
+        if (url.pathname === "/add-phone") {
+          return "phone_number_entry"
+        }
+
+        if (url.pathname === "/phone-verification") {
+          return "phone_verification"
+        }
+
+        if (
+          /^\/sign-in-with-chatgpt\/[^/?#]+\/consent$/i.test(url.pathname)
+        ) {
+          return "oauth_consent"
+        }
+
+        return "other"
+      } catch {
+        return "other"
+      }
+    }
+    const urlState = getOpenAiAuthUrlState(location.href)
     const isVisible = (element: Element | null) => {
       if (!element) {
         return false
@@ -366,81 +425,20 @@ export const detectCodexAuthPageStateInPage =
       )
     }) as HTMLElement | undefined
 
-    const verificationCodeInput = Array.from(
-      document.querySelectorAll(
-        "input[name='code'], input[name='otp'], input[autocomplete='one-time-code'], input[inputmode='numeric'], input[type='text'][maxlength='6'], input[type='tel'][maxlength='6']"
-      )
-    ).find((element) => {
-      return isVisible(element)
-    })
-    const verificationForm = document.querySelector(
-      'form[action*="email-verification" i]'
-    )
-    const resendAction = Array.from(
-      document.querySelectorAll("button, a, [role='button']")
-    ).find((element) => {
-      return (
-        isVisible(element) &&
-        /重新发送电子邮件|重新发送验证码|resend|send again|再送信/i.test(
-          getActionText(element)
-        )
-      )
-    })
     const invalidVerificationCodePattern =
       /代码不正确|验证码不正确|验证码错误|验证码无效|无效的验证码|code\s+(?:is\s+)?incorrect|incorrect\s+code|invalid\s+code|wrong\s+code|try\s+again|コードが正しくありません|無効なコード|認証コードが正しくありません/i
-    const verificationPage =
-      Boolean(verificationForm) ||
-      Boolean(resendAction) ||
-      Boolean(verificationCodeInput) ||
-      /\/email-verification(?:[/?#]|$)/i.test(location.href)
-    const passwordInput = document.querySelector(
-      "input[type='password'], input[autocomplete='current-password'], input[name='password']"
-    )
-    const registerProfileInput = document.querySelector(
-      [
-        "input[name='name']",
-        "input[autocomplete='name']",
-        "input[name='age']",
-        "input[name='birthday']",
-        "input[name='year']",
-        "input[name*='birth' i]",
-        "input[placeholder*='姓名']",
-        "input[placeholder*='name' i]",
-        "input[placeholder*='年龄']",
-        "input[placeholder*='出生年份']",
-        "input[placeholder*='出生年']",
-        "input[aria-label*='姓名']",
-        "input[aria-label*='name' i]",
-        "input[aria-label*='年龄']",
-        "input[aria-label*='出生年份']",
-        "input[aria-label*='出生年']"
-      ].join(",")
-    )
-    const registerProfilePage =
-      /\/about-you(?:[/?#]|$)/i.test(location.href) ||
-      (Boolean(registerProfileInput) &&
-        /姓名|名称|年龄|生日|出生年份|出生年|name|age|birthday|birth year/i.test(
-          pageText
-        ))
-    const passwordPage =
-      /\/password(?:[/?#]|$)/i.test(location.href) ||
-      (Boolean(passwordInput) &&
-        /password|密码|sign\s+in|log\s+in|继续|下一步/i.test(pageText))
-    const addPhonePage =
-      /add[\s-]*(?:a\s+)?phone|添加(?:手机|手机号|电话号码)|验证(?:你的|您)?(?:手机|手机号|电话号码)|phone\s+number|verify\s+(?:your\s+)?phone/i.test(
-        pageText
-      )
-    const addEmailPage =
-      /add[\s-]*email|添加(?:电子邮件|邮箱)|provide\s+(?:an?\s+)?email\s+address|email\s+address\s+required/i.test(
-        pageText
-      )
     const oauthConsentPage =
+      urlState === "oauth_consent" ||
       Boolean(consentForm) ||
       /\/sign-in-with-chatgpt\/[^/?#]+\/consent(?:[/?#]|$)/i.test(
         location.pathname
       )
 
-    if (verificationPage && invalidVerificationCodePattern.test(pageText)) {
+    if (
+      (urlState === "email_verification" ||
+        urlState === "phone_verification") &&
+      invalidVerificationCodePattern.test(pageText)
+    ) {
       return {
         ok: false,
         state: "verification_invalid_code",
@@ -449,38 +447,56 @@ export const detectCodexAuthPageStateInPage =
       }
     }
 
-    if (verificationPage) {
+    if (
+      urlState === "email_verification" ||
+      urlState === "phone_verification"
+    ) {
       return {
         ok: false,
         state: "verification_pending",
-        message: "当前仍在邮箱验证码页",
+        message:
+          urlState === "phone_verification"
+            ? "当前 URL 已进入手机验证码页"
+            : "当前 URL 已进入邮箱验证码页",
         url: location.href
       }
     }
 
-    if (passwordPage) {
+    if (urlState === "login_password" || urlState === "register_password") {
       return {
         ok: false,
         state: "password",
-        message: "当前仍在密码页",
+        message:
+          urlState === "register_password"
+            ? "当前 URL 已进入创建密码页"
+            : "当前 URL 已进入登录密码页",
         url: location.href
       }
     }
 
-    if (registerProfilePage) {
+    if (urlState === "register_profile") {
       return {
         ok: true,
         state: "register_profile",
-        message: "已进入注册资料页",
+        message: "当前 URL 已进入注册资料页",
         url: location.href
       }
     }
 
-    if (addPhonePage || addEmailPage) {
+    if (urlState === "login_email_entry") {
+      return {
+        ok: false,
+        state: "other",
+        message: "当前 URL 已进入登录邮箱页",
+        url: location.href
+      }
+    }
+
+    if (urlState === "phone_number_entry") {
       return {
         ok: false,
         state: "extra_verification",
-        message: "当前进入了额外验证/补充信息页面，不是 OAuth 授权确认页",
+        message: "当前 URL 已进入手机号填写页",
         url: location.href
       }
     }

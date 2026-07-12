@@ -146,6 +146,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     storageKeys: REGISTER_STORAGE_KEYS,
     log,
     setStatus,
+    requireEmailGenerator: true,
     stepCount: REGISTER_STEP_COUNT
   })
   const {

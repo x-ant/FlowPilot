@@ -26,6 +26,19 @@ export type OpenCodexAuthLinkApiResponse = OpenCodexAuthLinkResponse & {
   cpaOAuthState?: string
 }
 
+/**
+ * OpenAI 认证流程的处理状态。
+ *
+ * 这个状态面向“流程下一步怎么走”，和 URL 状态不是一回事：
+ * - oauth_consent_ready：授权确认页已经可继续。
+ * - verification_invalid_code：邮箱或手机验证码页面提示验证码错误。
+ * - verification_pending：仍停留在邮箱或手机验证码页，验证码尚未通过。
+ * - register_profile：注册资料页已经出现，可以继续填写资料。
+ * - password：当前需要填写登录密码或注册密码。
+ * - extra_verification：登录流程遇到额外验证，例如手机号相关页面。
+ * - callback：已经拿到本机 OAuth callback。
+ * - other：暂时无法归类，由调用方继续等待或报错。
+ */
 export type CodexAuthFlowState =
   | "oauth_consent_ready"
   | "verification_invalid_code"

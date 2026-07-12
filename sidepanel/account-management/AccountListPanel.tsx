@@ -41,6 +41,7 @@ type AccountListPanelAccountPage = Pick<
 type AccountListPanelProps = {
   accountPage: AccountListPanelAccountPage
   disabled: boolean
+  showEmailGenerator?: boolean
   stepCount?: number
   stepLabels?: Partial<Record<number, AccountProgressStepMeta>>
   toolbarActions?: ReactNode
@@ -57,6 +58,7 @@ type AccountListPanelProps = {
  * @param props 组件属性。
  * @param props.accountPage 账号页共享状态和账号操作方法。
  * @param props.disabled 是否禁用列表操作。
+ * @param props.showEmailGenerator 是否在 163 标签里展示邮箱生成方式。
  * @param props.stepCount 当前流程总步骤数。
  * @param props.stepLabels 当前流程步骤文案。
  * @param props.toolbarActions 列表工具栏里的额外操作按钮。
@@ -67,6 +69,7 @@ type AccountListPanelProps = {
 export function AccountListPanel({
   accountPage,
   disabled,
+  showEmailGenerator = true,
   stepCount = STEP_COUNT,
   stepLabels,
   toolbarActions,
@@ -251,7 +254,9 @@ export function AccountListPanel({
                       </span>
                       <Space className="account-status-tags" size={6}>
                         <Tag variant="filled">
-                          {getManagedAccountProviderLabel(account)}
+                          {getManagedAccountProviderLabel(account, {
+                            showEmailGenerator
+                          })}
                         </Tag>
                         <Tag variant="filled">{`${displayProgress}/${stepCount}`}</Tag>
                         <Tag variant="filled" color={statusMeta.color}>

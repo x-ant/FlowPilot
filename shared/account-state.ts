@@ -444,10 +444,15 @@ export const getManagedAccountLabel = (
  * @return 账号列表里展示的邮箱服务文案。
  */
 export const getManagedAccountProviderLabel = (
-  account: Pick<ManagedAccount, "mailProvider" | "emailGenerator">
+  account: Pick<ManagedAccount, "mailProvider" | "emailGenerator">,
+  options: { showEmailGenerator?: boolean } = {}
 ) => {
   if (account.mailProvider !== "163") {
     return "2925"
+  }
+
+  if (options.showEmailGenerator === false) {
+    return "163"
   }
 
   if (account.emailGenerator === "duckduckgo") {
@@ -556,10 +561,13 @@ export const normalizeRegisterRunLock = (
  * 规范化本地保存的账号数据。
  *
  * @param value 从浏览器本地存储读取到的单个账号。
+ * @param options 规范化选项。
+ * @param options.requireEmailGenerator 是否要求 163 账号必须有邮箱生成方式。
  * @return 账号有效时返回规范化对象；邮箱服务缺失或账号必填字段缺失时返回 null。
  */
 export const normalizeStoredAccount = (
-  value: unknown
+  value: unknown,
+  options: { requireEmailGenerator?: boolean } = {}
 ): ManagedAccount | null => {
   if (!value || typeof value !== "object") {
     return null
@@ -586,7 +594,11 @@ export const normalizeStoredAccount = (
     mailProvider === "163"
       ? normalizeEmailGenerator(record.emailGenerator)
       : undefined
-  if (mailProvider === "163" && !emailGenerator) {
+  if (
+    options.requireEmailGenerator &&
+    mailProvider === "163" &&
+    !emailGenerator
+  ) {
     return null
   }
 
@@ -727,10 +739,13 @@ export const upsertManagedAccount = (
  * 从浏览器本地存储加载某个页面的账号配置。
  *
  * @param keys 当前页面使用的存储 key。
+ * @param options 账号读取选项。
+ * @param options.requireEmailGenerator 是否要求 163 账号必须有邮箱生成方式。
  * @return 页面状态，包括 CPA 配置和账号列表。
  */
 export const loadAccountPageState = async (
-  keys: AccountPageStorageKeys
+  keys: AccountPageStorageKeys,
+  options: { requireEmailGenerator?: boolean } = {}
 ): Promise<AccountPageState> => {
   const storage = getStorage()
   if (!storage) {
@@ -745,7 +760,7 @@ export const loadAccountPageState = async (
           ? (result?.[keys.accounts] as unknown[])
           : []
         const accounts = rawAccounts
-          .map((account) => normalizeStoredAccount(account))
+          .map((account) => normalizeStoredAccount(account, options))
           .filter((account): account is ManagedAccount => Boolean(account))
 
         resolve({

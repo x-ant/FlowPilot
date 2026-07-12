@@ -27,6 +27,7 @@ type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys
   log: UiLogger
   setStatus: (status: string) => void
+  requireEmailGenerator?: boolean
   stepCount?: number
 }
 
@@ -40,6 +41,7 @@ type UseAccountPageStateOptions = {
  * @param options.storageKeys 当前功能页使用的本地存储 key。
  * @param options.log 写入侧边栏执行日志的对象。
  * @param options.setStatus 更新顶部状态标签的函数。
+ * @param options.requireEmailGenerator 是否要求 163 账号必须选择邮箱生成方式。
  * @param options.stepCount 当前功能页总步骤数，默认使用登录流程的 6 步。
  * @return 页面组件需要读取和调用的账号状态与操作方法。
  */
@@ -47,6 +49,7 @@ export const useAccountPageState = ({
   storageKeys,
   log,
   setStatus,
+  requireEmailGenerator = false,
   stepCount = STEP_COUNT
 }: UseAccountPageStateOptions) => {
   const setStatusRef = useRef(setStatus)
@@ -156,7 +159,9 @@ export const useAccountPageState = ({
 
   useEffect(() => {
     void (async () => {
-      const state = await loadAccountPageState(storageKeys)
+      const state = await loadAccountPageState(storageKeys, {
+        requireEmailGenerator
+      })
       setCpaUrlState(state.cpaUrl)
       setCpaManagementKeyState(state.cpaManagementKey)
       setAccountsState(state.accounts)
@@ -164,7 +169,12 @@ export const useAccountPageState = ({
         state.accounts.length > 0 ? "已加载本地账号" : "已加载本地配置"
       )
     })()
-  }, [storageKeys.accounts, storageKeys.cpaManagementKey, storageKeys.cpaUrl])
+  }, [
+    requireEmailGenerator,
+    storageKeys.accounts,
+    storageKeys.cpaManagementKey,
+    storageKeys.cpaUrl
+  ])
 
   useEffect(() => {
     const handleStorageChanged = (
@@ -193,7 +203,9 @@ export const useAccountPageState = ({
           : []
         setAccountsState(
           rawAccounts
-            .map((account) => normalizeStoredAccount(account))
+            .map((account) =>
+              normalizeStoredAccount(account, { requireEmailGenerator })
+            )
             .filter((account): account is ManagedAccount => Boolean(account))
         )
       }
@@ -203,7 +215,12 @@ export const useAccountPageState = ({
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChanged)
     }
-  }, [storageKeys.accounts, storageKeys.cpaManagementKey, storageKeys.cpaUrl])
+  }, [
+    requireEmailGenerator,
+    storageKeys.accounts,
+    storageKeys.cpaManagementKey,
+    storageKeys.cpaUrl
+  ])
 
   useEffect(() => {
     const existingEmails = new Set(
@@ -272,7 +289,7 @@ export const useAccountPageState = ({
       return
     }
 
-    if (mailProvider === "163" && !emailGenerator) {
+    if (requireEmailGenerator && mailProvider === "163" && !emailGenerator) {
       setStatus("请选择邮箱生成方式")
       log.warn("163 邮箱账号需要选择邮箱生成方式")
       return

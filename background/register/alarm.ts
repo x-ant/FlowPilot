@@ -298,7 +298,9 @@ const startRegisterBatchJob = async ({
     await releaseRegisterRunLock(existingLock.runId)
   }
 
-  const state = await loadAccountPageState(REGISTER_STORAGE_KEYS)
+  const state = await loadAccountPageState(REGISTER_STORAGE_KEYS, {
+    requireEmailGenerator: true
+  })
   const cpaUrl = state.cpaUrl.trim()
   const cpaManagementKey = state.cpaManagementKey.trim()
   if (!cpaUrl || !cpaManagementKey) {
@@ -538,7 +540,9 @@ const clearStaleRegisterRunLock = async () => {
     }
   }
 
-  const state = await loadAccountPageState(REGISTER_STORAGE_KEYS)
+  const state = await loadAccountPageState(REGISTER_STORAGE_KEYS, {
+    requireEmailGenerator: true
+  })
   const now = Date.now()
   const nextAccounts = state.accounts.map((account) => {
     if (account.status !== "running") {
