@@ -2443,7 +2443,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    */
   const chooseRegisterLoginAccount = async (
     tabId: number,
-    email: string
+    email: string,
+    onLog?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -2482,6 +2483,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     )
     const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
     const currentUrl = authUrl || currentTab?.url || ""
+    onLog?.(
+      `Step 5 账号选择页检测：命中 URL=${authUrl || "未命中"}；当前 tab URL=${
+        currentTab?.url || "unknown"
+      }；用于判断 URL=${currentUrl || "unknown"}`
+    )
+
     if (
       isOpenAiAddPhoneUrl(currentUrl) ||
       isOpenAiPhoneVerificationUrl(currentUrl) ||
@@ -2498,6 +2505,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
 
     if (!isOpenAiChooseAccountUrl(currentUrl)) {
+      onLog?.(`Step 5 未识别账号选择页，停止点击账号卡片；当前 URL=${currentUrl || "unknown"}`)
       return {
         ok: false,
         message: `15 秒内未进入账号选择页 https://auth.openai.com/choose-an-account；当前 URL：${
@@ -2510,6 +2518,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    onLog?.(`Step 5 已进入账号选择页，准备点击账号卡片 ${normalizedEmail}`)
     const targetAccountResult = await runPageActionInTab(tabId, {
       button: {
         texts: [normalizedEmail]
@@ -2560,7 +2569,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    *
    * @param tabId 手机号验证页面标签页 ID。
    * @param options HeroSMS 接码配置。
-   * @param oauthStartedAt 验证开始时间戳，用于后面判断是重新拿OAuhtUrl，还是从重新拿手机号
+   * @param oauthStartedAt 验证开始时间戳，用于后面判断是重新拿OAuhtUrl，还是从重新拿手机号。
    * @return 手机号提交、短信验证码读取和提交结果。
    */
   const completeRegisterPhoneVerification = async (
@@ -3053,7 +3062,11 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     const email = account.email
     const password = account.password
-    const firstChoice = await chooseRegisterLoginAccount(tabId, email)
+    const firstChoice = await chooseRegisterLoginAccount(
+      tabId,
+      email,
+      onFallbackLog
+    )
     if (firstChoice.ok) {
       return firstChoice
     }
@@ -3222,7 +3235,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     onFallbackLog?.("登录兜底：正在重新选择目标账号卡片")
     const secondChoice = await chooseRegisterLoginAccount(
       refreshResult.targetTab.id,
-      email
+      email,
+      onFallbackLog
     )
     onFallbackLog?.(`登录兜底：${secondChoice.message}`)
     return {
