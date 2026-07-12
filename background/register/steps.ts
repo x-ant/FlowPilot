@@ -871,18 +871,33 @@ const submitRegisterProfileInPage = (
    * @return 规范化后的字段上下文。
    */
   const getFieldContextText = (element: Element) => {
+    /**
+     * 读取 aria 关联标签文本，避免只靠父级 DOM 时漏掉无包裹 label 的字段。
+     *
+     * @param attributeName aria-labelledby 或 aria-describedby。
+     * @return 关联元素的合并文本。
+     */
+    const getReferencedText = (attributeName: string) => {
+      return String(element.getAttribute(attributeName) || "")
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent || "")
+        .filter(Boolean)
+        .join(" ")
+    }
     const contextNodes = [
       element,
       element.closest("label"),
       element.closest("fieldset"),
-      element.closest("form"),
       element.parentElement,
-      element.parentElement?.parentElement
+      element.parentElement?.parentElement,
+      element.parentElement?.parentElement?.parentElement
     ]
 
     return normalizeText(
-      contextNodes
-        .map((node) => {
+      [
+        getReferencedText("aria-labelledby"),
+        getReferencedText("aria-describedby"),
+        ...contextNodes.map((node) => {
           return [
             node?.textContent,
             node?.getAttribute?.("aria-label"),
@@ -891,6 +906,7 @@ const submitRegisterProfileInPage = (
             .filter(Boolean)
             .join(" ")
         })
+      ]
         .filter(Boolean)
         .join(" ")
     )
@@ -946,9 +962,16 @@ const submitRegisterProfileInPage = (
       "[role='spinbutton'][aria-label*='year' i]",
       "[role='spinbutton'][aria-label*='年']",
       "input[name='year']",
+      "input[name*='birth' i]",
       "input[placeholder*='year' i]",
+      "input[placeholder*='出生年份']",
+      "input[placeholder*='出生年']",
+      "input[placeholder*='哪一年']",
       "input[placeholder*='年']",
       "input[aria-label*='year' i]",
+      "input[aria-label*='出生年份']",
+      "input[aria-label*='出生年']",
+      "input[aria-label*='哪一年']",
       "input[aria-label*='年']"
     ])
     const month = findInput([
