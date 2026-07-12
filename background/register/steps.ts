@@ -82,6 +82,7 @@ export type CodexRegisterStepResponse = {
   message: string
   needRefreshOAuth?: boolean
   needsManualReview?: boolean
+  verificationRequestedAt?: number
   oauthStartedAt?: number
   cpaOAuthState?: string
   callbackUrl?: string
@@ -523,6 +524,17 @@ const OPENAI_CONTINUE_BUTTON_TEXTS = [
   "继续",
   "下一步",
   "提交"
+]
+
+const OPENAI_REGISTER_PASSWORD_INPUT_SELECTORS = [
+  "input[type='password']",
+  "input[autocomplete='new-password']",
+  "input[name='password']",
+  "input[id*='password' i]",
+  "input[placeholder*='password' i]",
+  "input[placeholder*='密码']",
+  "input[aria-label*='password' i]",
+  "input[aria-label*='密码']"
 ]
 
 const OPENAI_PHONE_RESEND_BUTTON_TEXTS = [
@@ -1289,6 +1301,164 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
+   * 读取当前 OpenAI 注册页状态。
+   *
+   * @param tabId 注册流程标签页 ID。
+   * @return 页面状态；读取失败时返回 other，调用方决定是否继续等待。
+   */
+  const detectRegisterAuthState = async (tabId: number) => {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
+    const currentUrl = String(currentTab?.url || "")
+
+    try {
+      await waitForTabLoaded(tabId)
+      const [detectResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: detectCodexAuthPageStateInPage
+      })
+      const detected = detectResult?.result
+
+      return {
+        state: detected?.state || "other",
+        message: detected?.message || "未识别注册认证页状态",
+        url: detected?.url || currentUrl
+      }
+    } catch (error) {
+      return {
+        state: "other",
+        message:
+          error instanceof Error ? error.message : "注册认证页状态读取失败",
+        url: currentUrl
+      }
+    }
+  }
+
+  /**
+   * 等待注册邮箱提交后的页面进入指定状态。
+   *
+   * @param tabId 注册流程标签页 ID。
+   * @param expectedStates 可接受的页面状态。
+   * @param timeoutMs 最长等待毫秒数。
+   * @return 最后一次读取到的页面状态。
+   */
+  const waitForRegisterAuthState = async (
+    tabId: number,
+    expectedStates: string[],
+    timeoutMs: number
+  ) => {
+    const startedAt = Date.now()
+    let lastState = await detectRegisterAuthState(tabId)
+
+    while (Date.now() - startedAt < timeoutMs) {
+      throwIfRunAborted()
+      lastState = await detectRegisterAuthState(tabId)
+      if (expectedStates.includes(lastState.state)) {
+        return lastState
+      }
+
+      await abortableSleep(500, getAbortSignal())
+    }
+
+    return lastState
+  }
+
+  /**
+   * 注册邮箱提交后，如果 OpenAI 要求创建密码，则填写账号注册密码并继续。
+   *
+   * @param tabId 注册流程标签页 ID。
+   * @param password 账号管理里保存的注册密码。
+   * @return 未出现密码页时返回跳过说明；出现密码页时返回填写结果。
+   */
+  const submitRegisterPasswordIfNeeded = async (
+    tabId: number,
+    password: string
+  ): Promise<CodexRegisterStepResponse> => {
+    const state = await waitForRegisterAuthState(
+      tabId,
+      ["password", "verification_pending", "register_profile"],
+      10000
+    )
+
+    if (
+      state.state === "verification_pending" ||
+      state.state === "register_profile"
+    ) {
+      return {
+        ok: true,
+        message: state.message,
+        targetTab: {
+          id: tabId,
+          url: state.url
+        }
+      }
+    }
+
+    if (state.state !== "password") {
+      return {
+        ok: true,
+        message: `提交邮箱后未检测到创建密码页；${state.message}`,
+        targetTab: {
+          id: tabId,
+          url: state.url
+        }
+      }
+    }
+
+    const normalizedPassword = String(password || "")
+    if (!normalizedPassword) {
+      return {
+        ok: false,
+        message: "当前已进入创建密码页，但账号没有注册密码",
+        targetTab: {
+          id: tabId,
+          url: state.url
+        }
+      }
+    }
+
+    const verificationRequestedAt = Date.now()
+    const passwordResult = await runPageActionInTab(tabId, {
+      fields: [
+        {
+          selectors: OPENAI_REGISTER_PASSWORD_INPUT_SELECTORS,
+          value: normalizedPassword
+        }
+      ],
+      button: {
+        texts: OPENAI_CONTINUE_BUTTON_TEXTS,
+        triggerMode: "requestSubmit"
+      },
+      timeoutMs: 15000,
+      successMessage: "已填写注册密码并点击继续",
+      failureMessage: "未找到创建密码页的密码输入框或继续按钮"
+    })
+
+    if (!passwordResult.ok) {
+      return {
+        ok: false,
+        message: `${state.message}；${passwordResult.message}`,
+        targetTab: passwordResult.tab
+      }
+    }
+
+    const nextState = await waitForRegisterAuthState(
+      tabId,
+      ["verification_pending", "register_profile"],
+      15000
+    )
+
+    return {
+      ok: true,
+      message: `${state.message}；${passwordResult.message}；${nextState.message}`,
+      verificationRequestedAt,
+      targetTab: {
+        id: tabId,
+        url: nextState.url || passwordResult.tab?.url
+      }
+    }
+  }
+
+  /**
    * 准备注册时提交给 OpenAI 的实际邮箱。
    *
    * 注册流程只使用账号列表里已经保存的注册邮箱。
@@ -1498,7 +1668,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       url: ""
     }
 
-    while (Date.now() - startedAt < 12000) {
+    while (Date.now() - startedAt < 5000) {
       throwIfRunAborted()
 
       const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
@@ -1531,11 +1701,23 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         return lastState
       }
 
+      if (lastState.state === "register_profile") {
+        return lastState
+      }
+
       if (lastState.state !== "verification_pending") {
         return lastState
       }
 
       await abortableSleep(500, getAbortSignal())
+    }
+
+    if (lastState.state === "verification_pending") {
+      return {
+        ...lastState,
+        state: "other",
+        message: `${lastState.message}；5 秒内未发现验证码错误，继续等待注册资料页`
+      }
     }
 
     return lastState
@@ -1728,15 +1910,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * Step 2：提交注册邮箱，必要时先点击 GPT 注册/登录入口。
    *
    * 有注册/登录入口按钮时先点击入口；没有入口按钮时跳过点击。
-   * 后续统一填写邮箱并点击继续。
-   * 如果页面已经进入密码页或验证码页，会视为已完成。
+   * 后续统一填写邮箱并点击继续；如果进入创建密码页，则填写注册密码后继续。
+   * 如果页面已经进入验证码页或注册资料页，会视为已完成。
    *
    * @param email 要注册的邮箱。
+   * @param password 要设置的注册密码。
    * @param tabId Step 1 打开的 GPT 页面标签页 ID。
    * @return 邮箱提交结果。
    */
   const clickRegisterAndSubmitEmail = async (
     email: string,
+    password: string,
     tabId: number
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
@@ -1840,10 +2024,15 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         submittedMessage = ""
       }
       if (submittedMessage) {
+        const passwordResult = await submitRegisterPasswordIfNeeded(
+          tabId,
+          password
+        )
         return {
-          ok: true,
-          message: submittedMessage,
-          targetTab: submitResult.tab
+          ok: passwordResult.ok,
+          message: `${submittedMessage}；${passwordResult.message}`,
+          verificationRequestedAt: passwordResult.verificationRequestedAt,
+          targetTab: passwordResult.targetTab || submitResult.tab
         }
       }
 
@@ -1856,12 +2045,19 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
 
+    const passwordResult = await submitRegisterPasswordIfNeeded(tabId, password)
+
     return {
-      ok: true,
-      message: entryMessage
-        ? `${entryMessage}；${submitResult.message}`
-        : submitResult.message,
-      targetTab: submitResult.tab
+      ok: passwordResult.ok,
+      message: [
+        entryMessage,
+        submitResult.message,
+        passwordResult.message
+      ]
+        .filter(Boolean)
+        .join("；"),
+      verificationRequestedAt: passwordResult.verificationRequestedAt,
+      targetTab: passwordResult.targetTab || submitResult.tab
     }
   }
 

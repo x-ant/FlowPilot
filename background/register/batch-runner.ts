@@ -158,6 +158,7 @@ export const runManagedRegisterFlow = async (
 
     const step2Result = await runner.clickRegisterAndSubmitEmail(
       workingAccount.email,
+      workingAccount.password,
       registerTabId
     )
     if (!step2Result.ok) {
@@ -172,7 +173,7 @@ export const runManagedRegisterFlow = async (
     const step3Result = await runner.fetchAndSubmitRegisterVerificationCode(
       registerTabId,
       workingAccount,
-      verificationRequestedAt,
+      step2Result.verificationRequestedAt || verificationRequestedAt,
       (message) => {
         onStage(2, message)
       }

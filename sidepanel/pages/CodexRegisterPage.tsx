@@ -496,7 +496,15 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           password: preparedResult.account.password,
           lastMessage: preparedResult.message
         })
-        return clickRegisterAndSubmitEmail(preparedResult.account.email, tabId)
+        const submitResult = await clickRegisterAndSubmitEmail(
+          preparedResult.account.email,
+          preparedResult.account.password,
+          tabId
+        )
+        if (submitResult.verificationRequestedAt) {
+          setDebugVerificationRequestedAt(submitResult.verificationRequestedAt)
+        }
+        return submitResult
       },
       failureStatus: "提交注册邮箱失败",
       successStatus: "已提交注册邮箱",

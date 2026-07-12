@@ -30,6 +30,7 @@ export type CodexAuthFlowState =
   | "oauth_consent_ready"
   | "verification_invalid_code"
   | "verification_pending"
+  | "register_profile"
   | "password"
   | "extra_verification"
   | "callback"

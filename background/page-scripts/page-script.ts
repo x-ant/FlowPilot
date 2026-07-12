@@ -21,6 +21,7 @@ export type DetectCodexAuthPageState =
   | "oauth_consent_ready"
   | "verification_invalid_code"
   | "verification_pending"
+  | "register_profile"
   | "password"
   | "extra_verification"
   | "other"
@@ -395,6 +396,32 @@ export const detectCodexAuthPageStateInPage =
     const passwordInput = document.querySelector(
       "input[type='password'], input[autocomplete='current-password'], input[name='password']"
     )
+    const registerProfileInput = document.querySelector(
+      [
+        "input[name='name']",
+        "input[autocomplete='name']",
+        "input[name='age']",
+        "input[name='birthday']",
+        "input[name='year']",
+        "input[name*='birth' i]",
+        "input[placeholder*='姓名']",
+        "input[placeholder*='name' i]",
+        "input[placeholder*='年龄']",
+        "input[placeholder*='出生年份']",
+        "input[placeholder*='出生年']",
+        "input[aria-label*='姓名']",
+        "input[aria-label*='name' i]",
+        "input[aria-label*='年龄']",
+        "input[aria-label*='出生年份']",
+        "input[aria-label*='出生年']"
+      ].join(",")
+    )
+    const registerProfilePage =
+      /\/about-you(?:[/?#]|$)/i.test(location.href) ||
+      (Boolean(registerProfileInput) &&
+        /姓名|名称|年龄|生日|出生年份|出生年|name|age|birthday|birth year/i.test(
+          pageText
+        ))
     const passwordPage =
       /\/password(?:[/?#]|$)/i.test(location.href) ||
       (Boolean(passwordInput) &&
@@ -436,6 +463,15 @@ export const detectCodexAuthPageStateInPage =
         ok: false,
         state: "password",
         message: "当前仍在密码页",
+        url: location.href
+      }
+    }
+
+    if (registerProfilePage) {
+      return {
+        ok: true,
+        state: "register_profile",
+        message: "已进入注册资料页",
         url: location.href
       }
     }
