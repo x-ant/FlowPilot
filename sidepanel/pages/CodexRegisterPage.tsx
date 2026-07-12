@@ -76,7 +76,7 @@ const REGISTER_FLOW_STEPS = {
     label: "3 提交验证码"
   },
   4: {
-    label: "4 完成账户创建并继续"
+    label: "4 填写名称年龄并继续"
   },
   5: {
     label: "5 完成 OAuth 登录"
@@ -321,7 +321,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }, [isBatchRunning])
 
   const handleOpenRegisterEntry = async () => {
-    if (isDebugRunning) {
+    if (isBatchRunning || isDebugRunning) {
       return
     }
 
@@ -388,7 +388,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const runRegisterDebugStep = async (options: RegisterDebugStepOptions) => {
-    if (isDebugRunning || !selectedDebugAccount) {
+    if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
@@ -541,7 +541,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const handleSubmitRegisterProfile = async () => {
     await runRegisterDebugStep({
       step: 4,
-      runningStatus: "正在完成账户创建",
+      runningStatus: "正在填写名称年龄并继续",
       runningMessage: "正在填写名称和年龄/生日并点击继续",
       runningProgress: 3,
       action: async (tabId) => {
@@ -557,12 +557,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           targetTab: continueResult.targetTab || profileResult.targetTab
         }
       },
-      failureStatus: "完成账户创建失败",
-      successStatus: "已完成账户创建并点击继续",
+      failureStatus: "填写名称年龄失败",
+      successStatus: "已填写名称年龄并点击继续",
       successProgress: 4,
       successAccountStatus: "running",
-      exceptionStatus: "完成账户创建异常",
-      exceptionMessage: "完成账户创建异常"
+      exceptionStatus: "填写名称年龄异常",
+      exceptionMessage: "填写名称年龄异常"
     })
   }
 
@@ -570,7 +570,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const normalizedCpaUrl = String(cpaUrl || "").trim()
     const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
 
-    if (isDebugRunning || !selectedDebugAccount) {
+    if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
@@ -682,7 +682,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    if (isDebugRunning || !selectedDebugAccount) {
+    if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
@@ -867,7 +867,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleSubmitRegisterOAuthCallbackToCpa = async () => {
-    if (isDebugRunning || !selectedDebugAccount) {
+    if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
@@ -1519,11 +1519,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       { label: "全部", value: "all" }
                     ]}
                     onChange={setDebugAccountFilter}
-                    disabled={isDebugRunning}
+                    disabled={disabled}
                   />
                 </div>
                 <DebugTabControl
-                  disabled={isDebugRunning}
+                  disabled={disabled}
                   label="注册 tab"
                   leadingContent={
                     <div className="debug-field">
@@ -1547,7 +1547,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                           setDebugCallbackUrl("")
                         }}
                         disabled={
-                          isDebugRunning ||
+                          disabled ||
                           filteredDebugAccounts.length === 0
                         }
                       />
@@ -1566,7 +1566,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       void handleOpenRegisterEntry()
                     }}
                     loading={isDebugRunning && debugRunningStep === 1}
-                    disabled={isDebugRunning}>
+                    disabled={disabled}>
                     1 打开 GPT 页面
                   </Button>
                   <Button
@@ -1575,7 +1575,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       void handleSubmitRegisterEmail()
                     }}
                     loading={isDebugRunning && debugRunningStep === 2}
-                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    disabled={disabled || !selectedDebugAccount}>
                     2 点击注册并提交邮箱
                   </Button>
                   <Button
@@ -1584,7 +1584,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       void handleSubmitRegisterVerificationCode()
                     }}
                     loading={isDebugRunning && debugRunningStep === 3}
-                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    disabled={disabled || !selectedDebugAccount}>
                     3 提交验证码
                   </Button>
                   <Button
@@ -1593,8 +1593,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       void handleSubmitRegisterProfile()
                     }}
                     loading={isDebugRunning && debugRunningStep === 4}
-                    disabled={isDebugRunning || !selectedDebugAccount}>
-                    4 完成账户创建并继续
+                    disabled={disabled || !selectedDebugAccount}>
+                    4 填写名称年龄并继续
                   </Button>
                   <Button
                     type={getDebugStepButtonType(5)}
@@ -1603,7 +1603,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     }}
                     loading={isDebugRunning && debugRunningStep === 5}
                     disabled={
-                      isDebugRunning ||
+                      disabled ||
                       !selectedDebugAccount ||
                       !cpaUrl.trim() ||
                       !cpaManagementKey.trim()
@@ -1616,7 +1616,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       void handleCompleteRegisterPhoneVerification()
                     }}
                     loading={isDebugRunning && debugRunningStep === 6}
-                    disabled={isDebugRunning || !selectedDebugAccount}>
+                    disabled={disabled || !selectedDebugAccount}>
                     6 手机号验证
                   </Button>
                   <Button
@@ -1626,7 +1626,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     }}
                     loading={isDebugRunning && debugRunningStep === 7}
                     disabled={
-                      isDebugRunning ||
+                      disabled ||
                       !selectedDebugAccount ||
                       !debugCallbackUrl ||
                       !cpaUrl.trim() ||
