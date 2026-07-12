@@ -165,6 +165,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
   const [isDebugRunning, setIsDebugRunning] = useState(false)
+  const [debugRunningStep, setDebugRunningStep] = useState<0 | DebugStep>(0)
   const [isBatchRunning, setIsBatchRunning] = useState(false)
   const [isBatchStopping, setIsBatchStopping] = useState(false)
   const batchCancelRef = useRef(false)
@@ -180,6 +181,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
   const hasDebugAuthTabId =
     Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
+  const getDebugStepButtonType = (step: DebugStep) => {
+    return step <= debugProgress ? "primary" : "default"
+  }
 
   useEffect(() => {
     onBusyChange?.(isBatchRunning || isDebugRunning)
@@ -226,6 +230,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const handleClearDebugState = () => {
     setDebugAuthTabId("")
     setDebugProgress(0)
+    setDebugRunningStep(0)
     setDebugVerificationRequestedAt(0)
     setDebugCallbackUrl("")
     setDebugCpaOAuthState("")
@@ -269,6 +274,10 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     const accountKey = getManagedAccountKey(account)
     const accountLabel = getManagedAccountDisplayLabel(account)
     setIsDebugRunning(true)
+    setDebugRunningStep(step)
+    setDebugProgress((current) => {
+      return Math.max(current, step - 1) as 0 | DebugStep
+    })
     setRunningEmail(accountKey)
     setStatus(`正在调试 ${accountLabel}：${getFlowStepLabel(step)}`)
     log.info(`[调试][${accountLabel}] 开始执行 ${getFlowStepLabel(step)}`)
@@ -482,6 +491,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       log.warn(`[调试][${accountLabel}] ${message}`)
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
       setRunningEmail("")
     }
   }
@@ -786,6 +796,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                         onChange={(value) => {
                           setDebugEmail(value)
                           setDebugProgress(0)
+                          setDebugRunningStep(0)
                           setDebugVerificationRequestedAt(0)
                           setDebugCallbackUrl("")
                           setDebugCpaOAuthState("")
@@ -814,56 +825,66 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
 
                 <Space size={8} wrap>
                   <Button
-                    type="primary"
+                    type={getDebugStepButtonType(1)}
                     onClick={() => {
                       void handleRunDebugStep(1)
                     }}
-                    loading={isDebugRunning && debugProgress === 0}
+                    loading={isDebugRunning && debugRunningStep === 1}
                     disabled={
                       disabled || !selectedDebugAccount || !hasCpaApiConfig
                     }>
                     {getFlowStepLabel(1)}
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(2)}
                     onClick={() => {
                       void handleRunDebugStep(2)
                     }}
+                    loading={isDebugRunning && debugRunningStep === 2}
                     disabled={
                       disabled || !selectedDebugAccount || !hasDebugAuthTabId
                     }>
                     {getFlowStepLabel(2)}
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(3)}
                     onClick={() => {
                       void handleRunDebugStep(3)
                     }}
+                    loading={isDebugRunning && debugRunningStep === 3}
                     disabled={
                       disabled || !selectedDebugAccount || !hasDebugAuthTabId
                     }>
                     {getFlowStepLabel(3)}
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(4)}
                     onClick={() => {
                       void handleRunDebugStep(4)
                     }}
+                    loading={isDebugRunning && debugRunningStep === 4}
                     disabled={
                       disabled || !selectedDebugAccount || !hasDebugAuthTabId
                     }>
                     {getFlowStepLabel(4)}
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(5)}
                     onClick={() => {
                       void handleRunDebugStep(5)
                     }}
+                    loading={isDebugRunning && debugRunningStep === 5}
                     disabled={
                       disabled || !selectedDebugAccount || !hasDebugAuthTabId
                     }>
                     {getFlowStepLabel(5)}
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(6)}
                     onClick={() => {
                       void handleRunDebugStep(6)
                     }}
+                    loading={isDebugRunning && debugRunningStep === 6}
                     disabled={
                       disabled ||
                       !selectedDebugAccount ||

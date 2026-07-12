@@ -160,6 +160,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugEmail, setDebugEmail] = useState("")
   const [debugRegisterTabId, setDebugRegisterTabId] = useState("")
   const [debugProgress, setDebugProgress] = useState(0)
+  const [debugRunningStep, setDebugRunningStep] = useState(0)
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
   const [debugOAuthStartedAt, setDebugOAuthStartedAt] = useState(0)
@@ -196,6 +197,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasOrphanRegisterRunLock = Boolean(
     registerRunLock && registerRunStatus && !registerRunStatus.activeInMemory
   )
+  const getDebugStepButtonType = (step: number) => {
+    return step <= debugProgress ? "primary" : "default"
+  }
 
   useEffect(() => {
     if (accounts.length === 0) {
@@ -303,6 +307,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
 
     setIsDebugRunning(true)
+    setDebugRunningStep(1)
     setStatus("正在打开 GPT 页面")
     log.info("[注册调试] Step 1 开始打开 GPT 页面")
 
@@ -329,6 +334,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       log.warn(`[注册调试] ${message}`)
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
     }
   }
 
@@ -354,6 +360,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const handleClearDebugState = () => {
     setDebugRegisterTabId("")
     setDebugProgress(0)
+    setDebugRunningStep(0)
     setDebugVerificationRequestedAt(0)
     setDebugOAuthStartedAt(0)
     setDebugCpaOAuthState("")
@@ -378,6 +385,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const accountKey = getManagedAccountKey(selectedDebugAccount)
     const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
+    setDebugRunningStep(options.step)
+    setDebugProgress((current) => {
+      return Math.max(current, options.runningProgress)
+    })
     setRunningEmail(accountKey)
     setStatus(options.runningStatus)
     log.info(
@@ -427,6 +438,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
       setRunningEmail("")
     }
   }
@@ -457,8 +469,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         if (!preparedResult.ok || !preparedResult.account?.email) {
           return preparedResult
         }
-        patchAccountState(getManagedAccountKey(preparedResult.account), {
-          ...preparedResult.account,
+        patchAccountState(getManagedAccountKey(selectedDebugAccount), {
+          mailProvider: preparedResult.account.mailProvider,
+          emailGenerator: preparedResult.account.emailGenerator,
+          email: preparedResult.account.email,
+          mailboxEmail: preparedResult.account.mailboxEmail,
+          password: preparedResult.account.password,
           lastMessage: preparedResult.message
         })
         return clickRegisterAndSubmitEmail(preparedResult.account.email, tabId)
@@ -554,6 +570,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const accountKey = getManagedAccountKey(selectedDebugAccount)
     const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
+    setDebugRunningStep(5)
+    setDebugProgress((current) => Math.max(current, 4))
     setRunningEmail(accountKey)
     setStatus("正在完成 OAuth 登录")
     log.info(`[注册调试][${accountLabel}] Step 5 开始`)
@@ -634,6 +652,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
       setRunningEmail("")
     }
   }
@@ -658,6 +677,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const accountKey = getManagedAccountKey(selectedDebugAccount)
     const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
+    setDebugRunningStep(6)
+    setDebugProgress((current) => Math.max(current, 5))
     setRunningEmail(accountKey)
     setStatus("正在执行手机号验证")
     log.info(`[注册调试][${accountLabel}] Step 6 开始`)
@@ -821,6 +842,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
       setRunningEmail("")
     }
   }
@@ -852,6 +874,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     const accountKey = getManagedAccountKey(selectedDebugAccount)
     const accountLabel = getManagedAccountDisplayLabel(selectedDebugAccount)
     setIsDebugRunning(true)
+    setDebugRunningStep(7)
+    setDebugProgress((current) => Math.max(current, 6))
     setRunningEmail(accountKey)
     setStatus("正在回填 CPA")
     log.info(`[注册调试][${accountLabel}] Step 7 开始`)
@@ -900,6 +924,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       })
     } finally {
       setIsDebugRunning(false)
+      setDebugRunningStep(0)
       setRunningEmail("")
     }
   }
@@ -1487,6 +1512,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                         onChange={(value) => {
                           setDebugEmail(value)
                           setDebugProgress(0)
+                          setDebugRunningStep(0)
                           setDebugVerificationRequestedAt(0)
                           setDebugOAuthStartedAt(0)
                           setDebugCpaOAuthState("")
@@ -1504,43 +1530,47 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
                 <Space size={8} wrap>
                   <Button
-                    type="primary"
+                    type={getDebugStepButtonType(1)}
                     onClick={() => {
                       void handleOpenRegisterEntry()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 1}
                     disabled={isDebugRunning}>
                     1 打开 GPT 页面
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(2)}
                     onClick={() => {
                       void handleSubmitRegisterEmail()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 2}
                     disabled={isDebugRunning || !selectedDebugAccount}>
                     2 点击注册并提交邮箱
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(3)}
                     onClick={() => {
                       void handleSubmitRegisterVerificationCode()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 3}
                     disabled={isDebugRunning || !selectedDebugAccount}>
                     3 提交验证码
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(4)}
                     onClick={() => {
                       void handleSubmitRegisterProfile()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 4}
                     disabled={isDebugRunning || !selectedDebugAccount}>
                     4 完成账户创建并继续
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(5)}
                     onClick={() => {
                       void handleCompleteRegisterOAuthLogin()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 5}
                     disabled={
                       isDebugRunning ||
                       !selectedDebugAccount ||
@@ -1550,18 +1580,20 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     5 完成 OAuth 登录
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(6)}
                     onClick={() => {
                       void handleCompleteRegisterPhoneVerification()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 6}
                     disabled={isDebugRunning || !selectedDebugAccount}>
                     6 手机号验证
                   </Button>
                   <Button
+                    type={getDebugStepButtonType(7)}
                     onClick={() => {
                       void handleSubmitRegisterOAuthCallbackToCpa()
                     }}
-                    loading={isDebugRunning}
+                    loading={isDebugRunning && debugRunningStep === 7}
                     disabled={
                       isDebugRunning ||
                       !selectedDebugAccount ||
