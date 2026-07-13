@@ -4,8 +4,53 @@ import {
   RUNTIME_SETTINGS_STORAGE_KEY
 } from "../../shared/account-state"
 
-const keepAwakeReasons = new Set<string>()
+const KEEP_AWAKE_REASON_TTL_MS = 5 * 60 * 60 * 1000
+const keepAwakeReasons = new Map<string, number>()
 let keepAwakeDuringRun = DEFAULT_RUNTIME_SETTINGS.keepAwakeDuringRun
+let keepAwakeExpiryTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 清理超过 5 小时仍未释放的保持唤醒申请。
+ *
+ * 正常流程会在 finally 中主动 release；这个 TTL 只作为故障兜底，避免侧边栏
+ * 被刷新、页面被强关或异常中断时，后台仍保留旧 reason 导致电脑长期无法休眠。
+ */
+const pruneExpiredKeepAwakeReasons = () => {
+  const now = Date.now()
+  for (const [reason, requestedAt] of keepAwakeReasons.entries()) {
+    if (now - requestedAt >= KEEP_AWAKE_REASON_TTL_MS) {
+      keepAwakeReasons.delete(reason)
+    }
+  }
+}
+
+/**
+ * 安排下一次过期检查。
+ *
+ * 这是内存级兜底：如果 Service Worker 被 Chrome 重启，内存里的 reason 会丢失，
+ * 下次初始化会自然释放唤醒；如果后台一直活着，则最多 5 小时自动清理旧申请。
+ */
+const scheduleKeepAwakeExpiryCheck = () => {
+  if (keepAwakeExpiryTimer) {
+    clearTimeout(keepAwakeExpiryTimer)
+    keepAwakeExpiryTimer = null
+  }
+
+  if (keepAwakeReasons.size === 0) {
+    return
+  }
+
+  const now = Date.now()
+  const nextExpiresAt = Math.min(
+    ...Array.from(keepAwakeReasons.values()).map((requestedAt) => {
+      return requestedAt + KEEP_AWAKE_REASON_TTL_MS
+    })
+  )
+  keepAwakeExpiryTimer = setTimeout(() => {
+    keepAwakeExpiryTimer = null
+    refreshPowerKeepAwake()
+  }, Math.max(1000, nextExpiresAt - now))
+}
 
 /**
  * 按当前引用计数刷新 Chrome 保持唤醒状态。
@@ -16,6 +61,9 @@ let keepAwakeDuringRun = DEFAULT_RUNTIME_SETTINGS.keepAwakeDuringRun
  * 不是让定时任务在电脑睡着后自动唤醒并执行。
  */
 const refreshPowerKeepAwake = () => {
+  pruneExpiredKeepAwakeReasons()
+  scheduleKeepAwakeExpiryCheck()
+
   if (!chrome.power) {
     return
   }
@@ -42,7 +90,7 @@ const refreshPowerKeepAwake = () => {
  * @param reason 申请来源；同一个来源重复申请只计一次。
  */
 export const requestPowerKeepAwake = (reason: string) => {
-  keepAwakeReasons.add(reason)
+  keepAwakeReasons.set(reason, Date.now())
   refreshPowerKeepAwake()
 }
 

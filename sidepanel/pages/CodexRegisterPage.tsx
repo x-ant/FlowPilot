@@ -210,11 +210,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     registerRunLock &&
       Date.now() - registerRunLock.startedAt < REGISTER_RUN_LOCK_STALE_MS
   )
-  const isBatchRunning = registerRunStatus
+  const isRegisterRunStatusMatched =
+    registerRunStatus?.lock?.runId === registerRunLock?.runId
+  const isBatchRunning = isRegisterRunStatusMatched
     ? registerRunStatus.activeInMemory
     : isRegisterRunLockFresh
   const hasOrphanRegisterRunLock = Boolean(
-    registerRunLock && registerRunStatus && !registerRunStatus.activeInMemory
+    registerRunLock &&
+      registerRunStatus &&
+      isRegisterRunStatusMatched &&
+      !registerRunStatus.activeInMemory
   )
   const getDebugStepButtonType = (step: number) => {
     return step <= debugProgress ? "primary" : "default"
