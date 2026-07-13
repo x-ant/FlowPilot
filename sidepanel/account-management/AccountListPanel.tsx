@@ -159,7 +159,7 @@ export function AccountListPanel({
               }}>
               全选
             </Checkbox>
-            <Tag color="default">{`已选 ${visibleSelectedCount}`}</Tag>
+            <Tag color="default">{`已选 ${visibleSelectedCount}/${visibleAccounts.length}`}</Tag>
             <Segmented<AccountVisibilityFilter>
               size="small"
               value={accountFilter}
