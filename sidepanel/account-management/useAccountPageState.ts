@@ -481,6 +481,46 @@ export const useAccountPageState = ({
   }
 
   /**
+   * 把选中的账号手动标记为失效。
+   *
+   * 这里只改账号状态，不改当前步骤进度，便于之后申诉成功后手动重试。
+   */
+  const handleMarkSelectedAccountsInvalid = () => {
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要标记的账号")
+      log.warn("请先选择要标记的账号")
+      return
+    }
+
+    const selectedSet = new Set(selectedEmails)
+    let changedCount = 0
+    const now = Date.now()
+    const nextAccounts: ManagedAccount[] = accounts.map((account) => {
+      if (!selectedSet.has(getManagedAccountKey(account))) {
+        return account
+      }
+
+      changedCount += 1
+      return {
+        ...account,
+        status: "invalid" as const,
+        lastMessage: "已手动标为失效",
+        updatedAt: now
+      }
+    })
+
+    if (changedCount === 0) {
+      setStatus("未找到选中的账号")
+      log.warn("未找到选中的账号，无法标记")
+      return
+    }
+
+    syncAccounts(nextAccounts)
+    setStatus(`已标记 ${changedCount} 个账号为失效`)
+    log.info(`已标记 ${changedCount} 个账号为失效`)
+  }
+
+  /**
    * 更新单个账号的执行状态。
    *
    * @param accountId 要更新的账号 ID。
@@ -534,6 +574,7 @@ export const useAccountPageState = ({
     handleToggleAllAccountsSelected,
     handleMoveSelectedAccount,
     handleMarkSelectedAccountsDone,
+    handleMarkSelectedAccountsInvalid,
     patchAccountState,
     resetState: () => {
       setCpaUrlState(EMPTY_PAGE_STATE.cpaUrl)

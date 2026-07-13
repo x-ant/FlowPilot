@@ -36,6 +36,7 @@ type AccountListPanelAccountPage = Pick<
   | "handleToggleAccountSelected"
   | "handleMoveSelectedAccount"
   | "handleMarkSelectedAccountsDone"
+  | "handleMarkSelectedAccountsInvalid"
 >
 
 type AccountListPanelProps = {
@@ -87,7 +88,8 @@ export function AccountListPanel({
     handleRemoveAccount,
     handleToggleAccountSelected,
     handleMoveSelectedAccount,
-    handleMarkSelectedAccountsDone
+    handleMarkSelectedAccountsDone,
+    handleMarkSelectedAccountsInvalid
   } = accountPage
   const visibleAccounts = useMemo(() => {
     return accounts.filter((account) => {
@@ -197,6 +199,10 @@ export function AccountListPanel({
                       ]
                     : []),
                   {
+                    key: "mark-invalid",
+                    label: "标为失效"
+                  },
+                  {
                     key: "mark-done",
                     label: "标为已完成"
                   }
@@ -208,6 +214,11 @@ export function AccountListPanel({
 
                   if (key === "mark-done") {
                     handleMarkSelectedAccountsDone()
+                    return
+                  }
+
+                  if (key === "mark-invalid") {
+                    handleMarkSelectedAccountsInvalid()
                     return
                   }
 

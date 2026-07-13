@@ -266,6 +266,18 @@ body {
   gap: 6px;
 }
 
+.debug-field--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.debug-field--inline .ant-segmented {
+  width: auto;
+  max-width: 100%;
+}
+
 .debug-grid {
   display: grid;
   gap: 10px;

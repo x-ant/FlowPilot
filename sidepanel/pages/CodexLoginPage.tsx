@@ -793,7 +793,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
             ),
             children: (
               <div className="debug-panel">
-                <div className="debug-field">
+                <div className="debug-field debug-field--inline">
                   <span className="debug-label">账号范围</span>
                   <Segmented<AccountVisibilityFilter>
                     size="small"
