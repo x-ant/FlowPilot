@@ -210,10 +210,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     registerRunLock &&
       Date.now() - registerRunLock.startedAt < REGISTER_RUN_LOCK_STALE_MS
   )
-  const isRegisterRunStatusMatched =
-    registerRunStatus?.lock?.runId === registerRunLock?.runId
+  const isRegisterRunStatusMatched = Boolean(
+    registerRunStatus &&
+      registerRunLock &&
+      registerRunStatus.lock?.runId === registerRunLock.runId
+  )
   const isBatchRunning = isRegisterRunStatusMatched
-    ? registerRunStatus.activeInMemory
+    ? Boolean(registerRunStatus?.activeInMemory)
     : isRegisterRunLockFresh
   const hasOrphanRegisterRunLock = Boolean(
     registerRunLock &&
