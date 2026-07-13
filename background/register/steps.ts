@@ -2493,6 +2493,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    *
    * @param tabId OAuth 登录授权页标签页 ID。
    * @param email 要点击的目标账号邮箱。
+   * @param onLog 日志打印回调
    * @return 账号卡片点击结果。
    */
   const chooseRegisterLoginAccount = async (
@@ -2623,13 +2624,15 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    *
    * @param tabId 手机号验证页面标签页 ID。
    * @param options HeroSMS 接码配置。
-   * @param oauthStartedAt 验证开始时间戳，用于后面判断是重新拿OAuhtUrl，还是从重新拿手机号。
+   * @param oauthStartedAt 验证开始时间戳，用于后面判断是重新拿 OAuth URL，还是重新拿手机号。
+   * @param shouldStopAfterCurrentPhoneAttempt 当前手机号失败或验证码被拒后是否停止，不再回退页面换号。
    * @return 手机号提交、短信验证码读取和提交结果。
    */
   const completeRegisterPhoneVerification = async (
     tabId: number,
     options: HeroSmsPhoneVerificationOptions,
-    oauthStartedAt = Date.now()
+    oauthStartedAt = Date.now(),
+    shouldStopAfterCurrentPhoneAttempt: () => boolean = () => false
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
 
@@ -2795,12 +2798,27 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
               }
             }
 
-            options.onLog?.(
-              "warn",
-              `手机号提交失败：${failureMessage}；手机号 ${activation.phoneNumber} 未进入验证码页，不进入验证码轮询，准备更换手机号；${activationSummary}`
-            )
+            const submittedPhoneNumber = activation.phoneNumber
             await releaseHeroSmsActivationQuietly(options, activation)
             activation = null
+            if (shouldStopAfterCurrentPhoneAttempt()) {
+              options.onLog?.(
+                "warn",
+                `手机号提交失败：${failureMessage}；已按停止策略停止，不再更换手机号；${activationSummary}`
+              )
+              return {
+                ok: false,
+                message: `${phonePageResult.message}；${failureMessage}；已按停止策略停止，不再更换手机号；${activationSummary}`,
+                targetTab: {
+                  id: tabId,
+                  url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+                }
+              }
+            }
+            options.onLog?.(
+              "warn",
+              `手机号提交失败：${failureMessage}；手机号 ${submittedPhoneNumber} 未进入验证码页，不进入验证码轮询，准备更换手机号；${activationSummary}`
+            )
             continue
           }
           // 打印当前异常的页面，现在还不知道这个是啥情况，实际应该没有这种情况
@@ -2854,6 +2872,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             )
 
             if (remainingMs > REGISTER_PHONE_RETRY_MIN_REMAINING_MS) {
+              if (shouldStopAfterCurrentPhoneAttempt()) {
+                return {
+                  ok: false,
+                  message: `${timeoutMessage}；已按停止策略停止，不再更换手机号；${activationSummary}`,
+                  targetTab: {
+                    id: tabId,
+                    url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+                  }
+                }
+              }
+
               const backResult = await tryHistoryBackToPhoneInput(
                 tabId,
                 getPhoneInputHistoryBackGuard
@@ -2997,6 +3026,20 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             activation = null
             const remainingMs =
               oauthStartedAt + REGISTER_OAUTH_VALID_MS - Date.now()
+            if (shouldStopAfterCurrentPhoneAttempt()) {
+              options.onLog?.(
+                "warn",
+                `手机验证码连续 ${codeAttempt} 次被拒，已按停止策略停止，不再更换手机号`
+              )
+              return {
+                ok: false,
+                message: `${invalidMessage}；已按停止策略停止，不再更换手机号`,
+                targetTab: {
+                  id: tabId,
+                  url: submitState.url || submitResult.tab?.url
+                }
+              }
+            }
             options.onLog?.(
               "warn",
               `手机验证码连续 ${codeAttempt} 次被拒，准备更换手机号；OAuth 预计剩余 ${formatDurationSeconds(
@@ -3103,6 +3146,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    * @param account 当前账号配置。
    * @param targetUrl CPA OAuth 页面地址，用于登录后重新刷新授权页。
    * @param managementKey CPA 管理密钥。
+   * @param onFallbackLog 日志打印回调
    * @return OAuth 账号选择或兜底登录后的结果。
    */
   const completeRegisterOAuthLogin = async (
@@ -3247,9 +3291,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       }
     }
     onFallbackLog?.(`登录兜底 Step 3：${codeResult.message}`)
+    if (codeResult.accountInvalid) {
+      onFallbackLog?.("登录兜底 Step 3：检测到 OpenAI 账号失效，停止登录兜底")
+    }
     if (!codeResult.ok) {
       return {
         ok: false,
+        accountInvalid: codeResult.accountInvalid,
         message: buildFallbackMessage(
           loginResult.message,
           passwordResult.message,

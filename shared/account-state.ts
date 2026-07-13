@@ -211,7 +211,7 @@ export type AccountProgressStepMeta = {
   label: string
 }
 
-export type AccountVisibilityFilter = "pending" | "done" | "all"
+export type AccountVisibilityFilter = "pending" | "done" | "invalid" | "all"
 
 const getAccountProgressStepLabel = (
   step: number,
@@ -235,6 +235,20 @@ export const isManagedAccountComplete = (
 }
 
 /**
+ * 生成账号失效状态写入账号列表的小字描述。
+ *
+ * @param message OpenAI 返回的完整账号失效描述。
+ * @return 有错误代码时只保留错误代码；否则返回通用失效描述。
+ */
+export const buildAccountInvalidLastMessage = (message?: string) => {
+  const errorCode = String(message || "")
+    .match(/错误代码[:：]\s*([a-z0-9_-]+)/i)?.[1]
+    ?.trim()
+
+  return errorCode ? `错误代码：${errorCode}` : "账号已失效"
+}
+
+/**
  * 判断账号是否匹配当前账号视图过滤条件。
  *
  * @param account 要判断的账号。
@@ -251,8 +265,14 @@ export const matchesManagedAccountVisibilityFilter = (
     return true
   }
 
+  if (filter === "invalid") {
+    return account.status === "invalid"
+  }
+
   const isComplete = isManagedAccountComplete(account, stepCount)
-  return filter === "done" ? isComplete : !isComplete
+  return filter === "done"
+    ? isComplete
+    : !isComplete && account.status !== "invalid"
 }
 
 /**

@@ -45,6 +45,7 @@ import { DebugTabControl } from "../components/DebugTabControl"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
 import type { PageProps } from "./types"
 import {
+  buildAccountInvalidLastMessage,
   DEFAULT_REGISTER_ALARM_CONFIG,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
@@ -430,7 +431,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           log.warn(`[注册调试][${accountLabel}] ${result.message}`)
           patchAccountState(accountKey, {
             status: "invalid",
-            lastMessage: result.message
+            lastMessage: buildAccountInvalidLastMessage(result.message)
           })
           return
         }
@@ -1181,7 +1182,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         strategy
       })
       setStatus(response.message)
-      log[response.ok ? "info" : "warn"](response.message)
+      log.warn(response.message)
       if (!response.ok) {
         setIsBatchStopping(false)
       }
@@ -1287,14 +1288,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             直接停止
           </Button>,
           <Button
-            key="after-phone"
-            disabled={isBatchStopping}
-            onClick={() => {
-              handleChooseStopStrategy("after_phone")
-            }}>
-            手机号结束后停止
-          </Button>,
-          <Button
             key="finish"
             type="primary"
             disabled={isBatchStopping}
@@ -1310,8 +1303,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
           </p>
           <p>
-            推荐选择“成功则完成回填”：如果当前手机号失败就停止；如果验证成功，就完成
-            CPA 回填后停止。
+            推荐选择“成功则完成回填”：如果当前手机号失败就停止，不再换号；如果验证成功，就完成 CPA 回填后停止。
           </p>
         </div>
       </Modal>
@@ -1541,6 +1533,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     options={[
                       { label: "未完成", value: "pending" },
                       { label: "已完成", value: "done" },
+                      { label: "失效", value: "invalid" },
                       { label: "全部", value: "all" }
                     ]}
                     onChange={setDebugAccountFilter}

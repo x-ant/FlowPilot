@@ -801,6 +801,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                     options={[
                       { label: "未完成", value: "pending" },
                       { label: "已完成", value: "done" },
+                      { label: "失效", value: "invalid" },
                       { label: "全部", value: "all" }
                     ]}
                     onChange={setDebugAccountFilter}

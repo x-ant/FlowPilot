@@ -67,6 +67,7 @@ export type CodexAuthProgressStepResponse = CodexLoginStepResponseBase & {
  */
 export type FetchAndSubmitCodexVerificationCodeResponse =
   CodexLoginStepResponseBase & {
+    accountInvalid?: boolean
     mailTab?: BrowserTabInfo
   }
 

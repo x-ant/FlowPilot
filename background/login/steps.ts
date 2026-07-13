@@ -221,6 +221,31 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     const currentTab = await chrome.tabs.get(tabId).catch(() => undefined)
     const currentUrl = String(currentTab?.url || "")
     const urlState = getOpenAiAuthUrlState(currentUrl)
+    const detectPageState = async () => {
+      try {
+        await waitForTabLoaded(tabId)
+        const [detectInjectionResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: detectCodexAuthPageStateInPage
+        })
+        const detectValue = detectInjectionResult?.result
+
+        return {
+          ok: Boolean(detectValue?.ok),
+          state: detectValue?.state || "other",
+          message: detectValue?.message || "未识别当前 OpenAI 授权页状态",
+          url: detectValue?.url || currentUrl
+        } satisfies CodexAuthTabStateResult
+      } catch (error) {
+        return {
+          ok: false,
+          state: "other",
+          message:
+            error instanceof Error ? error.message : "授权页检测时页面暂不可用",
+          url: currentUrl
+        } satisfies CodexAuthTabStateResult
+      }
+    }
 
     switch (urlState) {
       case "oauth_callback":
@@ -241,12 +266,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
           url: currentUrl
         }
       case "email_verification":
-        return {
-          ok: false,
-          state: "verification_pending",
-          message: "当前 URL 已进入邮箱验证码页",
-          url: currentUrl
-        }
+        return detectPageState()
       case "oauth_consent":
         return {
           ok: true,
@@ -264,29 +284,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         }
     }
 
-    try {
-      await waitForTabLoaded(tabId)
-      const [detectInjectionResult] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: detectCodexAuthPageStateInPage
-      })
-      const detectValue = detectInjectionResult?.result
-
-      return {
-        ok: Boolean(detectValue?.ok),
-        state: detectValue?.state || "other",
-        message: detectValue?.message || "未识别当前 OpenAI 授权页状态",
-        url: detectValue?.url || currentUrl
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        state: "other",
-        message:
-          error instanceof Error ? error.message : "授权页检测时页面暂不可用",
-        url: currentUrl
-      }
-    }
+    return detectPageState()
   }
 
   /**
@@ -386,6 +384,10 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       lastState = await detectCodexAuthTabState(tabId)
 
       if (lastState.state === "verification_invalid_code") {
+        return lastState
+      }
+
+      if (lastState.state === "account_unavailable") {
         return lastState
       }
 
@@ -827,6 +829,22 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
 
         const submitState = await options.waitForSubmitState(tabId)
         const currentAttemptMessage = `${mailResult.message}；${result.message}；${submitState.message}`
+
+        if (submitState.state === "account_unavailable") {
+          return {
+            invalidCode: false,
+            result: {
+              ok: false,
+              accountInvalid: true,
+              message: currentAttemptMessage,
+              targetTab: {
+                id: tabId,
+                url: submitState.url || result.tab?.url
+              },
+              mailTab: mailResult.mailTab
+            }
+          }
+        }
 
         if (options.isSubmitSuccess(submitState)) {
           return {

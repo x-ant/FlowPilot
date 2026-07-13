@@ -2,6 +2,7 @@
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 import { abortableSleep } from "../utils/abort"
 import {
+  buildAccountInvalidLastMessage,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
   resetManagedAccountState,
@@ -19,7 +20,6 @@ const REGISTER_ACCOUNT_INTERVAL_MAX_MS = 5 * 60 * 1000
 export type RegisterStopStrategy =
   | "none"
   | "immediate"
-  | "after_phone"
   | "finish_current_if_phone_success"
 
 type RegisterStepResult = {
@@ -43,6 +43,7 @@ type RunRegisterBatchOptions = {
   selectedEmails?: string[]
   heroSmsOptions: HeroSmsPhoneVerificationOptions
   abortSignal?: AbortSignal
+  allowInvalidWhenSelected?: boolean
   targetAllWhenNoSelection?: boolean
   getStopStrategy?: () => RegisterStopStrategy
   isManualPhoneStop?: () => boolean
@@ -228,6 +229,7 @@ export const runManagedRegisterFlow = async (
   if (!loginResult.ok || typeof loginResult.targetTab?.id !== "number") {
     return {
       ok: false,
+      accountInvalid: loginResult.accountInvalid,
       message: step5Message || "步骤 5 执行失败"
     }
   }
@@ -248,7 +250,8 @@ export const runManagedRegisterFlow = async (
     phoneResult = await runner.completeRegisterPhoneVerification(
       phoneTabId,
       heroSmsOptions,
-      oauthStartedAt
+      oauthStartedAt,
+      () => getStopStrategy() === "finish_current_if_phone_success"
     )
 
     if (phoneResult.ok) {
@@ -274,7 +277,7 @@ export const runManagedRegisterFlow = async (
     if (getStopStrategy() !== "none") {
       return {
         ok: false,
-        message: `${phoneResult.message}；已按停止策略在当前手机号结束后停止`
+        message: `${phoneResult.message}；已按成功则完成回填停止策略停止，不再刷新 OAuth 或更换手机号`
       }
     }
 
@@ -342,15 +345,6 @@ export const runManagedRegisterFlow = async (
   messages.push(phoneResult.message)
   onStage(6, phoneResult.message)
 
-  if (getStopStrategy() === "after_phone") {
-    return {
-      ok: false,
-      needsManualReview: true,
-      message:
-        "当前手机号验证已结束并按停止策略停止；手机号可能已经验证成功，但 CPA 尚未回填，请人工处理"
-    }
-  }
-
   const step7Result = await runner.submitRegisterOAuthCallbackToCpa(
     cpaUrl,
     cpaManagementKey,
@@ -388,6 +382,7 @@ export const runManagedRegisterFlow = async (
  * @param options.selectedEmails 要执行的账号 ID 列表；沿用旧字段名但内容是账号 ID。
  * @param options.heroSmsOptions HeroSMS 接码配置。
  * @param options.abortSignal 停止当前流程的中断信号。
+ * @param options.allowInvalidWhenSelected 用户手动选中失效账号执行时允许重试；定时和单次触发不传。
  * @param options.targetAllWhenNoSelection 没有选择账号时是否执行所有可执行账号。
  * @param options.getStopStrategy 获取当前停止策略的函数。
  * @param options.isManualPhoneStop 判断是否为人工接管手机号验证码的停止。
@@ -405,6 +400,7 @@ export const runRegisterBatch = async ({
   selectedEmails = [],
   heroSmsOptions,
   abortSignal,
+  allowInvalidWhenSelected = false,
   targetAllWhenNoSelection = false,
   getStopStrategy = () => "none",
   isManualPhoneStop = () => false,
@@ -417,10 +413,15 @@ export const runRegisterBatch = async ({
   const selectedEmailSet = new Set(selectedEmails)
   const shouldUseAllTargets = targetAllWhenNoSelection && selectedEmailSet.size === 0
   const isTargetAccount = (account: ManagedAccount) => {
+    const accountKey = getManagedAccountKey(account)
+    const isSelected = selectedEmailSet.has(accountKey)
+    const canRetryInvalidAccount =
+      allowInvalidWhenSelected && isSelected && account.status === "invalid"
+
     return (
-      (shouldUseAllTargets || selectedEmailSet.has(getManagedAccountKey(account))) &&
+      (shouldUseAllTargets || isSelected) &&
       account.status !== "needs_review" &&
-      account.status !== "invalid" &&
+      (account.status !== "invalid" || canRetryInvalidAccount) &&
       account.status !== "done" &&
       account.progress < REGISTER_STEP_COUNT
     )
@@ -632,7 +633,7 @@ export const runRegisterBatch = async ({
       updateCurrentAccount({
         progress: currentState.progress,
         status: "invalid",
-        lastMessage: runResult.message
+        lastMessage: buildAccountInvalidLastMessage(runResult.message)
       })
       onStatus?.(`账号 ${currentAccountLabel} 已失效`)
       onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)

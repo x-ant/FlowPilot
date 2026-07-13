@@ -439,10 +439,16 @@ export const detectCodexAuthPageStateInPage =
       )
 
     if (accountUnavailablePattern.test(pageText)) {
+      const accountUnavailableCode =
+        pageText.match(/(?:错误代码|error code)\s*[:：]?\s*([a-z0-9_-]+)/i)?.[1] ||
+        pageText.match(/account_deactivated/i)?.[0] ||
+        ""
       return {
         ok: false,
         state: "account_unavailable",
-        message: "OpenAI 提示账号已被删除、停用或不可用",
+        message: `OpenAI 提示账号已被删除、停用或不可用${
+          accountUnavailableCode ? `，错误代码：${accountUnavailableCode}` : ""
+        }`,
         url: location.href
       }
     }

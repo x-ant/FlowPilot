@@ -271,11 +271,13 @@ const patchAlarmConfig = async (patch: Partial<RegisterAlarmConfig>) => {
 const startRegisterBatchJob = async ({
   source,
   selectedEmails,
+  allowInvalidWhenSelected = false,
   targetAllWhenNoSelection,
   triggerLabel
 }: {
   source: RegisterRunLock["source"]
   selectedEmails: string[]
+  allowInvalidWhenSelected?: boolean
   targetAllWhenNoSelection: boolean
   triggerLabel: string
 }) => {
@@ -352,6 +354,7 @@ const startRegisterBatchJob = async ({
         selectedEmails,
         heroSmsOptions,
         abortSignal: abortController.signal,
+        allowInvalidWhenSelected,
         targetAllWhenNoSelection,
         getStopStrategy: () => activeRegisterRun?.stopStrategy || "none",
         isManualPhoneStop: () => Boolean(activeRegisterRun?.manualPhoneStop),
@@ -503,12 +506,11 @@ const stopRegisterBatchJob = async (strategy: RegisterStopStrategy) => {
   const message =
     strategy === "immediate"
       ? "正在立即停止注册任务"
-      : strategy === "after_phone"
-        ? "已设置为手机号结束后停止"
-        : "已设置为成功则完成回填后停止"
+      : "已设置为成功则完成回填后停止"
   await patchRegisterRunLock(lock.runId, {
     message
   })
+  await writeRegisterExecutionLog("warn", message)
 
   return {
     ok: true,
@@ -620,6 +622,7 @@ export const setupRegisterAlarm = () => {
         const result = await startRegisterBatchJob({
           source: "manual",
           selectedEmails,
+          allowInvalidWhenSelected: true,
           targetAllWhenNoSelection: false,
           triggerLabel: "手动注册"
         })
@@ -631,7 +634,6 @@ export const setupRegisterAlarm = () => {
     if (message?.type === "flowpilot:register:batch-stop") {
       void (async () => {
         const strategy: RegisterStopStrategy =
-          message.strategy === "after_phone" ||
           message.strategy === "finish_current_if_phone_success"
             ? message.strategy
             : "immediate"
