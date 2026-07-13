@@ -303,6 +303,7 @@ const startRegisterBatchJob = async ({
   const state = await loadAccountPageState(REGISTER_STORAGE_KEYS, {
     requireEmailGenerator: true
   })
+  const alarmConfig = await getRegisterAlarmConfig()
   const cpaUrl = state.cpaUrl.trim()
   const cpaManagementKey = state.cpaManagementKey.trim()
   if (!cpaUrl || !cpaManagementKey) {
@@ -355,6 +356,8 @@ const startRegisterBatchJob = async ({
         heroSmsOptions,
         abortSignal: abortController.signal,
         allowInvalidWhenSelected,
+        accountIntervalMinSeconds: alarmConfig.accountIntervalMinSeconds,
+        accountIntervalMaxSeconds: alarmConfig.accountIntervalMaxSeconds,
         targetAllWhenNoSelection,
         getStopStrategy: () => activeRegisterRun?.stopStrategy || "none",
         isManualPhoneStop: () => Boolean(activeRegisterRun?.manualPhoneStop),

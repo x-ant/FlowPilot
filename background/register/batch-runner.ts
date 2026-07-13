@@ -14,8 +14,8 @@ import {
 
 export const REGISTER_STEP_COUNT = 7
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
-const REGISTER_ACCOUNT_INTERVAL_MIN_MS = 3 * 60 * 1000
-const REGISTER_ACCOUNT_INTERVAL_MAX_MS = 5 * 60 * 1000
+const DEFAULT_ACCOUNT_INTERVAL_MIN_SECONDS = 180
+const DEFAULT_ACCOUNT_INTERVAL_MAX_SECONDS = 300
 
 export type RegisterStopStrategy =
   | "none"
@@ -44,6 +44,8 @@ type RunRegisterBatchOptions = {
   heroSmsOptions: HeroSmsPhoneVerificationOptions
   abortSignal?: AbortSignal
   allowInvalidWhenSelected?: boolean
+  accountIntervalMinSeconds?: number
+  accountIntervalMaxSeconds?: number
   targetAllWhenNoSelection?: boolean
   getStopStrategy?: () => RegisterStopStrategy
   isManualPhoneStop?: () => boolean
@@ -76,15 +78,20 @@ const closeTabQuietly = async (tabId?: number) => {
 /**
  * 生成两个注册账号之间的随机等待时间。
  *
- * 连续快速注册容易触发邮箱或 OpenAI 风控；这里固定在 3~5 分钟之间，
+ * 连续快速注册容易触发邮箱或 OpenAI 风控；这里按自动触发配置生成等待，
  * 只用于账号与账号之间，不影响单个账号内部步骤。
  *
+ * @param minSeconds 最小等待秒数。
+ * @param maxSeconds 最大等待秒数。
  * @return 随机等待毫秒数。
  */
-const createRegisterAccountIntervalMs = () => {
-  const rangeMs =
-    REGISTER_ACCOUNT_INTERVAL_MAX_MS - REGISTER_ACCOUNT_INTERVAL_MIN_MS
-  return REGISTER_ACCOUNT_INTERVAL_MIN_MS + Math.floor(Math.random() * rangeMs)
+const createRegisterAccountIntervalMs = (
+  minSeconds = DEFAULT_ACCOUNT_INTERVAL_MIN_SECONDS,
+  maxSeconds = DEFAULT_ACCOUNT_INTERVAL_MAX_SECONDS
+) => {
+  const minMs = Math.max(0, Math.floor(minSeconds)) * 1000
+  const maxMs = Math.max(minMs, Math.floor(maxSeconds) * 1000)
+  return minMs + Math.floor(Math.random() * (maxMs - minMs))
 }
 
 /**
@@ -383,6 +390,8 @@ export const runManagedRegisterFlow = async (
  * @param options.heroSmsOptions HeroSMS 接码配置。
  * @param options.abortSignal 停止当前流程的中断信号。
  * @param options.allowInvalidWhenSelected 用户手动选中失效账号执行时允许重试；定时和单次触发不传。
+ * @param options.accountIntervalMinSeconds 账号之间随机等待的最小秒数。
+ * @param options.accountIntervalMaxSeconds 账号之间随机等待的最大秒数。
  * @param options.targetAllWhenNoSelection 没有选择账号时是否执行所有可执行账号。
  * @param options.getStopStrategy 获取当前停止策略的函数。
  * @param options.isManualPhoneStop 判断是否为人工接管手机号验证码的停止。
@@ -401,6 +410,8 @@ export const runRegisterBatch = async ({
   heroSmsOptions,
   abortSignal,
   allowInvalidWhenSelected = false,
+  accountIntervalMinSeconds = DEFAULT_ACCOUNT_INTERVAL_MIN_SECONDS,
+  accountIntervalMaxSeconds = DEFAULT_ACCOUNT_INTERVAL_MAX_SECONDS,
   targetAllWhenNoSelection = false,
   getStopStrategy = () => "none",
   isManualPhoneStop = () => false,
@@ -466,7 +477,10 @@ export const runRegisterBatch = async ({
       return true
     }
 
-    const intervalMs = createRegisterAccountIntervalMs()
+    const intervalMs = createRegisterAccountIntervalMs(
+      accountIntervalMinSeconds,
+      accountIntervalMaxSeconds
+    )
     const intervalLabel = formatRegisterAccountInterval(intervalMs)
     onRunningEmail?.("")
     onStatus?.(`账号间隔中，等待 ${intervalLabel} 后处理下一个账号`)

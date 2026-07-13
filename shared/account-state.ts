@@ -65,6 +65,8 @@ export type RegisterAlarmConfig = {
   mode: RegisterAlarmMode
   intervalMinutes: number
   dailyTime: string
+  accountIntervalMinSeconds: number
+  accountIntervalMaxSeconds: number
   selectedEmails: string[]
   lastTriggeredAt?: number
   lastMessage?: string
@@ -112,6 +114,8 @@ export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
   mode: "interval",
   intervalMinutes: 30,
   dailyTime: "02:00",
+  accountIntervalMinSeconds: 180,
+  accountIntervalMaxSeconds: 300,
   selectedEmails: []
 }
 
@@ -536,12 +540,22 @@ export const normalizeRegisterAlarmConfig = (
   const dailyTime = /^\d{2}:\d{2}$/.test(String(record.dailyTime || ""))
     ? String(record.dailyTime)
     : "02:00"
+  const accountIntervalMinSeconds = Math.max(
+    0,
+    Math.floor(Number(record.accountIntervalMinSeconds ?? 180))
+  )
+  const accountIntervalMaxSeconds = Math.max(
+    accountIntervalMinSeconds,
+    Math.floor(Number(record.accountIntervalMaxSeconds ?? 300))
+  )
 
   return {
     enabled: Boolean(record.enabled),
     mode: record.mode === "daily" ? "daily" : "interval",
     intervalMinutes,
     dailyTime,
+    accountIntervalMinSeconds,
+    accountIntervalMaxSeconds,
     selectedEmails: Array.isArray(record.selectedEmails)
       ? record.selectedEmails
           .map((accountId) => normalizeAccountId(accountId))

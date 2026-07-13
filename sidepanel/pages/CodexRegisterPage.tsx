@@ -995,7 +995,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           savedConfig.mode === "interval"
             ? `${savedConfig.intervalMinutes} 分钟间隔`
             : `每天 ${savedConfig.dailyTime}`
-        }`
+        }；账号间隔 ${savedConfig.accountIntervalMinSeconds}~${savedConfig.accountIntervalMaxSeconds} 秒`
       )
     } catch (error) {
       const message =
@@ -1460,6 +1460,50 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       />
                     </Space>
                   )}
+
+                  <Space size={8} wrap>
+                    <span className="debug-label">账号间隔范围</span>
+                    <InputNumber
+                      min={0}
+                      precision={0}
+                      addonAfter="秒"
+                      value={alarmConfig.accountIntervalMinSeconds}
+                      disabled={disabled || isAlarmSaving}
+                      onChange={(value) => {
+                        setAlarmConfig((current) => {
+                          const nextMinSeconds = Math.max(
+                            0,
+                            Number(value || 0)
+                          )
+                          return {
+                            ...current,
+                            accountIntervalMinSeconds: nextMinSeconds,
+                            accountIntervalMaxSeconds: Math.max(
+                              nextMinSeconds,
+                              current.accountIntervalMaxSeconds
+                            )
+                          }
+                        })
+                      }}
+                    />
+                    <span className="debug-label">至</span>
+                    <InputNumber
+                      min={0}
+                      precision={0}
+                      addonAfter="秒"
+                      value={alarmConfig.accountIntervalMaxSeconds}
+                      disabled={disabled || isAlarmSaving}
+                      onChange={(value) => {
+                        setAlarmConfig((current) => ({
+                          ...current,
+                          accountIntervalMaxSeconds: Math.max(
+                            current.accountIntervalMinSeconds,
+                            Number(value || 0)
+                          )
+                        }))
+                      }}
+                    />
+                  </Space>
 
                   <Space size={8} wrap>
                     <Tag color="default">{`上次 ${alarmLastTriggeredLabel}`}</Tag>
