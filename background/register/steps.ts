@@ -62,6 +62,9 @@ const REGISTER_OAUTH_VALID_MS = 5 * 60 * 1000
  */
 const REGISTER_PHONE_RETRY_MIN_REMAINING_MS = 140 * 1000
 const REGISTER_PHONE_CODE_MAX_SUBMIT_ATTEMPTS = 3
+const PHONE_SUBMIT_OUTCOME_TIMEOUT_MS = 20 * 1000
+const PHONE_SUBMIT_OUTCOME_INTERVAL_MS = 500
+const PHONE_SUBMIT_FAILURE_STABLE_COUNT = 2
 
 const isReusableOpenAiTabUrl = (rawUrl?: string) => {
   try {
@@ -230,6 +233,16 @@ const formatPhoneVerificationPageInjectionMessage = (
 const isOpenAiPhoneVerificationRateLimited = (message: string) => {
   return /请求手机验证的次数过多|手机验证.*次数过多|too many.*phone.*verification|phone verification.*too many|try again later|稍后再试/i.test(
     String(message || "")
+  )
+}
+
+const isOpenAiPhoneSubmitFailureMessage = (message: string) => {
+  const text = String(message || "")
+  return (
+    isOpenAiPhoneVerificationRateLimited(text) ||
+    /电话号码已被使用|手机号已被使用|号码已被使用|请使用其他电话号码|phone number.*(already|used|invalid|not valid|different)|already.*phone|number.*already.*used|invalid.*phone|not a valid phone/i.test(
+      text
+    )
   )
 }
 
@@ -403,6 +416,105 @@ const getPhoneNumberSubmitFailureInPage = () => {
   return {
     hasFailure: messages.length > 0,
     message: messages[0] || ""
+  }
+}
+
+type PhoneSubmitOutcome =
+  | {
+      status: "verification"
+      url: string
+    }
+  | {
+      status: "failure"
+      message: string
+      url: string
+    }
+  | {
+      status: "timeout"
+      url: string
+    }
+
+/**
+ * 等待手机号提交后的页面结果。
+ *
+ * 成功仍以 `/phone-verification` URL 为准；失败只在 `/add-phone` 页面上读取明确
+ * 手机号错误，并要求同一错误连续稳定出现，避免 React 短暂渲染状态被误判。
+ *
+ * @param tabId OpenAI 授权页标签页 id。
+ * @param signal 外层流程取消信号。
+ * @return 手机号提交后的成功、失败或超时结果。
+ */
+const waitForPhoneSubmitOutcome = async (
+  tabId: number,
+  signal?: AbortSignal
+): Promise<PhoneSubmitOutcome> => {
+  let latestUrl = ""
+  let stableFailureMessage = ""
+  let stableFailureCount = 0
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < PHONE_SUBMIT_OUTCOME_TIMEOUT_MS) {
+    if (signal?.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError")
+    }
+
+    const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+    latestUrl = currentTab?.url || latestUrl
+
+    if (isOpenAiPhoneVerificationUrl(latestUrl)) {
+      return {
+        status: "verification",
+        url: latestUrl
+      }
+    }
+
+    if (isOpenAiAddPhoneUrl(latestUrl)) {
+      let failureMessage = ""
+      try {
+        const [phoneFailureResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: getPhoneNumberSubmitFailureInPage
+        })
+        const phoneFailure = phoneFailureResult?.result
+        failureMessage =
+          phoneFailure?.hasFailure &&
+          isOpenAiPhoneSubmitFailureMessage(phoneFailure.message)
+            ? phoneFailure.message || ""
+            : ""
+      } catch {
+        // 页面正在切换或暂时不可注入时，继续等 URL 或下一轮稳定错误。
+      }
+
+      if (failureMessage) {
+        if (failureMessage === stableFailureMessage) {
+          stableFailureCount += 1
+        } else {
+          stableFailureMessage = failureMessage
+          stableFailureCount = 1
+        }
+
+        if (stableFailureCount >= PHONE_SUBMIT_FAILURE_STABLE_COUNT) {
+          return {
+            status: "failure",
+            message: failureMessage,
+            url: latestUrl
+          }
+        }
+      } else {
+        stableFailureMessage = ""
+        stableFailureCount = 0
+      }
+    } else {
+      stableFailureMessage = ""
+      stableFailureCount = 0
+    }
+
+    await abortableSleep(PHONE_SUBMIT_OUTCOME_INTERVAL_MS, signal)
+  }
+
+  return {
+    status: "timeout",
+    url: latestUrl
   }
 }
 
@@ -2753,31 +2865,17 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         }
 
         // region ========== 等待跳转到验证码页面 ==========
-        const phoneVerificationUrl = await waitForTabMatchingUrl(
+        const phoneSubmitOutcome = await waitForPhoneSubmitOutcome(
           tabId,
-          isOpenAiPhoneVerificationUrl,
-          {
-            timeoutMs: 20000,
-            intervalMs: 300,
-            signal: getAbortSignal()
-          }
+          getAbortSignal()
         )
         throwIfRunAborted()
         // 如果能在页面拿到信息说明手机号有问题，直接拿下一个手机号
-        if (!phoneVerificationUrl) {
-          let failureMessage = ""
-          try {
-            const [phoneFailureResult] = await chrome.scripting.executeScript({
-              target: { tabId },
-              func: getPhoneNumberSubmitFailureInPage
-            })
-            const phoneFailure = phoneFailureResult?.result
-            failureMessage = phoneFailure?.hasFailure
-              ? phoneFailure.message || ""
+        if (phoneSubmitOutcome.status !== "verification") {
+          const failureMessage =
+            phoneSubmitOutcome.status === "failure"
+              ? phoneSubmitOutcome.message
               : ""
-          } catch {
-            // 页面可能正在切换，检测失败时只按未进入验证码页处理。
-          }
           // 如果没拿到提示信息，并且也没有跳转到验证码页面，说明意外情况了，停止吧
           if (failureMessage) {
             if (isOpenAiPhoneVerificationRateLimited(failureMessage)) {
@@ -2826,7 +2924,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           options.onLog?.(
             "error",
             `手机号 ${activation.phoneNumber} 提交后未进入验证码页，不进入 HeroSMS 轮询；当前 URL：${
-              currentTab?.url || "unknown"
+              currentTab?.url || phoneSubmitOutcome.url || "unknown"
             }；${activationSummary}`
           )
           await releaseHeroSmsActivationQuietly(options, activation)
