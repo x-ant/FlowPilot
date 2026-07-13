@@ -1535,7 +1535,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     </Button>
                     <Button
                       loading={isAlarmTesting}
-                      disabled={disabled || isAlarmTesting}
+                      disabled={
+                        disabled || isAlarmTesting || hasOrphanRegisterRunLock
+                      }
                       onClick={() => {
                         void handleTestAlarmRun()
                       }}>

@@ -417,10 +417,10 @@ const startRegisterBatchJob = async ({
       }
     } finally {
       releasePowerKeepAwake(`register:${runId}`)
+      await releaseRegisterRunLock(runId)
       if (activeRegisterRun?.runId === runId) {
         activeRegisterRun = null
       }
-      await releaseRegisterRunLock(runId)
       const latestConfig = await getRegisterAlarmConfig()
       if (
         source === "alarm" &&
