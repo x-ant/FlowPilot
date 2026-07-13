@@ -140,31 +140,39 @@ export const pollMail163VerificationCodeInPage = async (
     ;(element as HTMLElement).click()
     return true
   }
+
+  const mailRowSelectors = [
+    "div[sign='letter']",
+    "[sign='letter'][aria-label]",
+    "[role='option'][aria-label]",
+    "[role='listitem'][aria-label]",
+    "tr[aria-label]",
+    "li[aria-label]"
+  ]
+
   /**
-   * 查找 163 邮箱列表里的任意邮件行。
+   * 收集 163 邮件列表里的真实邮件行。
+   *
+   * 这里不再使用宽泛的 `div[aria-label]`，只保留邮件行特征，避免
+   * 把工具栏等外层控件当作候选邮件。
    *
    * @return 可见邮件行元素列表。
    */
-  const findVisibleMailRows = () => {
-    const selectors = [
-      "div[sign='letter']",
-      "[role='option'][aria-label]",
-      "[role='listitem'][aria-label]",
-      "tr[aria-label]",
-      "li[aria-label]",
-      "div[aria-label]"
-    ]
+  const collectMailRowElements = () => {
     const rows: HTMLElement[] = []
     const seen = new Set<Element>()
-    for (const selector of selectors) {
+
+    for (const selector of mailRowSelectors) {
       for (const item of Array.from(document.querySelectorAll(selector))) {
         if (seen.has(item) || !isVisible(item)) {
           continue
         }
+
         const text = getText(item)
         if (!text) {
           continue
         }
+
         seen.add(item)
         rows.push(item as HTMLElement)
       }
@@ -173,34 +181,24 @@ export const pollMail163VerificationCodeInPage = async (
     return rows
   }
   /**
+   * 查找 163 邮箱列表里的任意邮件行。
+   *
+   * @return 可见邮件行元素列表。
+   */
+  const findVisibleMailRows = () => {
+    return collectMailRowElements()
+  }
+  /**
    * 查找 163 邮箱列表里的验证码候选邮件。
    *
    * @return 可见的邮件行元素列表。
    */
   const findMailItems = () => {
-    const selectors = [
-      "div[sign='letter']",
-      "[role='option'][aria-label]",
-      "[role='listitem'][aria-label]",
-      "tr[aria-label]",
-      "li[aria-label]",
-      "div[aria-label]"
-    ]
-    const items: HTMLElement[] = []
-    const seen = new Set<Element>()
-    for (const selector of selectors) {
-      for (const item of Array.from(document.querySelectorAll(selector))) {
-        if (seen.has(item) || !isVisible(item)) {
-          continue
-        }
-        const text = getText(item)
-        if (/openai|chatgpt|验证码|代码|verification|code|duckduckgo|forward/i.test(text)) {
-          seen.add(item)
-          items.push(item as HTMLElement)
-        }
-      }
-    }
-    return items
+    return collectMailRowElements().filter((item) => {
+      return /openai|chatgpt|验证码|代码|verification|code|duckduckgo|forward/i.test(
+        getText(item)
+      )
+    })
   }
   /**
    * 等待 163 邮件列表出现。
