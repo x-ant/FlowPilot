@@ -1,4 +1,5 @@
 import { setupSidePanelBehavior } from "./background/app/side-panel"
+import { setupPowerKeepAwake } from "./background/app/power"
 import { setupRegisterAlarm } from "./background/register/alarm"
 
 /**
@@ -16,4 +17,5 @@ const setupBackgroundModule = (name: string, setup: () => void) => {
 }
 
 setupBackgroundModule("register-alarm", setupRegisterAlarm)
+setupBackgroundModule("power-keep-awake", setupPowerKeepAwake)
 setupBackgroundModule("side-panel", setupSidePanelBehavior)

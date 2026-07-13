@@ -82,6 +82,10 @@ export type RegisterRunLock = {
   phonePhase?: "phone_submitted" | "phone_wait_finished" | ""
 }
 
+export type RuntimeSettings = {
+  keepAwakeDuringRun: boolean
+}
+
 export type AccountRunResult = {
   ok: boolean
   message: string
@@ -109,6 +113,10 @@ export const REGISTER_ALARM_NAME = "flowpilot:register:auto-run"
 export const REGISTER_ALARM_STORAGE_KEY = "flowpilot:register:alarm-config"
 export const REGISTER_RUN_LOCK_STORAGE_KEY = "flowpilot:register:run-lock"
 export const REGISTER_RUN_LOCK_STALE_MS = 2 * 60 * 60 * 1000
+export const RUNTIME_SETTINGS_STORAGE_KEY = "flowpilot:runtime-settings"
+export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
+  keepAwakeDuringRun: true
+}
 export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
   enabled: false,
   mode: "interval",
@@ -564,6 +572,24 @@ export const normalizeRegisterAlarmConfig = (
     lastTriggeredAt: Number(record.lastTriggeredAt) || 0,
     lastMessage: String(record.lastMessage || ""),
     runningStartedAt: Number(record.runningStartedAt) || 0
+  }
+}
+
+/**
+ * 规范化全局运行设置。
+ *
+ * @param value 从 `chrome.storage.local` 读取到的原始值。
+ * @return 带默认值的运行设置。
+ */
+export const normalizeRuntimeSettings = (value: unknown): RuntimeSettings => {
+  const record =
+    value && typeof value === "object" ? (value as Partial<RuntimeSettings>) : {}
+
+  return {
+    keepAwakeDuringRun:
+      typeof record.keepAwakeDuringRun === "boolean"
+        ? record.keepAwakeDuringRun
+        : DEFAULT_RUNTIME_SETTINGS.keepAwakeDuringRun
   }
 }
 

@@ -1,9 +1,11 @@
 ﻿import {
   Button,
   Card,
+  Collapse,
   ConfigProvider,
   Empty,
   Space,
+  Switch,
   Tabs,
   Tag,
   theme,
@@ -39,7 +41,13 @@ import {
   FLOW_PAGE_ITEMS,
   type FlowPage
 } from "./sidepanel/pages"
-import { getStorage } from "./shared/account-state"
+import {
+  DEFAULT_RUNTIME_SETTINGS,
+  getStorage,
+  normalizeRuntimeSettings,
+  RUNTIME_SETTINGS_STORAGE_KEY,
+  type RuntimeSettings
+} from "./shared/account-state"
 
 /**
  * Chrome 扩展侧边栏入口。
@@ -54,6 +62,9 @@ function SidePanel() {
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
   const [logsLoaded, setLogsLoaded] = useState(false)
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(
+    DEFAULT_RUNTIME_SETTINGS
+  )
   const [busy, setBusy] = useState(false)
   const [isLogAtBottom, setIsLogAtBottom] = useState(true)
   const logListRef = useRef<HTMLDivElement | null>(null)
@@ -192,7 +203,11 @@ function SidePanel() {
   useEffect(() => {
     const storage = getStorage()
     storage?.get(
-      [ACTIVE_PAGE_STORAGE_KEY, EXECUTION_LOG_STORAGE_KEY],
+      [
+        ACTIVE_PAGE_STORAGE_KEY,
+        EXECUTION_LOG_STORAGE_KEY,
+        RUNTIME_SETTINGS_STORAGE_KEY
+      ],
       (result) => {
         setActivePage(
           result?.[ACTIVE_PAGE_STORAGE_KEY] === "flowpilot-register"
@@ -200,6 +215,9 @@ function SidePanel() {
             : "flowpilot-login"
         )
         setLogs(normalizeStoredLogs(result?.[EXECUTION_LOG_STORAGE_KEY]))
+        setRuntimeSettings(
+          normalizeRuntimeSettings(result?.[RUNTIME_SETTINGS_STORAGE_KEY])
+        )
         setLogsLoaded(true)
       }
     )
@@ -214,18 +232,26 @@ function SidePanel() {
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string
     ) => {
-      if (areaName !== "local" || !changes[EXECUTION_LOG_STORAGE_KEY]) {
+      if (areaName !== "local") {
         return
       }
 
-      const nextLogs = normalizeStoredLogs(
-        changes[EXECUTION_LOG_STORAGE_KEY].newValue
-      )
-      setLogs((current) => {
-        const mergedLogs =
-          nextLogs.length === 0 ? [] : mergeLogLists(current, nextLogs)
-        return isSameLogList(current, mergedLogs) ? current : mergedLogs
-      })
+      if (changes[EXECUTION_LOG_STORAGE_KEY]) {
+        const nextLogs = normalizeStoredLogs(
+          changes[EXECUTION_LOG_STORAGE_KEY].newValue
+        )
+        setLogs((current) => {
+          const mergedLogs =
+            nextLogs.length === 0 ? [] : mergeLogLists(current, nextLogs)
+          return isSameLogList(current, mergedLogs) ? current : mergedLogs
+        })
+      }
+
+      if (changes[RUNTIME_SETTINGS_STORAGE_KEY]) {
+        setRuntimeSettings(
+          normalizeRuntimeSettings(changes[RUNTIME_SETTINGS_STORAGE_KEY].newValue)
+        )
+      }
     }
 
     chrome.storage.onChanged.addListener(handleStorageChanged)
@@ -261,6 +287,23 @@ function SidePanel() {
       [EXECUTION_LOG_STORAGE_KEY]: []
     })
     setStatus("日志已清空")
+  }
+
+  /**
+   * 更新全局运行设置并立即保存。
+   *
+   * @param patch 要合并到当前运行设置的字段。
+   */
+  const handleRuntimeSettingsChange = (patch: Partial<RuntimeSettings>) => {
+    const nextSettings = normalizeRuntimeSettings({
+      ...runtimeSettings,
+      ...patch
+    })
+    setRuntimeSettings(nextSettings)
+    getStorage()?.set({
+      [RUNTIME_SETTINGS_STORAGE_KEY]: nextSettings
+    })
+    setStatus("运行设置已保存")
   }
 
   /**
@@ -366,6 +409,29 @@ function SidePanel() {
               onBusyChange={setBusy}
             />
           )}
+
+          <Collapse
+            className="panel-card"
+            items={[
+              {
+                key: "runtime-settings",
+                label: "运行设置",
+                children: (
+                  <Space size={12} wrap>
+                    <Switch
+                      checked={runtimeSettings.keepAwakeDuringRun}
+                      onChange={(checked) => {
+                        handleRuntimeSettingsChange({
+                          keepAwakeDuringRun: checked
+                        })
+                      }}
+                    />
+                    <span className="debug-label">运行时保持唤醒</span>
+                  </Space>
+                )
+              }
+            ]}
+          />
 
           <Card
             className="panel-card"

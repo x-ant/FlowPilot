@@ -141,6 +141,18 @@ const runManagedAccountFlow = async (
   }
 }
 
+const setPowerKeepAwake = async (action: "acquire" | "release") => {
+  try {
+    await chrome.runtime.sendMessage({
+      type: "flowpilot:power-keep-awake",
+      action,
+      reason: "login-batch"
+    })
+  } catch {
+    // 保持唤醒只是辅助能力，消息失败不影响登录主流程。
+  }
+}
+
 export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
     storageKeys: LOGIN_STORAGE_KEYS,
@@ -578,128 +590,134 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     })
     setIsBatchRunning(true)
     setRunningEmail("")
-
-    let workingAccounts = accounts.map((account) => {
-      return !isTargetAccount(account)
-        ? account
-        : resetManagedAccountState(account)
-    })
-    syncAccounts(workingAccounts, normalizedCpaUrl)
+    await setPowerKeepAwake("acquire")
 
     const batchLabel = mode === "all" ? "选中账号" : "选中的未完成账号"
-    setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
-    log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
-
-    let currentRunnableIndex = 0
-    for (let index = 0; index < workingAccounts.length; index += 1) {
-      if (batchCancelRef.current) {
-        setStatus("已停止批量执行")
-        log.warn("批量执行已停止")
-        break
-      }
-
-      const currentAccount = workingAccounts[index]
-      const currentAccountKey = getManagedAccountKey(currentAccount)
-      const currentAccountLabel = getManagedAccountDisplayLabel(currentAccount)
-      if (!isTargetAccount(currentAccount)) {
-        continue
-      }
-
-      currentRunnableIndex += 1
-      setRunningEmail(currentAccountKey)
-      setStatus(
-        `正在处理 ${currentAccountLabel}（${currentRunnableIndex}/${runnableCount}）`
-      )
-      log.info(`开始处理账号 ${currentAccountLabel}`)
-
-      const updateCurrentAccount = (
-        patch: Partial<ManagedAccount>
-      ): ManagedAccount[] => {
-        const nextAccounts = [...workingAccounts]
-        nextAccounts[index] = {
-          ...nextAccounts[index],
-          ...patch,
-          updatedAt: Date.now()
-        }
-        workingAccounts = nextAccounts
-        setAccounts(nextAccounts)
-        syncAccounts(nextAccounts, normalizedCpaUrl)
-        return nextAccounts
-      }
-
-      updateCurrentAccount({
-        status: "running",
-        lastMessage: "正在打开登录页"
+    try {
+      let workingAccounts = accounts.map((account) => {
+        return !isTargetAccount(account)
+          ? account
+          : resetManagedAccountState(account)
       })
+      syncAccounts(workingAccounts, normalizedCpaUrl)
 
-      let runResult: AccountRunResult
-      try {
-        runResult = await runManagedAccountFlow(
-          normalizedCpaUrl,
-          cpaManagementKey,
-          currentAccount,
-          codexLoginRunner,
-          (progress, message) => {
-            const nextStatus: ManagedAccountStatus =
-              progress === STEP_COUNT ? "done" : "running"
-            updateCurrentAccount({
-              progress,
-              status: nextStatus,
-              lastMessage: message
-            })
-            setStatus(
-              `账号 ${currentAccountLabel} 已完成「${getFlowStepLabel(progress)}」`
-            )
-            log.info(`[${currentAccountLabel}] ${message}`)
-          }
-        )
-      } catch (error) {
-        runResult = {
-          ok: false,
-          message:
-            error instanceof Error ? error.message : "账号自动执行时发生异常"
+      setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
+      log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
+
+      let currentRunnableIndex = 0
+      for (let index = 0; index < workingAccounts.length; index += 1) {
+        if (batchCancelRef.current) {
+          setStatus("已停止批量执行")
+          log.warn("批量执行已停止")
+          break
         }
-      }
 
-      if (batchCancelRef.current) {
-        updateCurrentAccount({
-          status: "failed",
-          lastMessage: runResult.message || "已停止当前流程"
-        })
-        setStatus("已停止当前流程")
-        log.warn(
-          `[${currentAccountLabel}] ${runResult.message || "已停止当前流程"}`
+        const currentAccount = workingAccounts[index]
+        const currentAccountKey = getManagedAccountKey(currentAccount)
+        const currentAccountLabel =
+          getManagedAccountDisplayLabel(currentAccount)
+        if (!isTargetAccount(currentAccount)) {
+          continue
+        }
+
+        currentRunnableIndex += 1
+        setRunningEmail(currentAccountKey)
+        setStatus(
+          `正在处理 ${currentAccountLabel}（${currentRunnableIndex}/${runnableCount}）`
         )
-        break
-      }
+        log.info(`开始处理账号 ${currentAccountLabel}`)
 
-      if (runResult.ok) {
+        const updateCurrentAccount = (
+          patch: Partial<ManagedAccount>
+        ): ManagedAccount[] => {
+          const nextAccounts = [...workingAccounts]
+          nextAccounts[index] = {
+            ...nextAccounts[index],
+            ...patch,
+            updatedAt: Date.now()
+          }
+          workingAccounts = nextAccounts
+          setAccounts(nextAccounts)
+          syncAccounts(nextAccounts, normalizedCpaUrl)
+          return nextAccounts
+        }
+
         updateCurrentAccount({
-          progress: STEP_COUNT,
-          status: "done",
+          status: "running",
+          lastMessage: "正在打开登录页"
+        })
+
+        let runResult: AccountRunResult
+        try {
+          runResult = await runManagedAccountFlow(
+            normalizedCpaUrl,
+            cpaManagementKey,
+            currentAccount,
+            codexLoginRunner,
+            (progress, message) => {
+              const nextStatus: ManagedAccountStatus =
+                progress === STEP_COUNT ? "done" : "running"
+              updateCurrentAccount({
+                progress,
+                status: nextStatus,
+                lastMessage: message
+              })
+              setStatus(
+                `账号 ${currentAccountLabel} 已完成「${getFlowStepLabel(progress)}」`
+              )
+              log.info(`[${currentAccountLabel}] ${message}`)
+            }
+          )
+        } catch (error) {
+          runResult = {
+            ok: false,
+            message:
+              error instanceof Error ? error.message : "账号自动执行时发生异常"
+          }
+        }
+
+        if (batchCancelRef.current) {
+          updateCurrentAccount({
+            status: "failed",
+            lastMessage: runResult.message || "已停止当前流程"
+          })
+          setStatus("已停止当前流程")
+          log.warn(
+            `[${currentAccountLabel}] ${runResult.message || "已停止当前流程"}`
+          )
+          break
+        }
+
+        if (runResult.ok) {
+          updateCurrentAccount({
+            progress: STEP_COUNT,
+            status: "done",
+            lastMessage: runResult.message
+          })
+          log.info(`[${currentAccountLabel}] ${runResult.message}`)
+          continue
+        }
+
+        const currentState = workingAccounts[index]
+        updateCurrentAccount({
+          progress: currentState.progress,
+          status: "failed",
           lastMessage: runResult.message
         })
-        log.info(`[${currentAccountLabel}] ${runResult.message}`)
-        continue
+        setStatus(`账号 ${currentAccountLabel} 执行失败`)
+        log.warn(`[${currentAccountLabel}] ${runResult.message}`)
       }
 
-      const currentState = workingAccounts[index]
-      updateCurrentAccount({
-        progress: currentState.progress,
-        status: "failed",
-        lastMessage: runResult.message
-      })
-      setStatus(`账号 ${currentAccountLabel} 执行失败`)
-      log.warn(`[${currentAccountLabel}] ${runResult.message}`)
+      setStatus(
+        batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
+      )
+    } finally {
+      await setPowerKeepAwake("release")
+      setRunningEmail("")
+      setIsBatchRunning(false)
+      setIsBatchStopping(false)
+      batchAbortControllerRef.current = null
     }
-
-    setRunningEmail("")
-    setIsBatchRunning(false)
-    setIsBatchStopping(false)
-    batchAbortControllerRef.current = null
-    setStatus(
-      batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
-    )
   }
 
   const handleStopBatch = () => {

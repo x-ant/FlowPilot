@@ -25,6 +25,10 @@ import {
   type RegisterStopStrategy
 } from "./batch-runner"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
+import {
+  releasePowerKeepAwake,
+  requestPowerKeepAwake
+} from "../app/power"
 const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
 
 const log = createConsoleLogger("register-alarm")
@@ -330,6 +334,7 @@ const startRegisterBatchJob = async ({
     phonePhase: ""
   })
   await writeRegisterExecutionLog("info", `${triggerLabel}已启动`)
+  requestPowerKeepAwake(`register:${runId}`)
 
   void (async () => {
     let latestAccounts = state.accounts
@@ -411,6 +416,7 @@ const startRegisterBatchJob = async ({
         })
       }
     } finally {
+      releasePowerKeepAwake(`register:${runId}`)
       if (activeRegisterRun?.runId === runId) {
         activeRegisterRun = null
       }
