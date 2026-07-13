@@ -10,7 +10,10 @@ let keepAwakeDuringRun = DEFAULT_RUNTIME_SETTINGS.keepAwakeDuringRun
 /**
  * 按当前引用计数刷新 Chrome 保持唤醒状态。
  *
- * `display` 会尽量保持屏幕不关闭，也会阻止系统睡眠；适合自动化流程运行期间使用。
+ * `chrome.power.requestKeepAwake("display")` 只能在 Chrome 和系统已经醒着时，
+ * 阻止屏幕关闭和系统进入睡眠；它不能唤醒已经睡眠、休眠或关机的电脑。
+ * 所以“运行时保持唤醒”的能力边界是：流程开始后防止运行中睡着，
+ * 不是让定时任务在电脑睡着后自动唤醒并执行。
  */
 const refreshPowerKeepAwake = () => {
   if (!chrome.power) {
@@ -30,7 +33,11 @@ const refreshPowerKeepAwake = () => {
 }
 
 /**
- * 申请保持屏幕和系统唤醒。
+ * 为正在运行的流程申请保持屏幕和系统唤醒。
+ *
+ * 这里仅记录运行中的申请来源；是否真正调用 Chrome Power API 还要看全局
+ * “运行时保持唤醒”开关。设置定时任务本身不会调用这里，只有登录/注册
+ * 批量流程实际开始执行时才会申请。
  *
  * @param reason 申请来源；同一个来源重复申请只计一次。
  */
