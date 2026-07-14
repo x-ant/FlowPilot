@@ -4,6 +4,7 @@
   Collapse,
   ConfigProvider,
   Empty,
+  Segmented,
   Space,
   Switch,
   Tabs,
@@ -49,6 +50,26 @@ import {
   type RuntimeSettings
 } from "./shared/account-state"
 
+type LogLevelFilter = "all" | "warn-error" | "error"
+
+const LOG_LEVEL_FILTER_OPTIONS: Array<{
+  label: string
+  value: LogLevelFilter
+}> = [
+  {
+    label: "全部",
+    value: "all"
+  },
+  {
+    label: "WARN+ERROR",
+    value: "warn-error"
+  },
+  {
+    label: "ERROR",
+    value: "error"
+  }
+]
+
 /**
  * Chrome 扩展侧边栏入口。
  *
@@ -61,6 +82,7 @@ function SidePanel() {
   const [activePage, setActivePage] = useState<FlowPage>("flowpilot-login")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [logLevelFilter, setLogLevelFilter] = useState<LogLevelFilter>("all")
   const [logsLoaded, setLogsLoaded] = useState(false)
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(
     DEFAULT_RUNTIME_SETTINGS
@@ -160,6 +182,17 @@ function SidePanel() {
       log[level](`${prefix} ${message}`)
     })
   }, [activePage, log])
+  const visibleLogs = useMemo(() => {
+    if (logLevelFilter === "error") {
+      return logs.filter((item) => item.level === "error")
+    }
+
+    if (logLevelFilter === "warn-error") {
+      return logs.filter((item) => item.level === "warn" || item.level === "error")
+    }
+
+    return logs
+  }, [logLevelFilter, logs])
 
   /**
    * 同步日志是否停在底部的 React 状态。
@@ -190,7 +223,7 @@ function SidePanel() {
     window.setTimeout(() => {
       isAutoScrollingLogsRef.current = false
     }, 0)
-  }, [logs, setLogAtBottomSafely])
+  }, [visibleLogs, setLogAtBottomSafely])
 
   useEffect(() => {
     return () => {
@@ -440,7 +473,7 @@ function SidePanel() {
               <Space size={8}>
                 <Button
                   size="small"
-                  disabled={logs.length === 0 || isLogAtBottom}
+                  disabled={visibleLogs.length === 0 || isLogAtBottom}
                   onClick={handleScrollLogsToBottom}>
                   滚动到底
                 </Button>
@@ -449,7 +482,16 @@ function SidePanel() {
                 </Button>
               </Space>
             }>
-            {logs.length > 0 ? (
+            <div className="log-toolbar">
+              <span className="debug-label">日志级别</span>
+              <Segmented<LogLevelFilter>
+                size="small"
+                options={LOG_LEVEL_FILTER_OPTIONS}
+                value={logLevelFilter}
+                onChange={setLogLevelFilter}
+              />
+            </div>
+            {visibleLogs.length > 0 ? (
               <div
                 className="log-list"
                 ref={logListRef}
@@ -457,7 +499,7 @@ function SidePanel() {
                 onTouchStart={markLogScrollIntent}
                 onWheel={markLogScrollIntent}
                 onScroll={handleLogScroll}>
-                {logs.map((logItem) => {
+                {visibleLogs.map((logItem) => {
                   const levelMeta = LOG_LEVEL_META[logItem.level]
                   return (
                     <div className="log-row" key={logItem.id}>
@@ -479,7 +521,9 @@ function SidePanel() {
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description={
-                  <Typography.Text type="secondary">暂无日志</Typography.Text>
+                  <Typography.Text type="secondary">
+                    {logs.length > 0 ? "当前级别没有日志" : "暂无日志"}
+                  </Typography.Text>
                 }
               />
             )}

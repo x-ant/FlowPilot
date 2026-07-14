@@ -48,6 +48,12 @@ export const LOG_LEVEL_META: Record<LogLevel, LogLevelMeta> = {
   }
 }
 
+const normalizeLogLevel = (value: unknown): LogLevel => {
+  return ["error", "warn", "info", "debug"].includes(String(value))
+    ? (value as LogLevel)
+    : "info"
+}
+
 /**
  * 规范化本地存储里的执行日志。
  *
@@ -65,8 +71,7 @@ export const normalizeStoredLogs = (value: unknown): LogItem[] => {
       if (
         typeof record.id !== "string" ||
         typeof record.time !== "string" ||
-        typeof record.message !== "string" ||
-        !["error", "warn", "info", "debug"].includes(String(record.level))
+        typeof record.message !== "string"
       ) {
         return null
       }
@@ -74,7 +79,7 @@ export const normalizeStoredLogs = (value: unknown): LogItem[] => {
       return {
         id: record.id,
         time: record.time,
-        level: record.level as LogItem["level"],
+        level: normalizeLogLevel(record.level),
         message: record.message
       }
     })
