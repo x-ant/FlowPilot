@@ -172,6 +172,25 @@ const describeTabLoadState = (tab: chrome.tabs.Tab | null | undefined) => {
 }
 
 /**
+ * 判断回退后的手机号输入页是否已经稳定。
+ *
+ * 回退过程中可能短暂看到 `/add-phone` 和手机号输入框，但 Chrome 仍处于
+ * loading，且 pendingUrl 已经指向 `/phone-verification`。这种状态继续买号
+ * 会浪费新订单，所以必须等到 URL、加载状态和 pendingUrl 都稳定。
+ *
+ * @param tab 回退后读取到的 Chrome 标签页。
+ * @return 标签页稳定停在手机号输入页时返回 true。
+ */
+const isStableOpenAiAddPhoneTab = (tab: chrome.tabs.Tab | null | undefined) => {
+  return Boolean(
+    tab &&
+      isOpenAiAddPhoneUrl(tab.url) &&
+      tab.status === "complete" &&
+      !String(tab.pendingUrl || "").trim()
+  )
+}
+
+/**
  * 等待标签页加载完成，并记录等待期间 Chrome 观察到的 URL/status 变化。
  *
  * 这只用于定位手机号页偶发跳到错误页的问题：普通日志只能看到等待前后状态，
@@ -2137,17 +2156,33 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     const readyTab = await chrome.tabs.get(tabId).catch(() => null)
     const readyUrl = readyTab?.url || ""
     const readyValue = readyResult[0]?.result
+    const hasPhoneInput = Boolean(readyValue?.ok)
+    /**
+     * 不能只靠页面脚本看到手机号输入框来判断回退成功。
+     *
+     * OpenAI 页面偶发会先短暂回到 `/add-phone`，同时 Chrome 仍在 loading，
+     * 并且 pendingUrl 已经指向 `/phone-verification` 错误页。此时继续买号，
+     * 新号码会在提交前被错误页吞掉，所以这里要求 tab 完整稳定后才继续。
+     */
+    const isStablePhoneInputPage =
+      hasPhoneInput && isStableOpenAiAddPhoneTab(readyTab)
+    const readyMessage =
+      readyValue?.message || "未确认页面是否回到手机号输入页"
+    const stabilityMessage = isStablePhoneInputPage
+      ? "手机号输入页已稳定"
+      : `手机号输入页未稳定，避免继续买号；检测到输入框：${
+          hasPhoneInput ? "是" : "否"
+        }`
+
     onLog?.(
-      readyValue?.ok ? "info" : "warn",
-      `回退后手机号输入页检测结果：${
-        readyValue?.message || "未确认页面是否回到手机号输入页"
-      }；检测后标签状态：${describeTabLoadState(readyTab)}`
+      isStablePhoneInputPage ? "info" : "warn",
+      `回退后手机号输入页检测结果：${readyMessage}；${stabilityMessage}；检测后标签状态：${describeTabLoadState(
+        readyTab
+      )}`
     )
     return {
-      ok: Boolean(readyValue?.ok),
-      message: `${backMessage}；${
-        readyValue?.message || "未确认页面是否回到手机号输入页"
-      }；history.back 前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
+      ok: isStablePhoneInputPage,
+      message: `${backMessage}；${readyMessage}；${stabilityMessage}；history.back 前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
         afterBackUrl || "unknown"
       }；检测后 URL：${readyUrl || "unknown"}；检测后标签状态：${describeTabLoadState(
         readyTab
