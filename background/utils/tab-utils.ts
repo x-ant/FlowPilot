@@ -38,6 +38,32 @@ const isSameFullUrl = (currentUrl: string | undefined, targetUrl: string) => {
 }
 
 /**
+ * 判断标签页是否已经稳定停在目标 URL。
+ *
+ * 这个工具用于后续要操作页面 DOM、提交验证码或买号这类有成本动作的场景。
+ * 它不替代 waitForTabMatchingUrl；后者只负责尽快捕获 URL，适合 OAuth callback
+ * 这种“URL 本身就是结果”的场景。
+ *
+ * @param tab Chrome 标签页对象；标签页不存在时直接返回 false。
+ * @param matcher 目标 URL 匹配规则。
+ * @return 当前 URL 命中、页面加载完成且没有 pendingUrl 时返回 true。
+ */
+export const isStableTabMatchingUrl = (
+  tab: chrome.tabs.Tab | null | undefined,
+  matcher: (url: string) => boolean
+) => {
+  const currentUrl = String(tab?.url || "").trim()
+  const pendingUrl = String(tab?.pendingUrl || "").trim()
+
+  return Boolean(
+    currentUrl &&
+      matcher(currentUrl) &&
+      tab?.status === "complete" &&
+      !pendingUrl
+  )
+}
+
+/**
  * 等待指定标签页加载完成。
  *
  * 如果页面一直没有 complete，也会在超时后放行，避免整个登录流程因为

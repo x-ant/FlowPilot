@@ -37,6 +37,7 @@ import {
 import type { RunContext } from "../utils/run-context"
 import {
   findOrOpenTab,
+  isStableTabMatchingUrl,
   waitForTabLoaded,
   waitForTabMatchingUrl
 } from "../utils/tab-utils"
@@ -171,86 +172,126 @@ const describeTabLoadState = (tab: chrome.tabs.Tab | null | undefined) => {
     .join("，")
 }
 
-/**
- * 判断回退后的手机号输入页是否已经稳定。
- *
- * 回退过程中可能短暂看到 `/add-phone` 和手机号输入框，但 Chrome 仍处于
- * loading，且 pendingUrl 已经指向 `/phone-verification`。这种状态继续买号
- * 会浪费新订单，所以必须等到 URL、加载状态和 pendingUrl 都稳定。
- *
- * @param tab 回退后读取到的 Chrome 标签页。
- * @return 标签页稳定停在手机号输入页时返回 true。
- */
-const isStableOpenAiAddPhoneTab = (tab: chrome.tabs.Tab | null | undefined) => {
-  return Boolean(
-    tab &&
-      isOpenAiAddPhoneUrl(tab.url) &&
-      tab.status === "complete" &&
-      !String(tab.pendingUrl || "").trim()
-  )
+type NavigationTraceDetails = {
+  tabId: number
+  frameId?: number
+  parentFrameId?: number
+  url?: string
+  transitionType?: string
+  transitionQualifiers?: string[]
+  error?: string
+  timeStamp?: number
 }
 
 /**
- * 等待标签页加载完成，并记录等待期间 Chrome 观察到的 URL/status 变化。
+ * 格式化 Chrome webNavigation 事件。
  *
- * 这只用于定位手机号页偶发跳到错误页的问题：普通日志只能看到等待前后状态，
- * tabs.onUpdated 变化能说明跳转是在等待过程中发生，还是等待前已经发生。
+ * webNavigation 能提供 transitionType / transitionQualifiers / error 等信息，
+ * 用来判断跳转更像浏览器前进后退、页面脚本跳转、服务端重定向还是导航错误。
+ *
+ * @param eventName 导航事件名。
+ * @param details Chrome 导航事件详情。
+ * @return 适合写入执行日志的诊断文本。
+ */
+const formatNavigationTraceDetail = (
+  eventName: string,
+  details: NavigationTraceDetails
+) => {
+  const transitionQualifiers = Array.isArray(details.transitionQualifiers)
+    ? details.transitionQualifiers.join(",")
+    : ""
+
+  return [
+    `event=${eventName}`,
+    typeof details.frameId === "number" ? `frameId=${details.frameId}` : "",
+    typeof details.parentFrameId === "number"
+      ? `parentFrameId=${details.parentFrameId}`
+      : "",
+    details.url ? `url=${details.url}` : "",
+    details.transitionType ? `transitionType=${details.transitionType}` : "",
+    transitionQualifiers ? `transitionQualifiers=${transitionQualifiers}` : "",
+    details.error ? `error=${details.error}` : "",
+    typeof details.timeStamp === "number" ? `timeStamp=${details.timeStamp}` : ""
+  ]
+    .filter(Boolean)
+    .join("，")
+}
+
+/**
+ * 监听当前标签页的 Chrome 导航事件。
+ *
+ * 这里只在回退异常时把事件汇总写入日志，避免正常流程被调试日志刷屏。
+ * 事件能帮助确认
+ * `/add-phone -> /phone-verification` 是 history 回退恢复、前端跳转、服务端
+ * 重定向还是 Chrome 导航错误。
  *
  * @param tabId 当前注册流程标签页 ID。
  * @param onLog 写入侧边栏日志的回调。
  * @param label 当前诊断日志前缀。
+ * @return 停止监听并返回本次收集到的导航事件。
  */
-const waitForTabLoadedWithTrace = async (
+const startTabNavigationTrace = (
   tabId: number,
-  onLog: HeroSmsPhoneVerificationOptions["onLog"],
-  label: string
+  onLog: HeroSmsPhoneVerificationOptions["onLog"]
 ) => {
-  const updates: string[] = []
-  const listener = (
-    updatedTabId: number,
-    changeInfo: chrome.tabs.TabChangeInfo,
-    tab: chrome.tabs.Tab
-  ) => {
-    if (updatedTabId !== tabId) {
+  if (!chrome.webNavigation) {
+    onLog?.("warn", "webNavigation 权限不可用，无法记录回退导航事件")
+    return () => [] as string[]
+  }
+
+  const events: string[] = []
+  const record = (eventName: string, details: NavigationTraceDetails) => {
+    if (details.tabId !== tabId) {
       return
     }
 
-    const pendingUrl = String(tab.pendingUrl || "")
-    const details = [
-      changeInfo.status ? `change.status=${changeInfo.status}` : "",
-      changeInfo.url ? `change.url=${changeInfo.url}` : "",
-      `tab.status=${tab.status || "unknown"}`,
-      `tab.url=${tab.url || "unknown"}`,
-      pendingUrl ? `tab.pendingUrl=${pendingUrl}` : ""
-    ]
-      .filter(Boolean)
-      .join("，")
-
-    if (details) {
-      updates.push(details)
-    }
+    const detailText = formatNavigationTraceDetail(eventName, details)
+    events.push(detailText)
   }
 
-  const beforeTab = await chrome.tabs.get(tabId).catch(() => null)
-  onLog?.("info", `${label} 等待页面加载前：${describeTabLoadState(beforeTab)}`)
-  chrome.tabs.onUpdated.addListener(listener)
-  try {
-    await waitForTabLoaded(tabId)
-  } finally {
-    chrome.tabs.onUpdated.removeListener(listener)
+  const onBeforeNavigate = (
+    details: chrome.webNavigation.WebNavigationFramedCallbackDetails
+  ) => {
+    record("onBeforeNavigate", details)
+  }
+  const onCommitted = (
+    details: chrome.webNavigation.WebNavigationTransitionCallbackDetails
+  ) => {
+    record("onCommitted", details)
+  }
+  const onHistoryStateUpdated = (
+    details: chrome.webNavigation.WebNavigationTransitionCallbackDetails
+  ) => {
+    record("onHistoryStateUpdated", details)
+  }
+  const onCompleted = (
+    details: chrome.webNavigation.WebNavigationFramedCallbackDetails
+  ) => {
+    record("onCompleted", details)
+  }
+  const onErrorOccurred = (
+    details: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails
+  ) => {
+    record("onErrorOccurred", details)
   }
 
-  if (updates.length) {
-    onLog?.(
-      "info",
-      `${label} 等待页面加载期间变化：${updates.slice(0, 8).join("；")}`
+  chrome.webNavigation.onBeforeNavigate.addListener(onBeforeNavigate)
+  chrome.webNavigation.onCommitted.addListener(onCommitted)
+  chrome.webNavigation.onHistoryStateUpdated.addListener(onHistoryStateUpdated)
+  chrome.webNavigation.onCompleted.addListener(onCompleted)
+  chrome.webNavigation.onErrorOccurred.addListener(onErrorOccurred)
+
+  return () => {
+    chrome.webNavigation.onBeforeNavigate.removeListener(onBeforeNavigate)
+    chrome.webNavigation.onCommitted.removeListener(onCommitted)
+    chrome.webNavigation.onHistoryStateUpdated.removeListener(
+      onHistoryStateUpdated
     )
-  } else {
-    onLog?.("info", `${label} 等待页面加载期间未收到 tabs.onUpdated 变化`)
-  }
+    chrome.webNavigation.onCompleted.removeListener(onCompleted)
+    chrome.webNavigation.onErrorOccurred.removeListener(onErrorOccurred)
 
-  const afterTab = await chrome.tabs.get(tabId).catch(() => null)
-  onLog?.("info", `${label} 等待页面加载后：${describeTabLoadState(afterTab)}`)
+    return events
+  }
 }
 
 /**
@@ -555,7 +596,8 @@ type PhoneSubmitOutcome =
  */
 const waitForPhoneSubmitOutcome = async (
   tabId: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onLog?: HeroSmsPhoneVerificationOptions["onLog"]
 ): Promise<PhoneSubmitOutcome> => {
   let latestUrl = ""
   let stableFailureMessage = ""
@@ -571,6 +613,12 @@ const waitForPhoneSubmitOutcome = async (
     latestUrl = currentTab?.url || latestUrl
 
     if (isOpenAiPhoneVerificationUrl(latestUrl)) {
+      onLog?.(
+        "info",
+        `手机号提交结果检测：已进入验证码页；标签状态：${describeTabLoadState(
+          currentTab
+        )}`
+      )
       return {
         status: "verification",
         url: latestUrl
@@ -603,6 +651,12 @@ const waitForPhoneSubmitOutcome = async (
         }
 
         if (stableFailureCount >= PHONE_SUBMIT_FAILURE_STABLE_COUNT) {
+          onLog?.(
+            "warn",
+            `手机号提交结果检测：连续 ${stableFailureCount} 次识别到手机号错误：${failureMessage}；标签状态：${describeTabLoadState(
+              currentTab
+            )}`
+          )
           return {
             status: "failure",
             message: failureMessage,
@@ -621,9 +675,19 @@ const waitForPhoneSubmitOutcome = async (
     await abortableSleep(PHONE_SUBMIT_OUTCOME_INTERVAL_MS, signal)
   }
 
+  const timeoutTab = await chrome.tabs.get(tabId).catch(() => null)
+  onLog?.(
+    "warn",
+    `手机号提交结果检测：${formatDurationSeconds(
+      PHONE_SUBMIT_OUTCOME_TIMEOUT_MS
+    )} 内未确认验证码页或明确手机号错误；标签状态：${describeTabLoadState(
+      timeoutTab
+    )}`
+  )
+
   return {
     status: "timeout",
-    url: latestUrl
+    url: timeoutTab?.url || latestUrl
   }
 }
 
@@ -2026,12 +2090,12 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   /**
    * 手机验证码超时后回退到手机号输入页。
    *
-   * 这里按用户要求使用浏览器历史回退，不直接跳转 /add-phone；如果历史栈无法
-   * 回到手机号页，就交给外层重新执行 Step 5 刷新 OAuth。
+   * 这里按用户要求使用页面内 window.history.back() 触发历史回退，不直接跳转
+   * /add-phone；如果历史栈无法回到手机号页，就交给外层重新执行 Step 5 刷新 OAuth。
    *
    * @param tabId 当前手机号验证码页标签页 ID。
    * @param canGoBack 回退保护回调；浏览器不允许读取 history 上一项，调用方可用闭包检查自己记录的 URL，并返回具体失败原因。
-   * @param onLog 写入侧边栏日志的回调；用于确认本次到底由哪个回退方式触发。
+   * @param onLog 写入侧边栏日志的回调。
    * @return 是否重新看到手机号输入框。
    */
   const tryHistoryBackToPhoneInput = async (
@@ -2046,13 +2110,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       const currentTab = await chrome.tabs.get(tabId).catch(() => null)
       onLog?.(
         "warn",
-        `history.back 回退保护未通过：${
+        `浏览器回退保护未通过：${
           guardResult.message
         }；当前标签状态：${describeTabLoadState(currentTab)}`
       )
       return {
         ok: false,
-        message: `${guardResult.message}，已停止 history.back；当前 URL：${
+        message: `${guardResult.message}，已停止 window.history.back；当前 URL：${
           currentTab?.url || "unknown"
         }`
       }
@@ -2065,6 +2129,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         beforeBackTab
       )}`
     )
+    const stopBackNavigationTrace = startTabNavigationTrace(tabId, onLog)
     try {
       const [backResult] = await chrome.scripting.executeScript({
         target: { tabId },
@@ -2078,56 +2143,46 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             backValue?.message || "触发页面回退失败"
           }；回退前 URL：${beforeBackUrl || "unknown"}`
         )
+        const navigationEvents = stopBackNavigationTrace()
         return {
           ok: false,
-          message: `${
-            backValue?.message || "触发页面回退失败"
-          }；history.back 前 URL：${beforeBackUrl || "unknown"}`
+          message: `${backValue?.message || "触发页面回退失败"}；回退前 URL：${
+            beforeBackUrl || "unknown"
+          }${
+            navigationEvents.length
+              ? `；回退期间导航：${navigationEvents.slice(0, 6).join("；")}`
+              : ""
+          }`
         }
       }
       backMessage = "已通过页面 window.history.back 触发回退"
       onLog?.("info", backMessage)
     } catch (error) {
-      const injectionErrorMessage = getErrorMessage(error)
-      const beforeFallbackTab = await chrome.tabs.get(tabId).catch(() => null)
+      const currentTab = await chrome.tabs.get(tabId).catch(() => null)
+      const historyBackErrorMessage = getErrorMessage(error)
       onLog?.(
         "warn",
-        `window.history.back 注入失败，准备改用 chrome.tabs.goBack；注入错误：${injectionErrorMessage}；兜底前标签状态：${describeTabLoadState(
-          beforeFallbackTab
+        `window.history.back 注入失败；错误：${historyBackErrorMessage}；当前标签状态：${describeTabLoadState(
+          currentTab
         )}`
       )
-      try {
-        await chrome.tabs.goBack(tabId)
-        backMessage = `window.history.back 注入失败，当前页面可能是 Chrome 错误页；已改用 chrome.tabs.goBack 触发回退；注入错误：${injectionErrorMessage}；兜底前标签状态：${describeTabLoadState(
-          beforeFallbackTab
-        )}`
-        onLog?.("info", "chrome.tabs.goBack 已触发回退，准备检测是否回到手机号输入页")
-      } catch (fallbackError) {
-        const fallbackTab = await chrome.tabs.get(tabId).catch(() => null)
-        const fallbackErrorMessage = getErrorMessage(fallbackError)
-        onLog?.(
-          "warn",
-          `chrome.tabs.goBack 兜底回退失败：${fallbackErrorMessage}；当前标签状态：${describeTabLoadState(
-            fallbackTab
-          )}`
-        )
-        return {
-          ok: false,
-          message: `window.history.back 注入失败，当前页面可能是 Chrome 错误页；chrome.tabs.goBack 兜底也失败：${fallbackErrorMessage}；原始注入错误：${injectionErrorMessage}；history.back 前 URL：${
-            beforeBackUrl || "unknown"
-          }；当前标签状态：${describeTabLoadState(fallbackTab)}`
-        }
+      const navigationEvents = stopBackNavigationTrace()
+      return {
+        ok: false,
+        message: `window.history.back 注入失败；错误：${historyBackErrorMessage}；回退前 URL：${
+          beforeBackUrl || "unknown"
+        }；当前标签状态：${describeTabLoadState(currentTab)}${
+          navigationEvents.length
+            ? `；回退期间导航：${navigationEvents.slice(0, 6).join("；")}`
+            : ""
+        }`
       }
     }
 
-    // 等待回退动作开始；requestHistoryBackInPage/chrome.tabs.goBack 返回时页面不一定已经切换。
+    // 等待回退动作开始；requestHistoryBackInPage 返回时页面不一定已经切换。
     await abortableSleep(1000, getAbortSignal())
     const afterBackTab = await chrome.tabs.get(tabId).catch(() => null)
     const afterBackUrl = afterBackTab?.url || ""
-    onLog?.(
-      "info",
-      `回退触发 1 秒后标签状态：${describeTabLoadState(afterBackTab)}`
-    )
     let readyResult: chrome.scripting.InjectionResult<
       Awaited<ReturnType<typeof waitForPhoneInputInPage>>
     >[]
@@ -2144,49 +2199,56 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           error
         )}；当前标签状态：${describeTabLoadState(readyTab)}`
       )
+      const navigationEvents = stopBackNavigationTrace()
       return {
         ok: false,
         message: `${backMessage}；回退后检测手机号输入页注入失败：${getErrorMessage(
           error
-        )}；history.back 前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
+        )}；回退前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
           afterBackUrl || "unknown"
-        }；当前标签状态：${describeTabLoadState(readyTab)}`
+        }；当前标签状态：${describeTabLoadState(readyTab)}${
+          navigationEvents.length
+            ? `；回退期间导航：${navigationEvents.slice(0, 6).join("；")}`
+            : ""
+        }`
       }
     }
     const readyTab = await chrome.tabs.get(tabId).catch(() => null)
     const readyUrl = readyTab?.url || ""
     const readyValue = readyResult[0]?.result
     const hasPhoneInput = Boolean(readyValue?.ok)
-    /**
-     * 不能只靠页面脚本看到手机号输入框来判断回退成功。
-     *
-     * OpenAI 页面偶发会先短暂回到 `/add-phone`，同时 Chrome 仍在 loading，
-     * 并且 pendingUrl 已经指向 `/phone-verification` 错误页。此时继续买号，
-     * 新号码会在提交前被错误页吞掉，所以这里要求 tab 完整稳定后才继续。
-     */
     const isStablePhoneInputPage =
-      hasPhoneInput && isStableOpenAiAddPhoneTab(readyTab)
+      hasPhoneInput && isStableTabMatchingUrl(readyTab, isOpenAiAddPhoneUrl)
     const readyMessage =
       readyValue?.message || "未确认页面是否回到手机号输入页"
-    const stabilityMessage = isStablePhoneInputPage
-      ? "手机号输入页已稳定"
-      : `手机号输入页未稳定，避免继续买号；检测到输入框：${
-          hasPhoneInput ? "是" : "否"
-        }`
+    const phoneInputMessage = `检测到手机号输入框：${
+      hasPhoneInput ? "是" : "否"
+    }；稳定停在手机号输入页：${isStablePhoneInputPage ? "是" : "否"}`
 
-    onLog?.(
-      isStablePhoneInputPage ? "info" : "warn",
-      `回退后手机号输入页检测结果：${readyMessage}；${stabilityMessage}；检测后标签状态：${describeTabLoadState(
-        readyTab
-      )}`
-    )
+    const navigationEvents = stopBackNavigationTrace()
+    if (!hasPhoneInput || !isStablePhoneInputPage) {
+      onLog?.(
+        "warn",
+        `回退后未稳定回到手机号输入页：${readyMessage}；${phoneInputMessage}；检测后标签状态：${describeTabLoadState(
+          readyTab
+        )}${
+          navigationEvents.length
+            ? `；回退期间导航：${navigationEvents.slice(0, 6).join("；")}`
+            : ""
+        }`
+      )
+    }
     return {
-      ok: isStablePhoneInputPage,
-      message: `${backMessage}；${readyMessage}；${stabilityMessage}；history.back 前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
+      ok: hasPhoneInput,
+      message: `${backMessage}；${readyMessage}；${phoneInputMessage}；回退前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
         afterBackUrl || "unknown"
       }；检测后 URL：${readyUrl || "unknown"}；检测后标签状态：${describeTabLoadState(
         readyTab
-      )}`
+      )}${
+        (!hasPhoneInput || !isStablePhoneInputPage) && navigationEvents.length
+          ? `；回退期间导航：${navigationEvents.slice(0, 6).join("；")}`
+          : ""
+      }`
     }
   }
 
@@ -3031,33 +3093,13 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     let hasReceivedHeroSmsCode = false
     try {
       phoneActivationLoop: while (true) {
-        const beforeActivationTab = await chrome.tabs.get(tabId).catch(() => null)
-        const beforeActivationUrl = beforeActivationTab?.url || ""
-        options.onLog?.(
-          "info",
-          `买号前页面 URL：${beforeActivationUrl || "unknown"}；是否手机号输入页：${
-            isOpenAiAddPhoneUrl(beforeActivationUrl) ? "是" : "否"
-          }；标签状态：${describeTabLoadState(beforeActivationTab)}`
-        )
         activation = await requestHeroSmsActivation(options)
         assertHeroSmsActivationCostWithinExpected(activation)
         const activationSummary = formatHeroSmsActivationSummary(activation)
         throwIfRunAborted()
 
-        await waitForTabLoadedWithTrace(
-          tabId,
-          options.onLog,
-          "诊断：买号后提交前"
-        )
-        const afterActivationTab = await chrome.tabs.get(tabId).catch(() => null)
-        const afterActivationUrl = afterActivationTab?.url || ""
-        options.onLog?.(
-          "info",
-          `买号后提交前页面 URL：${afterActivationUrl || "unknown"}；是否手机号输入页：${
-            isOpenAiAddPhoneUrl(afterActivationUrl) ? "是" : "否"
-          }；标签状态：${describeTabLoadState(afterActivationTab)}`
-        )
-        // 只在确认本轮手机号是从 /add-phone 提交时，才允许后续 history.back 换号。
+        await waitForTabLoaded(tabId)
+        // 只在确认本轮手机号是从 /add-phone 提交时，才允许后续浏览器回退换号。
         const phoneInputTab = await chrome.tabs.get(tabId).catch(() => null)
         const phoneInputUrl = phoneInputTab?.url || ""
         const canHistoryBackToPhoneInput = isOpenAiAddPhoneUrl(phoneInputUrl)
@@ -3075,14 +3117,14 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           "info",
           `手机号提交前页面 URL：${phoneInputUrl || "unknown"}；${
             canHistoryBackToPhoneInput
-              ? "后续验证码超时允许 history.back 换号"
-              : "后续验证码超时不允许 history.back，将刷新 OAuth"
+              ? "后续验证码超时允许浏览器回退换号"
+              : "后续验证码超时不允许浏览器回退，将刷新 OAuth"
           }`
         )
         if (!canHistoryBackToPhoneInput) {
           options.onLog?.(
             "warn",
-            `诊断：提交手机号脚本注入前已不在手机号输入页；当前 URL：${
+            `提交手机号脚本注入前已不在手机号输入页；当前 URL：${
               phoneInputUrl || "unknown"
             }`
           )
@@ -3121,7 +3163,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         // region ========== 等待跳转到验证码页面 ==========
         const phoneSubmitOutcome = await waitForPhoneSubmitOutcome(
           tabId,
-          getAbortSignal()
+          getAbortSignal(),
+          options.onLog
         )
         throwIfRunAborted()
         // 如果能在页面拿到信息说明手机号有问题，直接拿下一个手机号
@@ -3248,6 +3291,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
                 continue phoneActivationLoop
               }
 
+              options.onLog?.(
+                "warn",
+                `浏览器回退后未稳定回到手机号输入页，可能已进入 OpenAI 错误页或被重新导航到验证码页；准备重新执行 Step 5 刷新 OAuth 后再进入手机号填写页；${backResult.message}`
+              )
               return {
                 ok: false,
                 needRefreshOAuth: true,
@@ -3414,6 +3461,10 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
                 continue phoneActivationLoop
               }
 
+              options.onLog?.(
+                "warn",
+                `浏览器回退后未稳定回到手机号输入页，可能已进入 OpenAI 错误页或被重新导航到验证码页；准备重新执行 Step 5 刷新 OAuth 后再进入手机号填写页；${backResult.message}`
+              )
               return {
                 ok: false,
                 needRefreshOAuth: true,

@@ -352,6 +352,24 @@ const logHeroSmsProgress = (
 }
 
 /**
+ * 提取 HeroSMS 请求异常细节。
+ *
+ * @param error fetch 或响应读取过程中抛出的异常。
+ * @return 带异常类型和消息的诊断文本。
+ */
+const describeHeroSmsRequestError = (error: unknown) => {
+  if (error instanceof DOMException) {
+    return `${error.name}: ${error.message || "DOMException"}`
+  }
+
+  if (error instanceof Error) {
+    return `${error.name || "Error"}: ${error.message || "unknown"}`
+  }
+
+  return String(error || "unknown")
+}
+
+/**
  * 生成 HeroSMS mock 响应。
  *
  * mock 只用于本地跑通注册流程，不请求 HeroSMS，也不产生真实扣费。
@@ -538,18 +556,58 @@ const fetchHeroSmsPayload = async <T>(
     ...query
   }
   const requestUrl = buildHeroSmsUrl(requestQuery)
-  const response = await fetch(requestUrl)
-  const rawText = await response.text()
+  const startedAt = Date.now()
+  let response: Response
+  try {
+    response = await fetch(requestUrl)
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt
+    const detail = describeHeroSmsRequestError(error)
+    logHeroSmsProgress(
+      options,
+      "warn",
+      `${actionLabel} 请求异常：${detail}；耗时 ${elapsedMs}ms；请求 ${JSON.stringify(
+        maskHeroSmsQuery(requestQuery)
+      )}`
+    )
+    throw new Error(`${actionLabel}请求异常：${detail}`)
+  }
+
+  let rawText = ""
+  try {
+    rawText = await response.text()
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt
+    const detail = describeHeroSmsRequestError(error)
+    logHeroSmsProgress(
+      options,
+      "warn",
+      `${actionLabel} 响应读取异常：${detail}；HTTP ${response.status}；耗时 ${elapsedMs}ms；请求 ${JSON.stringify(
+        maskHeroSmsQuery(requestQuery)
+      )}`
+    )
+    throw new Error(`${actionLabel}响应读取异常：${detail}`)
+  }
+
+  const elapsedMs = Date.now() - startedAt
   const payload = parseHeroSmsPayload(rawText)
   logHeroSmsRawSample("response", actionLabel, {
     requestUrl: maskHeroSmsUrl(requestUrl),
     request: maskHeroSmsQuery(requestQuery),
     status: response.status,
     ok: response.ok,
+    elapsedMs,
     rawText,
     payload
   })
   if (!response.ok) {
+    logHeroSmsProgress(
+      options,
+      "warn",
+      `${actionLabel} 响应异常：HTTP ${response.status}，耗时 ${elapsedMs}ms，请求 ${JSON.stringify(
+        maskHeroSmsQuery(requestQuery)
+      )}`
+    )
     throw new Error(
       formatHeroSmsHttpError(
         actionLabel,
@@ -1074,6 +1132,13 @@ export const pollHeroSmsCode = async (
   signal?: AbortSignal
 ) => {
   let lastStatus = ""
+  const shouldLogPollProgress = (round: number) => {
+    return (
+      round === 1 ||
+      round === HERO_SMS_DEFAULT_POLL_ROUNDS ||
+      round % 5 === 0
+    )
+  }
 
   // 130s，2分钟10秒，2分钟可以取消判断为确实收不到验证码了，这里冗余10秒
   for (let round = 1; round <= HERO_SMS_DEFAULT_POLL_ROUNDS; round += 1) {
@@ -1081,20 +1146,28 @@ export const pollHeroSmsCode = async (
       throw new DOMException("The operation was aborted.", "AbortError")
     }
 
-    logHeroSmsProgress(
-      options,
-      "info",
-      `HeroSMS 正在查询短信验证码：订单 ${activation.activationId}，手机号 ${activation.phoneNumber}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮`
-    )
-    const payload = await fetchHeroSmsPayload<HeroSmsGetStatusV2Response>(
-      options,
-      {
-        action: "getStatusV2",
-        id: activation.activationId
-      },
-      "HeroSMS getStatusV2",
-      HERO_SMS_GET_STATUS_V2_ERROR_MESSAGES
-    )
+    let payload: HeroSmsGetStatusV2Response
+    try {
+      payload = await fetchHeroSmsPayload<HeroSmsGetStatusV2Response>(
+        options,
+        {
+          action: "getStatusV2",
+          id: activation.activationId
+        },
+        "HeroSMS getStatusV2",
+        HERO_SMS_GET_STATUS_V2_ERROR_MESSAGES
+      )
+    } catch (error) {
+      const detail = describeHeroSmsRequestError(error)
+      logHeroSmsProgress(
+        options,
+        "warn",
+        `HeroSMS 查询短信验证码失败：订单 ${activation.activationId}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮；${detail}`
+      )
+      throw new Error(
+        `HeroSMS 查询短信验证码失败：订单 ${activation.activationId}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮；${detail}`
+      )
+    }
     lastStatus = describeHeroSmsPayload(payload)
 
     const code =
@@ -1109,13 +1182,15 @@ export const pollHeroSmsCode = async (
       return code
     }
 
-    logHeroSmsProgress(
-      options,
-      "info",
-      `HeroSMS 暂未收到验证码：订单 ${activation.activationId}，第 ${round} 轮，状态 ${
-        lastStatus || "空"
-      }`
-    )
+    if (shouldLogPollProgress(round)) {
+      logHeroSmsProgress(
+        options,
+        "info",
+        `HeroSMS 等待短信验证码中：订单 ${activation.activationId}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮，状态 ${
+          lastStatus || "空"
+        }`
+      )
+    }
     if (round < HERO_SMS_DEFAULT_POLL_ROUNDS) {
       await abortableSleep(HERO_SMS_DEFAULT_POLL_INTERVAL_MS, signal)
     }
