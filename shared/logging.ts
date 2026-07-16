@@ -5,6 +5,22 @@ export type LogItem = {
   time: string
   level: LogLevel
   message: string
+  /** 由日志写入方声明的重点文本；展示层只负责渲染，不猜测业务文案。 */
+  highlights?: string[]
+  /** 最近一次写入时间戳；同 id 日志更新时用于把状态日志排到当前位置。 */
+  updatedAt?: number
+}
+
+export type LogWriteOptions = {
+  /** 指定日志 id 时，后续同 id 日志会覆盖同一行，用于展示长时间运行状态。 */
+  id?: string
+  /** 需要在执行日志里高亮的原文片段，必须来自当前 message。 */
+  highlights?: string[]
+}
+
+export type LogMessageSegment = {
+  text: string
+  highlight?: boolean
 }
 
 export type LogLevelMeta = {
@@ -13,10 +29,10 @@ export type LogLevelMeta = {
 }
 
 export type UiLogger = {
-  error: (message: string) => void
-  warn: (message: string) => void
-  info: (message: string) => void
-  debug: (message: string) => void
+  error: (message: string, options?: LogWriteOptions) => void
+  warn: (message: string, options?: LogWriteOptions) => void
+  info: (message: string, options?: LogWriteOptions) => void
+  debug: (message: string, options?: LogWriteOptions) => void
 }
 
 export type ConsoleLogger = {
@@ -55,6 +71,95 @@ const normalizeLogLevel = (value: unknown): LogLevel => {
 }
 
 /**
+ * 规范化日志高亮片段。
+ *
+ * @param value 外部传入的高亮片段列表。
+ * @return 去掉非字符串和空白项后的高亮片段。
+ */
+export const normalizeLogHighlights = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+/**
+ * 按调用方声明的重点文本，把日志切分成普通片段和高亮片段。
+ *
+ * 这里只做通用文本结构化，不依赖 React 或 DOM，也不内置任何业务文案规则。
+ *
+ * @param message 原始日志文本。
+ * @param highlights 需要高亮的原文片段。
+ * @return 可供 UI 渲染的日志片段列表。
+ */
+export const splitLogMessageSegments = (
+  message: string,
+  highlights: string[] = []
+): LogMessageSegment[] => {
+  const normalizedHighlights = normalizeLogHighlights(highlights)
+  if (normalizedHighlights.length === 0) {
+    return [
+      {
+        text: message
+      }
+    ]
+  }
+
+  const segments: LogMessageSegment[] = []
+  let startIndex = 0
+
+  while (startIndex < message.length) {
+    const nextMatch = normalizedHighlights.reduce<{
+      index: number
+      text: string
+    } | null>((current, highlight) => {
+      const index = message.indexOf(highlight, startIndex)
+      if (index < 0) {
+        return current
+      }
+
+      if (
+        !current ||
+        index < current.index ||
+        (index === current.index && highlight.length > current.text.length)
+      ) {
+        return {
+          index,
+          text: highlight
+        }
+      }
+
+      return current
+    }, null)
+
+    if (!nextMatch) {
+      segments.push({
+        text: message.slice(startIndex)
+      })
+      break
+    }
+
+    if (nextMatch.index > startIndex) {
+      segments.push({
+        text: message.slice(startIndex, nextMatch.index)
+      })
+    }
+
+    segments.push({
+      text: nextMatch.text,
+      highlight: true
+    })
+    startIndex = nextMatch.index + nextMatch.text.length
+  }
+
+  return segments
+}
+
+/**
  * 规范化本地存储里的执行日志。
  *
  * @param value 从 chrome.storage.local 读取到的原始日志列表。
@@ -66,7 +171,7 @@ export const normalizeStoredLogs = (value: unknown): LogItem[] => {
   }
 
   return value
-    .map((item) => {
+    .map((item): LogItem | null => {
       const record = item as Partial<LogItem>
       if (
         typeof record.id !== "string" ||
@@ -76,12 +181,21 @@ export const normalizeStoredLogs = (value: unknown): LogItem[] => {
         return null
       }
 
-      return {
+      const normalized: LogItem = {
         id: record.id,
         time: record.time,
         level: normalizeLogLevel(record.level),
         message: record.message
       }
+      const highlights = normalizeLogHighlights(record.highlights)
+      if (highlights.length > 0) {
+        normalized.highlights = highlights
+      }
+      if (Number.isFinite(Number(record.updatedAt))) {
+        normalized.updatedAt = Number(record.updatedAt)
+      }
+
+      return normalized
     })
     .filter((item): item is LogItem => Boolean(item))
     .slice(-EXECUTION_LOG_LIMIT)
@@ -105,16 +219,22 @@ export const mergeLogLists = (...sources: LogItem[][]): LogItem[] => {
 
   sources.flat().forEach((item) => {
     const existing = records.get(item.id)
-    const timestamp = Number(item.id.split("-")[0])
+    const idTimestamp = Number(item.id.split("-")[0])
+    const timestamp = Number.isFinite(Number(item.updatedAt))
+      ? Number(item.updatedAt)
+      : Number.isFinite(idTimestamp)
+        ? idTimestamp
+        : records.size
     if (existing) {
       existing.item = item
+      existing.timestamp = timestamp
       return
     }
 
     records.set(item.id, {
       item,
       order: records.size,
-      timestamp: Number.isFinite(timestamp) ? timestamp : records.size
+      timestamp
     })
   })
 
@@ -154,20 +274,20 @@ export const getTimeLabel = () => {
  * @return 带 error / warn / info / debug 方法的日志对象。
  */
 export const createUiLogger = (
-  write: (level: LogLevel, message: string) => void
+  write: (level: LogLevel, message: string, options?: LogWriteOptions) => void
 ): UiLogger => {
   return {
-    error: (message: string) => {
-      write("error", message)
+    error: (message: string, options?: LogWriteOptions) => {
+      write("error", message, options)
     },
-    warn: (message: string) => {
-      write("warn", message)
+    warn: (message: string, options?: LogWriteOptions) => {
+      write("warn", message, options)
     },
-    info: (message: string) => {
-      write("info", message)
+    info: (message: string, options?: LogWriteOptions) => {
+      write("info", message, options)
     },
-    debug: (message: string) => {
-      write("debug", message)
+    debug: (message: string, options?: LogWriteOptions) => {
+      write("debug", message, options)
     }
   }
 }

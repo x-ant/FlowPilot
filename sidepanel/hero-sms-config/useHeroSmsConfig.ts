@@ -401,8 +401,8 @@ export const useHeroSmsConfig = ({
       mockEnabled: settings.mockEnabled,
       maxPrice,
       fixedPrice,
-      onLog: (level, message) => {
-        log[level](`[${logPrefix}] Step 6 ${message}`)
+      onLog: (level, message, options) => {
+        log[level](`[${logPrefix}] Step 6 ${message}`, options)
       },
       onPhoneVerificationPhase
     }

@@ -1,5 +1,7 @@
 ﻿import { abortableSleep } from "../utils/abort"
 
+import type { LogWriteOptions } from "../../shared/logging"
+
 const HERO_SMS_API_URL = "https://hero-sms.com/stubs/handler_api.php"
 const HERO_SMS_OPENAI_SERVICE_CODE = "dr"
 const HERO_SMS_DEFAULT_OPERATOR = "any"
@@ -18,7 +20,11 @@ export type HeroSmsPhoneVerificationOptions = {
   /** 固定价格档位；填写后直接按该价格买号，不再查询并选择最低档。 */
   fixedPrice?: string
   /** 将 HeroSMS 执行进度写入侧边栏执行日志。 */
-  onLog?: (level: "error" | "info" | "warn" | "debug", message: string) => void
+  onLog?: (
+    level: "error" | "info" | "warn" | "debug",
+    message: string,
+    options?: LogWriteOptions
+  ) => void
   /** 通知侧边栏手机号已进入保护阶段/等待验证码已结束，用于决定停止策略。 */
   onPhoneVerificationPhase?: (
     phase: "phone_submitted" | "phone_wait_finished"
@@ -346,9 +352,10 @@ const logHeroSmsRawSample = (
 const logHeroSmsProgress = (
   options: HeroSmsPhoneVerificationOptions,
   level: "error" | "info" | "warn" | "debug",
-  message: string
+  message: string,
+  logOptions?: LogWriteOptions
 ) => {
-  options.onLog?.(level, message)
+  options.onLog?.(level, message, logOptions)
 }
 
 /**
@@ -1132,13 +1139,7 @@ export const pollHeroSmsCode = async (
   signal?: AbortSignal
 ) => {
   let lastStatus = ""
-  const shouldLogPollProgress = (round: number) => {
-    return (
-      round === 1 ||
-      round === HERO_SMS_DEFAULT_POLL_ROUNDS ||
-      round % 5 === 0
-    )
-  }
+  const pollLogId = `${Date.now()}-hero-sms-poll-${activation.activationId}`
 
   // 130s，2分钟10秒，2分钟可以取消判断为确实收不到验证码了，这里冗余10秒
   for (let round = 1; round <= HERO_SMS_DEFAULT_POLL_ROUNDS; round += 1) {
@@ -1182,15 +1183,18 @@ export const pollHeroSmsCode = async (
       return code
     }
 
-    if (shouldLogPollProgress(round)) {
-      logHeroSmsProgress(
-        options,
-        "info",
-        `HeroSMS 等待短信验证码中：订单 ${activation.activationId}，第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮，状态 ${
-          lastStatus || "空"
-        }`
-      )
-    }
+    const currentRoundText = `当前第 ${round}/${HERO_SMS_DEFAULT_POLL_ROUNDS} 轮`
+    logHeroSmsProgress(
+      options,
+      "info",
+      `HeroSMS 正在等待短信验证码：订单 ${activation.activationId}，${currentRoundText}，每 ${
+        HERO_SMS_DEFAULT_POLL_INTERVAL_MS / 1000
+      } 秒查询一次，状态 ${lastStatus || "空"}`,
+      {
+        id: pollLogId,
+        highlights: [currentRoundText]
+      }
+    )
     if (round < HERO_SMS_DEFAULT_POLL_ROUNDS) {
       await abortableSleep(HERO_SMS_DEFAULT_POLL_INTERVAL_MS, signal)
     }

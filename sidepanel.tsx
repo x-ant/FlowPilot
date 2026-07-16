@@ -32,7 +32,9 @@ import {
   getTimeLabel,
   LOG_LEVEL_META,
   mergeLogLists,
+  normalizeLogHighlights,
   normalizeStoredLogs,
+  splitLogMessageSegments,
   type LogItem
 } from "./shared/logging"
 import {
@@ -98,6 +100,20 @@ function SidePanel() {
   const logWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   /**
+   * 判断两个字符串列表是否一致。
+   *
+   * @param left 第一组字符串。
+   * @param right 第二组字符串。
+   * @return 长度和顺序都一致时返回 true。
+   */
+  const isSameStringList = (left: string[] = [], right: string[] = []) => {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => item === right[index])
+    )
+  }
+
+  /**
    * 判断两份日志是否完全一致，避免 storage 同步时重复写入。
    *
    * @param left 第一份日志。
@@ -113,7 +129,9 @@ function SidePanel() {
           item.id === other.id &&
           item.time === other.time &&
           item.level === other.level &&
-          item.message === other.message
+          item.message === other.message &&
+          isSameStringList(item.highlights, other.highlights) &&
+          item.updatedAt === other.updatedAt
         )
       })
     )
@@ -159,12 +177,17 @@ function SidePanel() {
   )
 
   const log = useMemo(() => {
-    return createUiLogger((level, message) => {
+    return createUiLogger((level, message, options) => {
+      const highlights = normalizeLogHighlights(options?.highlights)
       const item = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        id:
+          options?.id ||
+          `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         time: getTimeLabel(),
         level,
-        message
+        message,
+        ...(highlights.length > 0 ? { highlights } : {}),
+        updatedAt: Date.now()
       }
       appendLogToStorage(item)
       setLogs((current) => {
@@ -178,8 +201,8 @@ function SidePanel() {
   const scopedLog = useMemo(() => {
     const prefix = activePage === "flowpilot-register" ? "[注册流程]" : "[登录流程]"
 
-    return createUiLogger((level, message) => {
-      log[level](`${prefix} ${message}`)
+    return createUiLogger((level, message, options) => {
+      log[level](`${prefix} ${message}`, options)
     })
   }, [activePage, log])
   const visibleLogs = useMemo(() => {
@@ -511,7 +534,24 @@ function SidePanel() {
                           variant="filled">
                           {levelMeta.label}
                         </Tag>
-                        <span className="log-message">{logItem.message}</span>
+                        <span className="log-message">
+                          {splitLogMessageSegments(
+                            logItem.message,
+                            logItem.highlights
+                          ).map((segment, index) => {
+                            if (!segment.highlight) {
+                              return segment.text
+                            }
+
+                            return (
+                              <span
+                                className="log-message-highlight"
+                                key={`${index}-${segment.text}`}>
+                                {segment.text}
+                              </span>
+                            )
+                          })}
+                        </span>
                       </span>
                     </div>
                   )

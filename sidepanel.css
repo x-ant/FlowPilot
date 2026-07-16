@@ -332,6 +332,17 @@ body {
   overflow-wrap: anywhere;
 }
 
+.log-message-highlight {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #fff4d6;
+  color: #8a5a00;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .log-content {
   min-width: 0;
   display: flex;
