@@ -92,6 +92,20 @@ const findReusableOpenAiTabId = async () => {
   })?.id
 }
 
+const isRegisterOAuthLoginFlowUrl = (rawUrl?: string) => {
+  const state = getOpenAiAuthUrlState(rawUrl)
+  return [
+    "login_email_entry",
+    "login_password",
+    "email_verification",
+    "oauth_account_choice",
+    "phone_number_entry",
+    "phone_verification",
+    "oauth_consent",
+    "oauth_callback"
+  ].includes(state)
+}
+
 export type CodexRegisterStepResponse = {
   ok: boolean
   message: string
@@ -396,6 +410,10 @@ const isOpenAiPhoneSubmitFailureMessage = (message: string) => {
   )
 }
 
+const isOpenAiPhoneSubmitPageErrorMessage = (message: string) => {
+  return /failed to fetch|糟糕.*出错|出错了/i.test(String(message || ""))
+}
+
 const formatDurationSeconds = (ms: number) => {
   return `${Math.max(0, Math.floor(ms / 1000))} 秒`
 }
@@ -569,6 +587,38 @@ const getPhoneNumberSubmitFailureInPage = () => {
   }
 }
 
+const getOpenAiAuthPageErrorInPage = () => {
+  const text = String(document.body?.innerText || document.body?.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!text) {
+    return {
+      hasError: false,
+      message: ""
+    }
+  }
+
+  if (/failed to fetch/i.test(text)) {
+    return {
+      hasError: true,
+      message: "OpenAI 手机号提交请求失败：Failed to fetch"
+    }
+  }
+
+  if (/糟糕.*出错|出错了/i.test(text)) {
+    return {
+      hasError: true,
+      message: "OpenAI 手机号提交后显示错误页"
+    }
+  }
+
+  return {
+    hasError: false,
+    message: ""
+  }
+}
+
 type PhoneSubmitOutcome =
   | {
       status: "verification"
@@ -576,6 +626,11 @@ type PhoneSubmitOutcome =
     }
   | {
       status: "failure"
+      message: string
+      url: string
+    }
+  | {
+      status: "page_error"
       message: string
       url: string
     }
@@ -588,7 +643,8 @@ type PhoneSubmitOutcome =
  * 等待手机号提交后的页面结果。
  *
  * 成功仍以 `/phone-verification` URL 为准；失败只在 `/add-phone` 页面上读取明确
- * 手机号错误，并要求同一错误连续稳定出现，避免 React 短暂渲染状态被误判。
+ * 手机号错误或 OpenAI 错误页，并要求同一错误连续稳定出现，避免 React
+ * 短暂渲染状态被误判。
  *
  * @param tabId OpenAI 授权页标签页 id。
  * @param signal 外层流程取消信号。
@@ -602,6 +658,8 @@ const waitForPhoneSubmitOutcome = async (
   let latestUrl = ""
   let stableFailureMessage = ""
   let stableFailureCount = 0
+  let stablePageErrorMessage = ""
+  let stablePageErrorCount = 0
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < PHONE_SUBMIT_OUTCOME_TIMEOUT_MS) {
@@ -627,6 +685,7 @@ const waitForPhoneSubmitOutcome = async (
 
     if (isOpenAiAddPhoneUrl(latestUrl)) {
       let failureMessage = ""
+      let pageErrorMessage = ""
       try {
         const [phoneFailureResult] = await chrome.scripting.executeScript({
           target: { tabId },
@@ -637,6 +696,20 @@ const waitForPhoneSubmitOutcome = async (
           phoneFailure?.hasFailure &&
           isOpenAiPhoneSubmitFailureMessage(phoneFailure.message)
             ? phoneFailure.message || ""
+            : ""
+      } catch {
+        // 页面正在切换或暂时不可注入时，继续等 URL 或下一轮稳定错误。
+      }
+      try {
+        const [pageErrorResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: getOpenAiAuthPageErrorInPage
+        })
+        const pageError = pageErrorResult?.result
+        pageErrorMessage =
+          pageError?.hasError &&
+          isOpenAiPhoneSubmitPageErrorMessage(pageError.message)
+            ? pageError.message || ""
             : ""
       } catch {
         // 页面正在切换或暂时不可注入时，继续等 URL 或下一轮稳定错误。
@@ -667,9 +740,37 @@ const waitForPhoneSubmitOutcome = async (
         stableFailureMessage = ""
         stableFailureCount = 0
       }
+
+      if (pageErrorMessage) {
+        if (pageErrorMessage === stablePageErrorMessage) {
+          stablePageErrorCount += 1
+        } else {
+          stablePageErrorMessage = pageErrorMessage
+          stablePageErrorCount = 1
+        }
+
+        if (stablePageErrorCount >= PHONE_SUBMIT_FAILURE_STABLE_COUNT) {
+          onLog?.(
+            "error",
+            `手机号提交结果检测：连续 ${stablePageErrorCount} 次识别到 OpenAI 错误页：${pageErrorMessage}；标签状态：${describeTabLoadState(
+              currentTab
+            )}`
+          )
+          return {
+            status: "page_error",
+            message: pageErrorMessage,
+            url: latestUrl
+          }
+        }
+      } else {
+        stablePageErrorMessage = ""
+        stablePageErrorCount = 0
+      }
     } else {
       stableFailureMessage = ""
       stableFailureCount = 0
+      stablePageErrorMessage = ""
+      stablePageErrorCount = 0
     }
 
     await abortableSleep(PHONE_SUBMIT_OUTCOME_INTERVAL_MS, signal)
@@ -680,7 +781,7 @@ const waitForPhoneSubmitOutcome = async (
     "warn",
     `手机号提交结果检测：${formatDurationSeconds(
       PHONE_SUBMIT_OUTCOME_TIMEOUT_MS
-    )} 内未确认验证码页或明确手机号错误；标签状态：${describeTabLoadState(
+    )} 内未确认验证码页、明确手机号错误或 OpenAI 错误页；标签状态：${describeTabLoadState(
       timeoutTab
     )}`
   )
@@ -2239,7 +2340,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       )
     }
     return {
-      ok: hasPhoneInput,
+      ok: isStablePhoneInputPage,
       message: `${backMessage}；${readyMessage}；${phoneInputMessage}；回退前 URL：${beforeBackUrl || "unknown"}；触发后 URL：${
         afterBackUrl || "unknown"
       }；检测后 URL：${readyUrl || "unknown"}；检测后标签状态：${describeTabLoadState(
@@ -2846,27 +2947,35 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       typeof result.targetTab?.id === "number" &&
       previousReusableUrl
     ) {
-      const changedUrl = await waitForTabMatchingUrl(
+      const oauthFlowUrl = await waitForTabMatchingUrl(
         result.targetTab.id,
         (url) => {
-          return Boolean(url && url !== previousReusableUrl)
+          if (!url) {
+            return false
+          }
+
+          if (url !== previousReusableUrl) {
+            return isRegisterOAuthLoginFlowUrl(url)
+          }
+
+          return isOpenAiChooseAccountUrl(url)
         },
         {
-          timeoutMs: 10000,
+          timeoutMs: 15000,
           intervalMs: 300,
           signal: getAbortSignal()
         }
       )
 
-      if (!changedUrl) {
+      if (!oauthFlowUrl) {
         const currentTab = await chrome.tabs
           .get(result.targetTab.id)
           .catch(() => undefined)
         return {
           ok: false,
-          message: `${result.message}；复用 tab 打开 OAuth 后 10 秒内仍停留在旧 URL，已停止后续判断，旧 URL：${previousReusableUrl}，当前 URL：${
-            currentTab?.url || "unknown"
-          }`,
+          message: `${result.message}；复用 tab 打开 OAuth 后 15 秒内未进入已知 OAuth 流程页，已停止后续判断，旧 URL：${previousReusableUrl}，当前标签状态：${describeTabLoadState(
+            currentTab
+          )}`,
           targetTab: {
             id: result.targetTab.id,
             url: currentTab?.url || result.targetTab.url
@@ -2874,7 +2983,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         }
       }
 
-      result.targetTab.url = changedUrl
+      result.targetTab.url = oauthFlowUrl
     }
 
     return {
@@ -3169,6 +3278,24 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         throwIfRunAborted()
         // 如果能在页面拿到信息说明手机号有问题，直接拿下一个手机号
         if (phoneSubmitOutcome.status !== "verification") {
+          if (phoneSubmitOutcome.status === "page_error") {
+            options.onLog?.(
+              "error",
+              `手机号提交失败：${phoneSubmitOutcome.message}；OpenAI 手机号提交后显示错误页，已停止自动换号；${activationSummary}`
+            )
+            await releaseHeroSmsActivationQuietly(options, activation)
+            activation = null
+            options.onPhoneVerificationPhase?.("phone_wait_finished")
+            return {
+              ok: false,
+              message: `${phonePageResult.message}；${phoneSubmitOutcome.message}；OpenAI 手机号提交后显示错误页，已停止自动换号；${activationSummary}`,
+              targetTab: {
+                id: tabId,
+                url: (await chrome.tabs.get(tabId).catch(() => null))?.url
+              }
+            }
+          }
+
           const failureMessage =
             phoneSubmitOutcome.status === "failure"
               ? phoneSubmitOutcome.message

@@ -137,6 +137,7 @@ export const runManagedRegisterFlow = async (
   const messages: string[] = []
   const startFromStep = account.progress >= 4 ? 5 : 1
   let workingAccount = account
+  let registerTabId: number | undefined
 
   if (startFromStep === 1) {
     const step1Result = await runner.openChatGptRegisterEntry()
@@ -149,7 +150,7 @@ export const runManagedRegisterFlow = async (
     messages.push(step1Result.message)
     onStage(1, step1Result.message)
 
-    const registerTabId = step1Result.targetTab.id
+    registerTabId = step1Result.targetTab.id
     const verificationRequestedAt = Date.now()
     const preparedResult = await runner.prepareRegisterAccountEmail(
       workingAccount
@@ -217,7 +218,8 @@ export const runManagedRegisterFlow = async (
 
   const refreshResult = await runner.refreshRegisterOAuthAndLogin(
     cpaUrl,
-    cpaManagementKey
+    cpaManagementKey,
+    registerTabId
   )
   if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
     return {
