@@ -39,7 +39,9 @@ const parseUrl = (rawUrl?: string) => {
 
 const isOpenAiAuthPath = (rawUrl: string | undefined, pathname: string) => {
   const url = parseUrl(rawUrl)
-  return Boolean(url && url.origin === OPENAI_AUTH_ORIGIN && url.pathname === pathname)
+  return Boolean(
+    url && url.origin === OPENAI_AUTH_ORIGIN && url.pathname === pathname
+  )
 }
 
 /**

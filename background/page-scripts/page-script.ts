@@ -362,9 +362,7 @@ export const detectCodexAuthPageStateInPage =
           return "phone_verification"
         }
 
-        if (
-          /^\/sign-in-with-chatgpt\/[^/?#]+\/consent$/i.test(url.pathname)
-        ) {
+        if (/^\/sign-in-with-chatgpt\/[^/?#]+\/consent$/i.test(url.pathname)) {
           return "oauth_consent"
         }
 
@@ -440,7 +438,9 @@ export const detectCodexAuthPageStateInPage =
 
     if (accountUnavailablePattern.test(pageText)) {
       const accountUnavailableCode =
-        pageText.match(/(?:错误代码|error code)\s*[:：]?\s*([a-z0-9_-]+)/i)?.[1] ||
+        pageText.match(
+          /(?:错误代码|error code)\s*[:：]?\s*([a-z0-9_-]+)/i
+        )?.[1] ||
         pageText.match(/account_deactivated/i)?.[0] ||
         ""
       return {

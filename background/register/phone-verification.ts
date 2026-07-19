@@ -1,6 +1,5 @@
-﻿import { abortableSleep } from "../utils/abort"
-
-import type { LogWriteOptions } from "../../shared/logging"
+﻿import type { LogWriteOptions } from "../../shared/logging"
+import { abortableSleep } from "../utils/abort"
 
 const HERO_SMS_API_URL = "https://hero-sms.com/stubs/handler_api.php"
 const HERO_SMS_OPENAI_SERVICE_CODE = "dr"

@@ -1,7 +1,5 @@
-﻿import { useEffect, useMemo, useState } from "react"
+﻿import { useEffect, useMemo, useRef, useState } from "react"
 
-import type { UiLogger } from "../../shared/logging"
-import { useRef } from "react"
 import {
   createManagedAccount,
   EMPTY_PAGE_STATE,
@@ -22,6 +20,7 @@ import {
   type ManagedAccount,
   type ManagedAccountProgress
 } from "../../shared/account-state"
+import type { UiLogger } from "../../shared/logging"
 
 type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys
@@ -113,10 +112,7 @@ export const useAccountPageState = ({
     persistState(cpaUrl, accounts, nextCpaManagementKey)
   }
 
-  const setCpaConfig = (
-    nextCpaUrl: string,
-    nextCpaManagementKey: string
-  ) => {
+  const setCpaConfig = (nextCpaUrl: string, nextCpaManagementKey: string) => {
     if (nextCpaUrl === cpaUrl && nextCpaManagementKey === cpaManagementKey) {
       return
     }
@@ -342,7 +338,8 @@ export const useAccountPageState = ({
     setEditingEmail(getManagedAccountKey(account))
     setStatus(
       `正在编辑 ${
-        getManagedAccountLabel(account) || getManagedAccountProviderLabel(account)
+        getManagedAccountLabel(account) ||
+        getManagedAccountProviderLabel(account)
       }`
     )
   }
@@ -444,9 +441,7 @@ export const useAccountPageState = ({
       return
     }
 
-    const selectedSet = new Set(
-      selectedEmails
-    )
+    const selectedSet = new Set(selectedEmails)
     let changedCount = 0
     const now = Date.now()
     const doneProgress = Math.min(
@@ -525,7 +520,10 @@ export const useAccountPageState = ({
    * @param accountId 要更新的账号 ID。
    * @param patch 要合并到账号上的局部状态。
    */
-  const patchAccountState = (accountId: string, patch: Partial<ManagedAccount>) => {
+  const patchAccountState = (
+    accountId: string,
+    patch: Partial<ManagedAccount>
+  ) => {
     setAccounts((currentAccounts) => {
       return currentAccounts.map((account) => {
         if (getManagedAccountKey(account) !== accountId) {

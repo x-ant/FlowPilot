@@ -207,7 +207,8 @@ export const fetchDuckEmailInPage = async (
       ok: false,
       email: "",
       generated: false,
-      message: "未找到 Duck 邮箱生成按钮，请确认已登录 DuckDuckGo Email Protection"
+      message:
+        "未找到 Duck 邮箱生成按钮，请确认已登录 DuckDuckGo Email Protection"
     }
   }
 

@@ -6,6 +6,8 @@
   "author": "xuhq",
   "scripts": {
     "dev": "plasmo dev",
+    "format": "prettier --write . --ignore-path .gitignore",
+    "format:check": "prettier --check . --ignore-path .gitignore",
     "typecheck": "tsc --noEmit --incremental false",
     "build": "plasmo build",
     "package": "plasmo package"

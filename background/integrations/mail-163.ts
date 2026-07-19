@@ -1,8 +1,8 @@
-import { pollMail163VerificationCodeInPage } from "./mail-163-page-code"
 import type { BrowserTabInfo } from "../types"
 import { raceWithAbort, throwIfAborted } from "../utils/abort"
 import type { RunContext } from "../utils/run-context"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "../utils/tab-utils"
+import { pollMail163VerificationCodeInPage } from "./mail-163-page-code"
 
 const MAIL163_MAILBOX_URL = "https://mail.163.com/"
 const MAIL163_HOSTNAME = "mail.163.com"

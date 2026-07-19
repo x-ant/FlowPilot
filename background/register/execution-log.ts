@@ -47,9 +47,7 @@ export const writeRegisterExecutionLog = (
     const currentLogs = normalizeStoredLogs(result[EXECUTION_LOG_STORAGE_KEY])
     const highlights = normalizeLogHighlights(options?.highlights)
     const nextLog = {
-      id:
-        options?.id ||
-        `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: options?.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       time: getTimeLabel(),
       level,
       message: `[后台] ${message}`,

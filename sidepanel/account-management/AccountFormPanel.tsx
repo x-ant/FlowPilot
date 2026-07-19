@@ -1,6 +1,10 @@
 import { Button, Collapse, Form, Input, Select, Space } from "antd"
 import { useEffect, useState } from "react"
 
+import type {
+  DuckEmailResult,
+  FetchDuckEmailOptions
+} from "../../background/integrations/duck-email"
 import {
   EMPTY_ACCOUNT_FORM,
   EMPTY_ACCOUNT_FORM_DRAFT,
@@ -13,18 +17,11 @@ import {
   type EmailGenerator,
   type MailProvider
 } from "../../shared/account-state"
-import type {
-  DuckEmailResult,
-  FetchDuckEmailOptions
-} from "../../background/integrations/duck-email"
 import type { AccountPageState } from "./useAccountPageState"
 
 type AccountFormPanelAccountPage = Pick<
   AccountPageState,
-  | "editingAccount"
-  | "editingEmail"
-  | "handleSubmitAccount"
-  | "handleCancelEdit"
+  "editingAccount" | "editingEmail" | "handleSubmitAccount" | "handleCancelEdit"
 >
 
 type AccountFormPanelProps = {
@@ -197,7 +194,9 @@ export function AccountFormPanel({
    * 这个按钮只辅助用户手动登录邮箱，后台读取验证码时不会自动登录。
    */
   const handleLoginMailbox = () => {
-    const mailProvider = normalizeMailProvider(form.getFieldValue("mailProvider"))
+    const mailProvider = normalizeMailProvider(
+      form.getFieldValue("mailProvider")
+    )
     const url =
       mailProvider === "163"
         ? "https://mail.163.com/"
@@ -312,9 +311,7 @@ export function AccountFormPanel({
       form.setFields([
         {
           name: "email",
-          errors: [
-            error instanceof Error ? error.message : "Duck 邮箱生成失败"
-          ]
+          errors: [error instanceof Error ? error.message : "Duck 邮箱生成失败"]
         }
       ])
     } finally {

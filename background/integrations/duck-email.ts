@@ -1,7 +1,7 @@
-import { fetchDuckEmailInPage } from "./duck-email-page"
 import { raceWithAbort, throwIfAborted } from "../utils/abort"
 import type { RunContext } from "../utils/run-context"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "../utils/tab-utils"
+import { fetchDuckEmailInPage } from "./duck-email-page"
 
 const DUCK_EMAIL_AUTOFILL_URL = "https://duckduckgo.com/email/settings/autofill"
 

@@ -125,7 +125,8 @@ export function AccountListPanel({
     return selectedEmailSet.has(accountId)
   }).length
   const isAllVisibleAccountsSelected =
-    visibleAccounts.length > 0 && visibleSelectedCount === visibleAccounts.length
+    visibleAccounts.length > 0 &&
+    visibleSelectedCount === visibleAccounts.length
   const isSomeVisibleAccountsSelected =
     visibleSelectedCount > 0 && visibleSelectedCount < visibleAccounts.length
 

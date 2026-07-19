@@ -26,6 +26,13 @@ import "antd/dist/reset.css"
 import "./sidepanel.css"
 
 import {
+  DEFAULT_RUNTIME_SETTINGS,
+  getStorage,
+  normalizeRuntimeSettings,
+  RUNTIME_SETTINGS_STORAGE_KEY,
+  type RuntimeSettings
+} from "./shared/account-state"
+import {
   createUiLogger,
   EXECUTION_LOG_LIMIT,
   EXECUTION_LOG_STORAGE_KEY,
@@ -44,13 +51,6 @@ import {
   FLOW_PAGE_ITEMS,
   type FlowPage
 } from "./sidepanel/pages"
-import {
-  DEFAULT_RUNTIME_SETTINGS,
-  getStorage,
-  normalizeRuntimeSettings,
-  RUNTIME_SETTINGS_STORAGE_KEY,
-  type RuntimeSettings
-} from "./shared/account-state"
 
 type LogLevelFilter = "all" | "warn-error" | "error"
 
@@ -142,47 +142,43 @@ function SidePanel() {
    *
    * @param item 新增日志。
    */
-  const appendLogToStorage = useCallback(
-    (item: LogItem) => {
-      const storage = getStorage()
-      if (!storage) {
-        return
-      }
+  const appendLogToStorage = useCallback((item: LogItem) => {
+    const storage = getStorage()
+    if (!storage) {
+      return
+    }
 
-      logWriteQueueRef.current = logWriteQueueRef.current
-        .catch(() => undefined)
-        .then(() => {
-          return new Promise<void>((resolve) => {
-            storage.get([EXECUTION_LOG_STORAGE_KEY], (result) => {
-              const storedLogs = normalizeStoredLogs(
-                result?.[EXECUTION_LOG_STORAGE_KEY]
-              )
-              const mergedLogs = mergeLogLists(storedLogs, [item])
-              if (isSameLogList(storedLogs, mergedLogs)) {
-                resolve()
-                return
-              }
+    logWriteQueueRef.current = logWriteQueueRef.current
+      .catch(() => undefined)
+      .then(() => {
+        return new Promise<void>((resolve) => {
+          storage.get([EXECUTION_LOG_STORAGE_KEY], (result) => {
+            const storedLogs = normalizeStoredLogs(
+              result?.[EXECUTION_LOG_STORAGE_KEY]
+            )
+            const mergedLogs = mergeLogLists(storedLogs, [item])
+            if (isSameLogList(storedLogs, mergedLogs)) {
+              resolve()
+              return
+            }
 
-              storage.set(
-                {
-                  [EXECUTION_LOG_STORAGE_KEY]: mergedLogs
-                },
-                resolve
-              )
-            })
+            storage.set(
+              {
+                [EXECUTION_LOG_STORAGE_KEY]: mergedLogs
+              },
+              resolve
+            )
           })
         })
-    },
-    []
-  )
+      })
+  }, [])
 
   const log = useMemo(() => {
     return createUiLogger((level, message, options) => {
       const highlights = normalizeLogHighlights(options?.highlights)
       const item = {
         id:
-          options?.id ||
-          `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          options?.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
         time: getTimeLabel(),
         level,
         message,
@@ -199,7 +195,8 @@ function SidePanel() {
     return activePage === "flowpilot-register" ? "注册流程" : "登录流程"
   }, [activePage])
   const scopedLog = useMemo(() => {
-    const prefix = activePage === "flowpilot-register" ? "[注册流程]" : "[登录流程]"
+    const prefix =
+      activePage === "flowpilot-register" ? "[注册流程]" : "[登录流程]"
 
     return createUiLogger((level, message, options) => {
       log[level](`${prefix} ${message}`, options)
@@ -211,7 +208,9 @@ function SidePanel() {
     }
 
     if (logLevelFilter === "warn-error") {
-      return logs.filter((item) => item.level === "warn" || item.level === "error")
+      return logs.filter(
+        (item) => item.level === "warn" || item.level === "error"
+      )
     }
 
     return logs
@@ -305,7 +304,9 @@ function SidePanel() {
 
       if (changes[RUNTIME_SETTINGS_STORAGE_KEY]) {
         setRuntimeSettings(
-          normalizeRuntimeSettings(changes[RUNTIME_SETTINGS_STORAGE_KEY].newValue)
+          normalizeRuntimeSettings(
+            changes[RUNTIME_SETTINGS_STORAGE_KEY].newValue
+          )
         )
       }
     }
@@ -328,7 +329,9 @@ function SidePanel() {
     getStorage()?.set({
       [ACTIVE_PAGE_STORAGE_KEY]: nextPage
     })
-    setStatus(nextPage === "flowpilot-register" ? "已打开注册页" : "已打开登录页")
+    setStatus(
+      nextPage === "flowpilot-register" ? "已打开注册页" : "已打开登录页"
+    )
   }
 
   /**
@@ -435,7 +438,9 @@ function SidePanel() {
         <header className="panel-header">
           <div className="brand-block">
             <h1 className="brand-title">FlowPilot</h1>
-            <p className="brand-subtitle">{activePageLabel} · 本地账号流程助手</p>
+            <p className="brand-subtitle">
+              {activePageLabel} · 本地账号流程助手
+            </p>
           </div>
           <Tag color="processing">{status}</Tag>
         </header>

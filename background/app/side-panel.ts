@@ -1,5 +1,4 @@
-﻿import { createConsoleLogger } from "../../shared/logging";
-
+﻿import { createConsoleLogger } from "../../shared/logging"
 
 const log = createConsoleLogger("side-panel")
 

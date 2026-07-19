@@ -210,7 +210,9 @@ const collectSessionCookiesForUrls = async (urls: string[]) => {
         cookie.domain || "",
         cookie.path || "",
         cookie.name || "",
-        JSON.stringify((cookie as { partitionKey?: unknown }).partitionKey || "")
+        JSON.stringify(
+          (cookie as { partitionKey?: unknown }).partitionKey || ""
+        )
       ].join("|")
 
       if (seen.has(key)) {
@@ -412,8 +414,7 @@ export const clearSiteStorageInTab = async (
   tabId: number,
   options: ClearSiteStorageOptions = {}
 ) => {
-  const timeoutMs =
-    options.timeoutMs || DEFAULT_CLEAR_SITE_STORAGE_TIMEOUT_MS
+  const timeoutMs = options.timeoutMs || DEFAULT_CLEAR_SITE_STORAGE_TIMEOUT_MS
   return raceWithAbort(
     withTimeout(
       clearSiteStorageInTabUnsafe(tabId),

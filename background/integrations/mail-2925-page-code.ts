@@ -503,9 +503,7 @@ export const pollMail2925VerificationCodeInPage = async (
         continue
       }
 
-      if (
-        !matchedPreview
-      ) {
+      if (!matchedPreview) {
         if (matchedTargetInPreview) {
           debugLog("跳过非验证码候选邮件", {
             itemIndex,

@@ -182,9 +182,7 @@ export const findNewMatchingTab = async (
 
   return tabs.find((tab) => {
     return (
-      typeof tab.id === "number" &&
-      !beforeTabIds.has(tab.id) &&
-      matcher(tab)
+      typeof tab.id === "number" && !beforeTabIds.has(tab.id) && matcher(tab)
     )
   })
 }

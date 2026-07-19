@@ -144,7 +144,8 @@ export const runRegisterAlarmNow = async (source = "alarm") => {
     }
     return result
   } catch (error) {
-    const message = error instanceof Error ? error.message : `${triggerLabel}执行失败`
+    const message =
+      error instanceof Error ? error.message : `${triggerLabel}执行失败`
     logRegisterBackground("warn", message)
     if (isScheduledAlarm) {
       await patchAlarmConfig({

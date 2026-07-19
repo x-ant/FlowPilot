@@ -33,7 +33,9 @@ export const pollMail163VerificationCodeInPage = async (
   const timeoutMs = Math.max(30000, Number(payload?.timeoutMs || 90000))
   const intervalMs = 5000
   const requestedAt = Math.max(0, Number(payload?.verificationRequestedAt || 0))
-  const filterAfter = requestedAt ? requestedAt - 90 * 1000 : Date.now() - 10 * 60 * 1000
+  const filterAfter = requestedAt
+    ? requestedAt - 90 * 1000
+    : Date.now() - 10 * 60 * 1000
   const excludeCodes = new Set(
     (payload?.excludeCodes || [])
       .map((code) => String(code || "").trim())
@@ -230,7 +232,9 @@ export const pollMail163VerificationCodeInPage = async (
    */
   const clickReceiveMail = () => {
     const receiveButton = Array.from(
-      document.querySelectorAll("li[role='button'], .ra0, button, a, [role='button']")
+      document.querySelectorAll(
+        "li[role='button'], .ra0, button, a, [role='button']"
+      )
     ).find((element) => {
       return isVisible(element) && /收\s*信|receive/i.test(getText(element))
     })
@@ -284,7 +288,9 @@ export const pollMail163VerificationCodeInPage = async (
   const parseTimestamp = (text: string) => {
     const normalized = normalizeText(text)
     const now = new Date()
-    let match = normalized.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}):(\d{2})/)
+    let match = normalized.match(
+      /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}):(\d{2})/
+    )
     if (match) {
       return new Date(
         Number(match[1]),
@@ -380,7 +386,10 @@ export const pollMail163VerificationCodeInPage = async (
         )
       })
 
-    pushText("document.body", document.body?.innerText || document.body?.textContent)
+    pushText(
+      "document.body",
+      document.body?.innerText || document.body?.textContent
+    )
     return candidates
   }
 
@@ -521,7 +530,10 @@ export const pollMail163VerificationCodeInPage = async (
       atIndex > 0
         ? `${targetEmail.slice(0, atIndex)}=${targetEmail.slice(atIndex + 1)}`
         : ""
-    return normalized.includes(targetEmail) || Boolean(duckForwardHint && normalized.includes(duckForwardHint))
+    return (
+      normalized.includes(targetEmail) ||
+      Boolean(duckForwardHint && normalized.includes(duckForwardHint))
+    )
   }
 
   debugLog("开始轮询", {

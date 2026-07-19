@@ -46,10 +46,13 @@ const scheduleKeepAwakeExpiryCheck = () => {
       return requestedAt + KEEP_AWAKE_REASON_TTL_MS
     })
   )
-  keepAwakeExpiryTimer = setTimeout(() => {
-    keepAwakeExpiryTimer = null
-    refreshPowerKeepAwake()
-  }, Math.max(1000, nextExpiresAt - now))
+  keepAwakeExpiryTimer = setTimeout(
+    () => {
+      keepAwakeExpiryTimer = null
+      refreshPowerKeepAwake()
+    },
+    Math.max(1000, nextExpiresAt - now)
+  )
 }
 
 /**

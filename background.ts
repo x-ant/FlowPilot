@@ -1,5 +1,5 @@
-import { setupSidePanelBehavior } from "./background/app/side-panel"
 import { setupPowerKeepAwake } from "./background/app/power"
+import { setupSidePanelBehavior } from "./background/app/side-panel"
 import { setupRegisterAlarm } from "./background/register/alarm"
 
 /**
