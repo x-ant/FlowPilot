@@ -8,16 +8,8 @@ import {
   openCodexAuthLink,
   submitCodexLoginEmailAndWait,
   submitCodexLoginPasswordAndWait,
-  submitCodexOAuthCallbackToCpa
+  submitCodexOAuthCallback
 } from "../../background/login/steps"
-import {
-  AccountFormPanel,
-  AccountListPanel,
-  useAccountPageState
-} from "../account-management"
-import { CpaConfigPanel } from "../cpa-config"
-import { DebugTabControl } from "../components/DebugTabControl"
-import type { PageProps } from "./types"
 import {
   getFlowStepLabel,
   getFlowStepName,
@@ -36,17 +28,28 @@ import {
   type ManagedAccount,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import {
+  createOAuthIntegrationConfig,
+  hasRequiredOAuthIntegrationConfig,
+  type OAuthBinding,
+  type OAuthIntegrationConfig
+} from "../../shared/sub2api"
+import {
+  AccountFormPanel,
+  AccountListPanel,
+  useAccountPageState
+} from "../account-management"
+import { DebugTabControl } from "../components/DebugTabControl"
+import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
+import type { PageProps } from "./types"
 
 const runManagedAccountFlow = async (
-  cpaUrl: string,
-  cpaManagementKey: string,
+  integration: OAuthIntegrationConfig,
   account: ManagedAccount,
   runner: ReturnType<typeof createCodexLoginRunner>,
   onStage: (progress: DebugStep, message: string) => void
 ): Promise<AccountRunResult> => {
-  const step1Result = await runner.openCodexAuthLink(cpaUrl, {
-    managementKey: cpaManagementKey
-  })
+  const step1Result = await runner.openCodexAuthLink(integration)
   if (!step1Result.ok || !step1Result.targetTab?.id) {
     return {
       ok: false,
@@ -110,12 +113,18 @@ const runManagedAccountFlow = async (
 
   onStage(5, step5Result.message)
 
-  const step6Result = await runner.submitCodexOAuthCallbackToCpa(
-    cpaUrl,
-    cpaManagementKey,
+  if (!step1Result.oauthBinding) {
+    return {
+      ok: false,
+      message: "步骤 1 未返回 OAuth 来源绑定信息"
+    }
+  }
+  const step6Result = await runner.submitCodexOAuthCallback(
+    integration,
+    step1Result.oauthBinding,
     step5Result.callbackUrl,
     authTabId,
-    step1Result.cpaOAuthState
+    account.email
   )
   if (!step6Result.ok) {
     return {
@@ -171,6 +180,14 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     setRunningEmail,
     patchAccountState
   } = accountPage
+  const oauthTarget = useOAuthTargetConfig("login")
+  const integration = useMemo(() => {
+    return createOAuthIntegrationConfig(
+      oauthTarget.settings,
+      cpaUrl,
+      cpaManagementKey
+    )
+  }, [cpaManagementKey, cpaUrl, oauthTarget.settings])
   const [debugEmail, setDebugEmail] = useState("")
   const [debugAccountFilter, setDebugAccountFilter] =
     useState<AccountVisibilityFilter>("pending")
@@ -179,7 +196,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
-  const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
+  const [debugOAuthBinding, setDebugOAuthBinding] =
+    useState<OAuthBinding | null>(null)
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [debugRunningStep, setDebugRunningStep] = useState<0 | DebugStep>(0)
   const [isBatchRunning, setIsBatchRunning] = useState(false)
@@ -259,23 +277,16 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugRunningStep(0)
     setDebugVerificationRequestedAt(0)
     setDebugCallbackUrl("")
-    setDebugCpaOAuthState("")
+    setDebugOAuthBinding(null)
     setStatus("调试状态已清空")
   }
 
   const handleRunDebugStep = async (step: DebugStep) => {
-    const normalizedCpaUrl = String(cpaUrl || "").trim()
     const account = selectedDebugAccount
 
-    if (!normalizedCpaUrl) {
-      setStatus("请先填写 CPA 地址")
-      log.warn("调试步骤无法执行：未填写 CPA 地址")
-      return
-    }
-
-    if (!cpaManagementKey.trim()) {
-      setStatus("请先填写 CPA 管理密钥")
-      log.warn("调试步骤无法执行：未填写 CPA 管理密钥")
+    if (!hasRequiredOAuthIntegrationConfig(integration)) {
+      setStatus("请先完善 OAuth 接入配置")
+      log.warn("调试步骤无法执行：OAuth 接入配置不完整")
       return
     }
 
@@ -312,17 +323,15 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       if (step === 1) {
         setDebugVerificationRequestedAt(0)
         setDebugCallbackUrl("")
-        setDebugCpaOAuthState("")
+        setDebugOAuthBinding(null)
         patchAccountState(accountKey, {
           progress: 0,
           status: "running",
           lastMessage: getFlowStepLabel(step)
         })
 
-        const result = await openCodexAuthLink(normalizedCpaUrl, {
-          managementKey: cpaManagementKey
-        })
-        if (!result.ok || !result.targetTab?.id) {
+        const result = await openCodexAuthLink(integration)
+        if (!result.ok || !result.targetTab?.id || !result.oauthBinding) {
           patchAccountState(accountKey, {
             status: "failed",
             lastMessage: result.message || `${getFlowStepName(1)}失败`
@@ -335,7 +344,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         }
 
         setDebugAuthTabId(String(result.targetTab.id))
-        setDebugCpaOAuthState(result.cpaOAuthState || "")
+        setDebugOAuthBinding(result.oauthBinding)
         setDebugProgress(1)
         patchAccountState(accountKey, {
           progress: 1,
@@ -477,13 +486,18 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         log.warn(`「${getFlowStepLabel(6)}」无法执行：缺少 callback URL`)
         return
       }
+      if (!debugOAuthBinding) {
+        setStatus(`请先执行「${getFlowStepLabel(1)}」获取 OAuth 会话`)
+        log.warn(`「${getFlowStepLabel(6)}」无法执行：缺少 OAuth 来源绑定信息`)
+        return
+      }
 
-      const result = await submitCodexOAuthCallbackToCpa(
-        normalizedCpaUrl,
-        cpaManagementKey,
+      const result = await submitCodexOAuthCallback(
+        integration,
+        debugOAuthBinding,
         debugCallbackUrl,
         parsedDebugAuthTabId,
-        debugCpaOAuthState
+        account.email
       )
       if (!result.ok) {
         patchAccountState(accountKey, {
@@ -532,16 +546,9 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleStartBatch = async (mode: BatchRunMode) => {
-    const normalizedCpaUrl = String(cpaUrl || "").trim()
-    if (!normalizedCpaUrl) {
-      setStatus("请先填写 CPA 地址")
-      log.warn("未填写 CPA 地址")
-      return
-    }
-
-    if (!cpaManagementKey.trim()) {
-      setStatus("请先填写 CPA 管理密钥")
-      log.warn("未填写 CPA 管理密钥")
+    if (!hasRequiredOAuthIntegrationConfig(integration)) {
+      setStatus("请先完善 OAuth 接入配置")
+      log.warn("OAuth 接入配置不完整")
       return
     }
 
@@ -567,10 +574,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         return selectedEmailSet.has(accountKey)
       }
 
-      return (
-        selectedEmailSet.has(accountKey) &&
-        !isManagedAccountDone(account)
-      )
+      return selectedEmailSet.has(accountKey) && !isManagedAccountDone(account)
     }
     const runnableCount = accounts.filter(isTargetAccount).length
     if (runnableCount === 0) {
@@ -599,7 +603,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           ? account
           : resetManagedAccountState(account)
       })
-      syncAccounts(workingAccounts, normalizedCpaUrl)
+      syncAccounts(workingAccounts, cpaUrl, cpaManagementKey)
 
       setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
       log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
@@ -638,7 +642,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
           }
           workingAccounts = nextAccounts
           setAccounts(nextAccounts)
-          syncAccounts(nextAccounts, normalizedCpaUrl)
+          syncAccounts(nextAccounts, cpaUrl, cpaManagementKey)
           return nextAccounts
         }
 
@@ -650,8 +654,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         let runResult: AccountRunResult
         try {
           runResult = await runManagedAccountFlow(
-            normalizedCpaUrl,
-            cpaManagementKey,
+            integration,
             currentAccount,
             codexLoginRunner,
             (progress, message) => {
@@ -733,7 +736,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const disabled = isBatchRunning || isDebugRunning
-  const hasCpaApiConfig = Boolean(cpaUrl.trim() && cpaManagementKey.trim())
+  const hasOAuthConfig = hasRequiredOAuthIntegrationConfig(integration)
 
   return (
     <>
@@ -786,7 +789,8 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         }
       />
 
-      <CpaConfigPanel
+      <OAuthConfigPanel
+        target={oauthTarget}
         cpaUrl={cpaUrl}
         cpaManagementKey={cpaManagementKey}
         disabled={disabled}
@@ -847,7 +851,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                           setDebugRunningStep(0)
                           setDebugVerificationRequestedAt(0)
                           setDebugCallbackUrl("")
-                          setDebugCpaOAuthState("")
+                          setDebugOAuthBinding(null)
                         }}
                         disabled={
                           disabled || filteredDebugAccounts.length === 0
@@ -867,7 +871,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                     onClick={handleRunNextDebugStep}
                     loading={isDebugRunning}
                     disabled={
-                      disabled || !selectedDebugAccount || !hasCpaApiConfig
+                      disabled || !selectedDebugAccount || !hasOAuthConfig
                     }>
                     下一步
                   </Button>
@@ -881,7 +885,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                     }}
                     loading={isDebugRunning && debugRunningStep === 1}
                     disabled={
-                      disabled || !selectedDebugAccount || !hasCpaApiConfig
+                      disabled || !selectedDebugAccount || !hasOAuthConfig
                     }>
                     {getFlowStepLabel(1)}
                   </Button>
@@ -940,7 +944,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
                       !selectedDebugAccount ||
                       !hasDebugAuthTabId ||
                       !debugCallbackUrl ||
-                      !hasCpaApiConfig
+                      !hasOAuthConfig
                     }>
                     {getFlowStepLabel(6)}
                   </Button>

@@ -1,19 +1,17 @@
-﻿import { createCodexLoginRunner } from "../login/steps"
+﻿import type { ManagedAccount } from "../../shared/account-state"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
 import {
   createMailVerificationRunner,
   type VerificationCodeResult
 } from "../integrations/mail-verification"
+import { createCodexLoginRunner } from "../login/steps"
 import { detectCodexAuthPageStateInPage } from "../page-scripts/page-script"
-import {
-  assertHeroSmsActivationCostWithinExpected,
-  pollHeroSmsCode,
-  requestHeroSmsActivation,
-  setHeroSmsActivationStatus,
-  submitPhoneNumberInPage,
-  type HeroSmsActivation,
-  type HeroSmsPhoneVerificationOptions
-} from "./phone-verification"
 import { abortableSleep } from "../utils/abort"
+import {
+  clearOpenTabSiteStorageForUrls,
+  clearSessionCookiesForUrls,
+  clearSiteStorageInTab
+} from "../utils/browser-session-cleanup"
 import {
   getOpenAiAuthUrlState,
   isCodexOAuthCallbackUrl,
@@ -26,11 +24,6 @@ import {
   isOpenAiRegisterProfileUrl
 } from "../utils/openai-auth-url"
 import {
-  clearOpenTabSiteStorageForUrls,
-  clearSessionCookiesForUrls,
-  clearSiteStorageInTab
-} from "../utils/browser-session-cleanup"
-import {
   detectPageButtonByTextInPage,
   runPageActionInTab
 } from "../utils/page-action-runner"
@@ -42,7 +35,15 @@ import {
   waitForTabMatchingUrl
 } from "../utils/tab-utils"
 import { retryVerificationCodeOnInvalidCode } from "../utils/verification-code-retry"
-import type { ManagedAccount } from "../../shared/account-state"
+import {
+  assertHeroSmsActivationCostWithinExpected,
+  pollHeroSmsCode,
+  requestHeroSmsActivation,
+  setHeroSmsActivationStatus,
+  submitPhoneNumberInPage,
+  type HeroSmsActivation,
+  type HeroSmsPhoneVerificationOptions
+} from "./phone-verification"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [
@@ -114,7 +115,7 @@ export type CodexRegisterStepResponse = {
   accountInvalid?: boolean
   verificationRequestedAt?: number
   oauthStartedAt?: number
-  cpaOAuthState?: string
+  oauthBinding?: OAuthBinding
   callbackUrl?: string
   targetTab?: {
     id?: number
@@ -225,7 +226,9 @@ const formatNavigationTraceDetail = (
     details.transitionType ? `transitionType=${details.transitionType}` : "",
     transitionQualifiers ? `transitionQualifiers=${transitionQualifiers}` : "",
     details.error ? `error=${details.error}` : "",
-    typeof details.timeStamp === "number" ? `timeStamp=${details.timeStamp}` : ""
+    typeof details.timeStamp === "number"
+      ? `timeStamp=${details.timeStamp}`
+      : ""
   ]
     .filter(Boolean)
     .join("，")
@@ -346,7 +349,8 @@ const isChatGptPageUrl = (rawUrl?: string) => {
 
 const detectChatGptEntryPageReadyInPage = () => {
   const hostname = window.location.hostname.toLowerCase()
-  const isChatGptHost = hostname === "chatgpt.com" || hostname === "www.chatgpt.com"
+  const isChatGptHost =
+    hostname === "chatgpt.com" || hostname === "www.chatgpt.com"
   if (!isChatGptHost) {
     return {
       ok: false,
@@ -588,7 +592,9 @@ const getPhoneNumberSubmitFailureInPage = () => {
 }
 
 const getOpenAiAuthPageErrorInPage = () => {
-  const text = String(document.body?.innerText || document.body?.textContent || "")
+  const text = String(
+    document.body?.innerText || document.body?.textContent || ""
+  )
     .replace(/\s+/g, " ")
     .trim()
 
@@ -1307,7 +1313,9 @@ const submitRegisterProfileInPage = (
    */
   const isAgeInput = (element: Element) => {
     const text = getFieldContextText(element)
-    return !isBirthYearInput(element) && /年龄|你的年龄是多少|howold|age/.test(text)
+    return (
+      !isBirthYearInput(element) && /年龄|你的年龄是多少|howold|age/.test(text)
+    )
   }
 
   /**
@@ -1655,7 +1663,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     submitCodexLoginEmailAndWait,
     submitCodexLoginPasswordAndWait,
     fetchAndSubmitChatGptLoginVerificationCode,
-    submitCodexOAuthCallbackToCpa
+    submitCodexOAuthCallback
   } = createCodexLoginRunner(context)
   /**
    * 获取当前流程的中断信号。
@@ -1915,9 +1923,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
             return {
               ok: true,
               message:
-                attempt > 1
-                  ? "ChatGPT 页面重载后已可操作"
-                  : readyValue.message
+                attempt > 1 ? "ChatGPT 页面重载后已可操作" : readyValue.message
             }
           }
           lastMessage = readyValue?.message || "ChatGPT 页面未确认可操作"
@@ -2320,8 +2326,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     const hasPhoneInput = Boolean(readyValue?.ok)
     const isStablePhoneInputPage =
       hasPhoneInput && isStableTabMatchingUrl(readyTab, isOpenAiAddPhoneUrl)
-    const readyMessage =
-      readyValue?.message || "未确认页面是否回到手机号输入页"
+    const readyMessage = readyValue?.message || "未确认页面是否回到手机号输入页"
     const phoneInputMessage = `检测到手机号输入框：${
       hasPhoneInput ? "是" : "否"
     }；稳定停在手机号输入页：${isStablePhoneInputPage ? "是" : "否"}`
@@ -2566,11 +2571,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     return {
       ok: passwordResult.ok,
-      message: [
-        entryMessage,
-        submitResult.message,
-        passwordResult.message
-      ]
+      message: [entryMessage, submitResult.message, passwordResult.message]
         .filter(Boolean)
         .join("；"),
       verificationRequestedAt: passwordResult.verificationRequestedAt,
@@ -2753,9 +2754,8 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         }
         onProgress?.(submitResult.message)
 
-        const submitState = await waitForRegisterEmailVerificationSubmitState(
-          tabId
-        )
+        const submitState =
+          await waitForRegisterEmailVerificationSubmitState(tabId)
         const currentAttemptMessage = `${mailResult.message}；${fillResult.message}；${submitResult.message}；${submitState.message}`
         if (submitState.state === "account_unavailable") {
           return {
@@ -2910,36 +2910,25 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * Step 5 前半段：从 CPA 页面刷新 OAuth 授权链接并进入 OpenAI 登录授权页。
+   * Step 5 前半段：从当前管理来源刷新 OAuth URL 并进入 OpenAI 登录授权页。
    *
-   * @param targetUrl 侧边栏填写的 CPA OAuth 页面地址。
-   * @param managementKey CPA 管理密钥。
+   * @param integration CPA 或 Sub2API 接入参数。
    * @param targetTabId 可选复用的标签页 ID。
    * @return 打开 OAuth 登录授权页的结果。
    */
   const refreshRegisterOAuthAndLogin = async (
-    targetUrl: string,
-    managementKey: string,
+    integration: OAuthIntegrationConfig,
     targetTabId?: number
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
-
-    const normalizedTargetUrl = String(targetUrl || "").trim()
-    if (!normalizedTargetUrl) {
-      return {
-        ok: false,
-        message: "缺少 CPA OAuth 页面地址"
-      }
-    }
 
     const reusableTabId = targetTabId ?? (await findReusableOpenAiTabId())
     const previousReusableTab = reusableTabId
       ? await chrome.tabs.get(reusableTabId).catch(() => undefined)
       : undefined
     const previousReusableUrl = String(previousReusableTab?.url || "")
-    const result = await openCodexAuthLink(normalizedTargetUrl, {
+    const result = await openCodexAuthLink(integration, {
       cleanupSession: false,
-      managementKey,
       targetTabId: reusableTabId
     })
     if (
@@ -2992,7 +2981,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         ? `${result.message}；已刷新 OAuth 并进入登录授权流程`
         : result.message,
       oauthStartedAt: result.ok ? Date.now() : undefined,
-      cpaOAuthState: result.cpaOAuthState,
+      oauthBinding: result.oauthBinding,
       targetTab: result.targetTab
     }
   }
@@ -3069,7 +3058,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     }
 
     if (!isOpenAiChooseAccountUrl(currentUrl)) {
-      onLog?.(`Step 5 未识别账号选择页，停止点击账号卡片；当前 URL=${currentUrl || "unknown"}`)
+      onLog?.(
+        `Step 5 未识别账号选择页，停止点击账号卡片；当前 URL=${currentUrl || "unknown"}`
+      )
       return {
         ok: false,
         message: `15 秒内未进入账号选择页 https://auth.openai.com/choose-an-account；当前 URL：${
@@ -3676,16 +3667,14 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
    *
    * @param tabId OAuth 登录授权页标签页 ID。
    * @param account 当前账号配置。
-   * @param targetUrl CPA OAuth 页面地址，用于登录后重新刷新授权页。
-   * @param managementKey CPA 管理密钥。
+   * @param integration CPA 或 Sub2API 接入参数，用于登录后重新刷新授权页。
    * @param onFallbackLog 日志打印回调
    * @return OAuth 账号选择或兜底登录后的结果。
    */
   const completeRegisterOAuthLogin = async (
     tabId: number,
     account: ManagedAccount,
-    targetUrl: string,
-    managementKey: string,
+    integration: OAuthIntegrationConfig,
     onFallbackLog?: (message: string) => void
   ): Promise<CodexRegisterStepResponse> => {
     throwIfRunAborted()
@@ -3701,24 +3690,6 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
       return firstChoice
     }
     onFallbackLog?.(`${firstChoice.message}；开始执行登录兜底流程 1、2、3`)
-
-    const normalizedTargetUrl = String(targetUrl || "").trim()
-    const normalizedManagementKey = String(managementKey || "").trim()
-    if (!normalizedTargetUrl) {
-      return {
-        ok: false,
-        message: `${firstChoice.message}；缺少 CPA 地址，无法重新执行 Step 5`,
-        targetTab: firstChoice.targetTab
-      }
-    }
-
-    if (!normalizedManagementKey) {
-      return {
-        ok: false,
-        message: `${firstChoice.message}；缺少 CPA 管理密钥，无法重新执行 Step 5`,
-        targetTab: firstChoice.targetTab
-      }
-    }
 
     onFallbackLog?.("登录兜底 Step 1：正在打开 GPT 页面")
     const openResult = await openChatGptRegisterEntry(tabId)
@@ -3848,8 +3819,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
     onFallbackLog?.("登录兜底：正在重新刷新 OAuth")
     const refreshResult = await refreshRegisterOAuthAndLogin(
-      normalizedTargetUrl,
-      normalizedManagementKey,
+      integration,
       codeTabId
     )
     onFallbackLog?.(`登录兜底：${refreshResult.message}`)
@@ -3883,43 +3853,42 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         secondChoice.message
       ),
       oauthStartedAt: refreshResult.oauthStartedAt,
-      cpaOAuthState: refreshResult.cpaOAuthState,
+      oauthBinding: refreshResult.oauthBinding,
       targetTab: secondChoice.targetTab
     }
   }
 
   /**
-   * Step 7：把注册 OAuth 回调地址提交回 CPA。
+   * Step 7：把注册 OAuth callback 提交给当前管理来源。
    *
-   * 复用登录流程的最后一步，只负责把 Step 6 成功后的 localhost 回调地址
-   * 回填给 CPA 管理接口。
+   * 复用登录流程的最后一步；CPA 执行回填，Sub2API 交换 code 并创建账号。
    *
-   * @param targetUrl CPA OAuth 页面地址。
-   * @param managementKey CPA 管理密钥。
+   * @param integration CPA 或 Sub2API 接入参数。
+   * @param oauthBinding Step 5 获取 OAuth URL 时返回的来源绑定信息。
    * @param callbackUrl Step 6 成功后捕获到的 localhost 回调地址。
    * @param callbackTabId 可选，回填成功后关闭这个授权标签页。
-   * @param cpaOAuthState Step 5 获取 OAuth URL 时返回的 state。
-   * @return CPA 回填结果。
+   * @param accountEmail 当前注册账号邮箱。
+   * @return 当前管理来源的 callback 提交结果。
    */
-  const submitRegisterOAuthCallbackToCpa = async (
-    targetUrl: string,
-    managementKey: string,
+  const submitRegisterOAuthCallback = async (
+    integration: OAuthIntegrationConfig,
+    oauthBinding: OAuthBinding,
     callbackUrl: string,
     callbackTabId?: number,
-    cpaOAuthState = ""
+    accountEmail = ""
   ): Promise<CodexRegisterStepResponse> => {
-    const result = await submitCodexOAuthCallbackToCpa(
-      targetUrl,
-      managementKey,
+    const result = await submitCodexOAuthCallback(
+      integration,
+      oauthBinding,
       callbackUrl,
       callbackTabId,
-      cpaOAuthState
+      accountEmail
     )
     return {
       ok: result.ok,
       message: result.message,
       callbackUrl: result.callbackUrl || callbackUrl,
-      cpaOAuthState,
+      oauthBinding,
       targetTab: {
         id: callbackTabId,
         url: result.callbackUrl || callbackUrl
@@ -3937,7 +3906,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
     refreshRegisterOAuthAndLogin,
     completeRegisterPhoneVerification,
     completeRegisterOAuthLogin,
-    submitRegisterOAuthCallbackToCpa
+    submitRegisterOAuthCallback
   }
 }
 
@@ -3951,5 +3920,5 @@ export const {
   refreshRegisterOAuthAndLogin,
   completeRegisterPhoneVerification,
   completeRegisterOAuthLogin,
-  submitRegisterOAuthCallbackToCpa
+  submitRegisterOAuthCallback
 } = createCodexRegisterRunner()

@@ -8,17 +8,16 @@ import {
   type RegisterRunLock
 } from "../../shared/account-state"
 import {
-  releasePowerKeepAwake,
-  requestPowerKeepAwake
-} from "../app/power"
+  createOAuthIntegrationConfig,
+  hasRequiredOAuthIntegrationConfig,
+  loadOAuthTargetSettings
+} from "../../shared/sub2api"
+import { releasePowerKeepAwake, requestPowerKeepAwake } from "../app/power"
+import { runRegisterBatch, type RegisterStopStrategy } from "./batch-runner"
 import {
   logRegisterBackground,
   writeRegisterExecutionLog
 } from "./execution-log"
-import {
-  runRegisterBatch,
-  type RegisterStopStrategy
-} from "./batch-runner"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 
 const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
@@ -215,10 +214,15 @@ export const startRegisterBatchJob = async ({
   })
   const cpaUrl = state.cpaUrl.trim()
   const cpaManagementKey = state.cpaManagementKey.trim()
-  if (!cpaUrl || !cpaManagementKey) {
+  const integration = createOAuthIntegrationConfig(
+    await loadOAuthTargetSettings("register"),
+    cpaUrl,
+    cpaManagementKey
+  )
+  if (!hasRequiredOAuthIntegrationConfig(integration)) {
     return {
       ok: false,
-      message: "缺少 CPA 地址或 CPA 管理密钥"
+      message: "OAuth 接入配置不完整"
     }
   }
 
@@ -259,8 +263,7 @@ export const startRegisterBatchJob = async ({
       })
 
       const result = await runRegisterBatch({
-        cpaUrl,
-        cpaManagementKey,
+        integration,
         accounts: state.accounts,
         selectedEmails,
         heroSmsOptions,

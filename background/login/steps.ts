@@ -1,11 +1,13 @@
-﻿import {
-  requestCpaOAuthUrl,
-  submitCpaOAuthCallback
-} from "../integrations/cpa-management-api"
+﻿import type { ManagedAccount } from "../../shared/account-state"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
 import {
   createMailVerificationRunner,
   type VerificationCodeResult
 } from "../integrations/mail-verification"
+import {
+  requestManagedOAuthUrl,
+  submitManagedOAuthCallback
+} from "../integrations/oauth-management"
 import {
   detectCodexAuthPageStateInPage,
   type DetectCodexAuthPageState
@@ -19,24 +21,22 @@ import type {
 } from "../types"
 import { abortableSleep, raceWithAbort, throwIfAborted } from "../utils/abort"
 import {
-  getOpenAiAuthUrlState,
-  isCodexOAuthCallbackUrl,
-  isOpenAiLoginPasswordUrl
-} from "../utils/openai-auth-url"
-import {
   clearOpenTabSiteStorageForUrls,
   clearSessionCookiesForUrls,
   clearSiteStorageInTab
 } from "../utils/browser-session-cleanup"
+import {
+  getOpenAiAuthUrlState,
+  isCodexOAuthCallbackUrl,
+  isOpenAiLoginPasswordUrl
+} from "../utils/openai-auth-url"
 import { runAuthPageAction } from "../utils/page-action-runner"
 import type { RunContext } from "../utils/run-context"
 import { waitForTabLoaded, waitForTabMatchingUrl } from "../utils/tab-utils"
 import { retryVerificationCodeOnInvalidCode } from "../utils/verification-code-retry"
-import type { ManagedAccount } from "../../shared/account-state"
 
 type OpenCodexAuthLinkOptions = {
   cleanupSession?: boolean
-  managementKey?: string
   targetTabId?: number
 }
 
@@ -443,27 +443,20 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 点击管理页入口，读取授权链接，打开 OpenAI 登录页，并清理旧会话。
+   * 从当前管理来源读取授权链接，打开 OpenAI 登录页，并按需清理旧会话。
    *
    * 这个步骤只负责把页面打开到 OpenAI 登录页，不再自动填写邮箱。
    *
-   * @param targetUrl 侧边栏里填写的 Codex 登录地址。
+   * @param integration CPA 或 Sub2API 接入参数。
    * @param options 打开授权链接前的会话处理选项。
    * @return 返回给侧边栏展示的执行结果。
    */
   const openCodexAuthLink = async (
-    targetUrl: string,
+    integration: OAuthIntegrationConfig,
     options: OpenCodexAuthLinkOptions = {}
   ): Promise<OpenCodexAuthLinkApiResponse> => {
     throwIfAborted(getAbortSignal())
     const shouldCleanupSession = options.cleanupSession ?? true
-    const managementKey = String(options.managementKey || "").trim()
-    if (!managementKey) {
-      return {
-        ok: false,
-        message: "缺少 CPA 管理密钥，请先在侧边栏填写"
-      }
-    }
 
     // region ========== 打开授权链接前先清理旧cookie，减少复用到失效登录态的概率 ==========
     const cleanupMessage = shouldCleanupSession
@@ -477,8 +470,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
       : "已保留当前 OpenAI 会话，"
     // endregion。
 
-    // region ========== 直接通过 CPA 管理接口获取最新 OAuth 授权链接 ==========
-    const apiResult = await requestCpaOAuthUrl(targetUrl, managementKey)
+    const apiResult = await requestManagedOAuthUrl(integration)
     throwIfAborted(getAbortSignal())
     const authTab =
       typeof options.targetTabId === "number"
@@ -503,10 +495,12 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     throwIfAborted(getAbortSignal())
     return {
       ok: true,
-      message: `${cleanupMessage}已通过 CPA 管理接口获取 OAuth 链接并${
+      message: `${cleanupMessage}已通过${
+        integration.source === "cpa" ? " CPA" : " Sub2API"
+      } 管理接口获取 OAuth 链接并${
         typeof options.targetTabId === "number" ? "复用当前 tab 打开" : "打开"
       } OpenAI 授权页`,
-      cpaOAuthState: apiResult.oauthState,
+      oauthBinding: apiResult.binding,
       targetTab: {
         id: authTab.id,
         url: apiResult.oauthUrl
@@ -1099,39 +1093,39 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
   }
 
   /**
-   * 执行第六步：把 OAuth 回调 URL 提交回 CPA 管理页。
+   * 执行第六步：把 OAuth 回调 URL 提交给当前管理来源。
    *
-   * @param targetUrl CPA 地址。
-   * @param managementKey CPA 管理密钥。
+   * @param integration CPA 或 Sub2API 接入参数。
+   * @param oauthBinding 获取 OAuth URL 时返回的来源绑定信息。
    * @param callbackUrl 第五步捕获到的 localhost 回调地址。
    * @param callbackTabId 可选，提交成功后关闭这个授权标签页。
-   * @param cpaOAuthState 可选，用于校验回调 state 是否匹配当前授权会话。
+   * @param accountEmail 当前流程账号邮箱，Sub2API 创建账号时用于名称兜底。
    * @return 回填结果。
    */
-  const submitCodexOAuthCallbackToCpa = async (
-    targetUrl: string,
-    managementKey: string,
+  const submitCodexOAuthCallback = async (
+    integration: OAuthIntegrationConfig,
+    oauthBinding: OAuthBinding,
     callbackUrl: string,
     callbackTabId?: number,
-    cpaOAuthState = ""
+    accountEmail = ""
   ): Promise<SubmitCodexOAuthCallbackResponse> => {
     throwIfAborted(getAbortSignal())
-    let submitResult: Awaited<ReturnType<typeof submitCpaOAuthCallback>>
+    let submitResult: Awaited<ReturnType<typeof submitManagedOAuthCallback>>
     try {
-      submitResult = await submitCpaOAuthCallback(
-        targetUrl,
-        managementKey,
+      submitResult = await submitManagedOAuthCallback(
+        integration,
+        oauthBinding,
         callbackUrl,
-        cpaOAuthState
+        accountEmail
       )
     } catch (error) {
       return {
         ok: false,
         message: `回填回调地址失败：${
-          error instanceof Error ? error.message : "CPA 回调提交失败"
+          error instanceof Error ? error.message : "OAuth 回调提交失败"
         }`,
         callbackUrl,
-        cpaOAuthState
+        oauthBinding
       }
     }
     throwIfAborted(getAbortSignal())
@@ -1148,7 +1142,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
           : "回调地址标签页未关闭或不需要关闭"
       }`,
       callbackUrl: submitResult.localhostUrl,
-      cpaOAuthState,
+      oauthBinding,
       verifiedStatus: submitResult.verifiedStatus
     }
   }
@@ -1160,7 +1154,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
     fetchAndSubmitCodexVerificationCode,
     fetchAndSubmitChatGptLoginVerificationCode,
     confirmCodexOAuthConsent,
-    submitCodexOAuthCallbackToCpa
+    submitCodexOAuthCallback
   }
 }
 
@@ -1173,5 +1167,5 @@ export const {
   fetchAndSubmitCodexVerificationCode,
   fetchAndSubmitChatGptLoginVerificationCode,
   confirmCodexOAuthConsent,
-  submitCodexOAuthCallbackToCpa
+  submitCodexOAuthCallback
 } = defaultCodexLoginRunner

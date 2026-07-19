@@ -1,3 +1,5 @@
+import type { OAuthBinding } from "../shared/sub2api"
+
 /**
  * 浏览器标签页的最小信息。
  */
@@ -23,7 +25,7 @@ export type CodexLoginStepResponseBase = {
  */
 export type OpenCodexAuthLinkResponse = CodexLoginStepResponseBase
 export type OpenCodexAuthLinkApiResponse = OpenCodexAuthLinkResponse & {
-  cpaOAuthState?: string
+  oauthBinding?: OAuthBinding
 }
 
 /**
@@ -79,11 +81,11 @@ export type ConfirmCodexOAuthConsentResponse = CodexLoginStepResponseBase & {
 }
 
 /**
- * 步骤 6：提交回调 URL 到 CPA 管理页。
+ * 步骤 6：向当前 OAuth 接入来源提交回调 URL。
  */
 export type SubmitCodexOAuthCallbackResponse = CodexLoginStepResponseBase & {
   callbackUrl?: string
-  cpaOAuthState?: string
+  oauthBinding?: OAuthBinding
   verifiedStatus?: string
   managementTab?: BrowserTabInfo
 }

@@ -200,8 +200,8 @@ export const FLOW_STEPS: Record<DebugStep, { name: string; label: string }> = {
     label: "5 确认授权"
   },
   6: {
-    name: "回填 CPA",
-    label: "6 回填 CPA"
+    name: "提交 OAuth callback",
+    label: "6 提交 OAuth callback"
   }
 }
 
@@ -583,7 +583,9 @@ export const normalizeRegisterAlarmConfig = (
  */
 export const normalizeRuntimeSettings = (value: unknown): RuntimeSettings => {
   const record =
-    value && typeof value === "object" ? (value as Partial<RuntimeSettings>) : {}
+    value && typeof value === "object"
+      ? (value as Partial<RuntimeSettings>)
+      : {}
 
   return {
     keepAwakeDuringRun:

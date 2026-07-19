@@ -1,7 +1,4 @@
-﻿import { createCodexRegisterRunner } from "./steps"
-import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
-import { abortableSleep } from "../utils/abort"
-import {
+﻿import {
   buildAccountInvalidLastMessage,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
@@ -11,6 +8,10 @@ import {
   type ManagedAccountProgress,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
+import { abortableSleep } from "../utils/abort"
+import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
+import { createCodexRegisterRunner } from "./steps"
 
 export const REGISTER_STEP_COUNT = 7
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
@@ -28,7 +29,7 @@ type RegisterStepResult = {
   needRefreshOAuth?: boolean
   needsManualReview?: boolean
   oauthStartedAt?: number
-  cpaOAuthState?: string
+  oauthBinding?: OAuthBinding
   callbackUrl?: string
   targetTab?: {
     id?: number
@@ -37,8 +38,7 @@ type RegisterStepResult = {
 }
 
 type RunRegisterBatchOptions = {
-  cpaUrl: string
-  cpaManagementKey: string
+  integration: OAuthIntegrationConfig
   accounts: ManagedAccount[]
   selectedEmails?: string[]
   heroSmsOptions: HeroSmsPhoneVerificationOptions
@@ -112,8 +112,7 @@ const formatRegisterAccountInterval = (durationMs: number) => {
  *
  * Step 2 只使用账号列表里保存的注册邮箱，不在批量流程中生成邮箱。
  *
- * @param cpaUrl CPA OAuth 页面地址。
- * @param cpaManagementKey CPA 管理密钥。
+ * @param integration CPA 或 Sub2API 接入参数。
  * @param account 当前要执行的账号。
  * @param heroSmsOptions HeroSMS 接码配置。
  * @param runner 注册流程 runner。
@@ -124,8 +123,7 @@ const formatRegisterAccountInterval = (durationMs: number) => {
  * @return 单账号注册执行结果。
  */
 export const runManagedRegisterFlow = async (
-  cpaUrl: string,
-  cpaManagementKey: string,
+  integration: OAuthIntegrationConfig,
   account: ManagedAccount,
   heroSmsOptions: HeroSmsPhoneVerificationOptions,
   runner: ReturnType<typeof createCodexRegisterRunner>,
@@ -152,9 +150,8 @@ export const runManagedRegisterFlow = async (
 
     registerTabId = step1Result.targetTab.id
     const verificationRequestedAt = Date.now()
-    const preparedResult = await runner.prepareRegisterAccountEmail(
-      workingAccount
-    )
+    const preparedResult =
+      await runner.prepareRegisterAccountEmail(workingAccount)
     if (!preparedResult.ok || !preparedResult.account?.email) {
       return {
         ok: false,
@@ -204,7 +201,8 @@ export const runManagedRegisterFlow = async (
         message: profileResult.message || "步骤 4 执行失败"
       }
     }
-    const continueResult = await runner.clickRegisterReadyContinue(registerTabId)
+    const continueResult =
+      await runner.clickRegisterReadyContinue(registerTabId)
     if (!continueResult.ok) {
       return {
         ok: false,
@@ -217,8 +215,7 @@ export const runManagedRegisterFlow = async (
   }
 
   const refreshResult = await runner.refreshRegisterOAuthAndLogin(
-    cpaUrl,
-    cpaManagementKey,
+    integration,
     registerTabId
   )
   if (!refreshResult.ok || typeof refreshResult.targetTab?.id !== "number") {
@@ -230,8 +227,7 @@ export const runManagedRegisterFlow = async (
   const loginResult = await runner.completeRegisterOAuthLogin(
     refreshResult.targetTab.id,
     workingAccount,
-    cpaUrl,
-    cpaManagementKey,
+    integration,
     onProgressLog
   )
   const step5Message = `${refreshResult.message}；${loginResult.message}`
@@ -249,8 +245,7 @@ export const runManagedRegisterFlow = async (
   let phoneTabId = loginResult.targetTab.id
   let oauthStartedAt =
     loginResult.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
-  let cpaOAuthState =
-    loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
+  let oauthBinding = loginResult.oauthBinding || refreshResult.oauthBinding
   let oauthAttemptCount = 1
   let phoneResult: RegisterStepResult
 
@@ -295,15 +290,16 @@ export const runManagedRegisterFlow = async (
       return {
         ok: false,
         message: `${phoneResult.message}；已达到 OAuth URL 获取上限 ${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS} 次；${
-          closedAuthTab ? "已关闭当前 OAuth 页面" : "当前 OAuth 页面未关闭或已不存在"
+          closedAuthTab
+            ? "已关闭当前 OAuth 页面"
+            : "当前 OAuth 页面未关闭或已不存在"
         }`
       }
     }
 
     oauthAttemptCount += 1
     const nextRefreshResult = await runner.refreshRegisterOAuthAndLogin(
-      cpaUrl,
-      cpaManagementKey,
+      integration,
       phoneTabId
     )
     if (
@@ -319,8 +315,7 @@ export const runManagedRegisterFlow = async (
     const nextLoginResult = await runner.completeRegisterOAuthLogin(
       nextRefreshResult.targetTab.id,
       workingAccount,
-      cpaUrl,
-      cpaManagementKey,
+      integration,
       onProgressLog
     )
     if (
@@ -338,11 +333,12 @@ export const runManagedRegisterFlow = async (
       nextLoginResult.oauthStartedAt ||
       nextRefreshResult.oauthStartedAt ||
       Date.now()
-    cpaOAuthState =
-      nextLoginResult.cpaOAuthState || nextRefreshResult.cpaOAuthState || ""
+    oauthBinding =
+      nextLoginResult.oauthBinding || nextRefreshResult.oauthBinding
   }
 
-  const callbackUrl = phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
+  const callbackUrl =
+    phoneResult.callbackUrl || phoneResult.targetTab?.url || ""
   if (!callbackUrl) {
     onStage(6, phoneResult.message)
     return {
@@ -354,19 +350,27 @@ export const runManagedRegisterFlow = async (
   messages.push(phoneResult.message)
   onStage(6, phoneResult.message)
 
-  const step7Result = await runner.submitRegisterOAuthCallbackToCpa(
-    cpaUrl,
-    cpaManagementKey,
-    callbackUrl,
-    phoneTabId,
-    cpaOAuthState
-  )
-  if (!step7Result.ok) {
-    onStage(7, step7Result.message || "CPA 回填失败")
+  if (!oauthBinding) {
     return {
       ok: false,
       needsManualReview: true,
-      message: `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${step7Result.message || "步骤 7 执行失败"}`
+      message:
+        "手机号验证已完成，但缺少 OAuth 来源绑定信息，请人工处理 callback"
+    }
+  }
+  const step7Result = await runner.submitRegisterOAuthCallback(
+    integration,
+    oauthBinding,
+    callbackUrl,
+    phoneTabId,
+    workingAccount.email
+  )
+  if (!step7Result.ok) {
+    onStage(7, step7Result.message || "OAuth callback 提交失败")
+    return {
+      ok: false,
+      needsManualReview: true,
+      message: `OAuth callback 提交失败；手机号验证可能已经完成，请人工检查管理端；${step7Result.message || "步骤 7 执行失败"}`
     }
   }
   messages.push(step7Result.message)
@@ -385,8 +389,7 @@ export const runManagedRegisterFlow = async (
  * 更新账号状态、写入日志，并复用账号列表里保存的注册邮箱。
  *
  * @param options 批量执行配置。
- * @param options.cpaUrl CPA OAuth 页面地址。
- * @param options.cpaManagementKey CPA 管理密钥。
+ * @param options.integration CPA 或 Sub2API 接入参数。
  * @param options.accounts 当前账号列表。
  * @param options.selectedEmails 要执行的账号 ID 列表；沿用旧字段名但内容是账号 ID。
  * @param options.heroSmsOptions HeroSMS 接码配置。
@@ -405,8 +408,7 @@ export const runManagedRegisterFlow = async (
  * @return 批量执行结果和最新账号列表。
  */
 export const runRegisterBatch = async ({
-  cpaUrl,
-  cpaManagementKey,
+  integration,
   accounts,
   selectedEmails = [],
   heroSmsOptions,
@@ -424,7 +426,8 @@ export const runRegisterBatch = async ({
   onStatus
 }: RunRegisterBatchOptions) => {
   const selectedEmailSet = new Set(selectedEmails)
-  const shouldUseAllTargets = targetAllWhenNoSelection && selectedEmailSet.size === 0
+  const shouldUseAllTargets =
+    targetAllWhenNoSelection && selectedEmailSet.size === 0
   const isTargetAccount = (account: ManagedAccount) => {
     const accountKey = getManagedAccountKey(account)
     const isSelected = selectedEmailSet.has(accountKey)
@@ -554,8 +557,7 @@ export const runRegisterBatch = async ({
     let runResult: AccountRunResult
     try {
       runResult = await runManagedRegisterFlow(
-        cpaUrl,
-        cpaManagementKey,
+        integration,
         currentAccount,
         heroSmsOptions,
         registerRunner,
@@ -617,7 +619,10 @@ export const runRegisterBatch = async ({
         lastMessage: runResult.message
       })
       onLog?.("info", `[${currentAccountLabel}] ${runResult.message}`)
-      onLog?.("info", `========== 流程成功完成：${currentAccountLabel} ==========`)
+      onLog?.(
+        "info",
+        `========== 流程成功完成：${currentAccountLabel} ==========`
+      )
       if (getStopStrategy() !== "none") {
         break
       }

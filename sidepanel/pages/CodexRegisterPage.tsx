@@ -15,19 +15,6 @@
 import { useEffect, useMemo, useState } from "react"
 
 import {
-  clickRegisterAndSubmitEmail,
-  clickRegisterReadyContinue,
-  completeRegisterOAuthLogin,
-  completeRegisterPhoneVerification,
-  fetchAndSubmitRegisterVerificationCode,
-  openChatGptRegisterEntry,
-  prepareRegisterAccountEmail,
-  refreshRegisterOAuthAndLogin,
-  submitRegisterOAuthCallbackToCpa,
-  submitRegisterProfile,
-  type CodexRegisterStepResponse
-} from "../../background/register/steps"
-import {
   fetchDuckEmail,
   type FetchDuckEmailOptions
 } from "../../background/integrations/duck-email"
@@ -36,14 +23,18 @@ import {
   type RegisterStopStrategy
 } from "../../background/register/batch-runner"
 import {
-  AccountFormPanel,
-  AccountListPanel,
-  useAccountPageState
-} from "../account-management"
-import { CpaConfigPanel } from "../cpa-config"
-import { DebugTabControl } from "../components/DebugTabControl"
-import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
-import type { PageProps } from "./types"
+  clickRegisterAndSubmitEmail,
+  clickRegisterReadyContinue,
+  completeRegisterOAuthLogin,
+  completeRegisterPhoneVerification,
+  fetchAndSubmitRegisterVerificationCode,
+  openChatGptRegisterEntry,
+  prepareRegisterAccountEmail,
+  refreshRegisterOAuthAndLogin,
+  submitRegisterOAuthCallback,
+  submitRegisterProfile,
+  type CodexRegisterStepResponse
+} from "../../background/register/steps"
 import {
   buildAccountInvalidLastMessage,
   DEFAULT_REGISTER_ALARM_CONFIG,
@@ -64,6 +55,20 @@ import {
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../../shared/account-state"
+import {
+  createOAuthIntegrationConfig,
+  hasRequiredOAuthIntegrationConfig,
+  type OAuthBinding
+} from "../../shared/sub2api"
+import {
+  AccountFormPanel,
+  AccountListPanel,
+  useAccountPageState
+} from "../account-management"
+import { DebugTabControl } from "../components/DebugTabControl"
+import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
+import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
+import type { PageProps } from "./types"
 
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
 const REGISTER_FLOW_STEPS = {
@@ -86,7 +91,7 @@ const REGISTER_FLOW_STEPS = {
     label: "6 手机号验证"
   },
   7: {
-    label: "7 回填 CPA"
+    label: "7 提交 OAuth callback"
   }
 }
 
@@ -161,6 +166,14 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     patchAccountState,
     setRunningEmail
   } = accountPage
+  const oauthTarget = useOAuthTargetConfig("register")
+  const integration = useMemo(() => {
+    return createOAuthIntegrationConfig(
+      oauthTarget.settings,
+      cpaUrl,
+      cpaManagementKey
+    )
+  }, [cpaManagementKey, cpaUrl, oauthTarget.settings])
   const [isDebugRunning, setIsDebugRunning] = useState(false)
   const [debugEmail, setDebugEmail] = useState("")
   const [debugAccountFilter, setDebugAccountFilter] =
@@ -171,7 +184,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const [debugVerificationRequestedAt, setDebugVerificationRequestedAt] =
     useState(0)
   const [debugOAuthStartedAt, setDebugOAuthStartedAt] = useState(0)
-  const [debugCpaOAuthState, setDebugCpaOAuthState] = useState("")
+  const [debugOAuthBinding, setDebugOAuthBinding] =
+    useState<OAuthBinding | null>(null)
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const heroSms = useHeroSmsConfig({ log, setStatus })
   const [alarmConfig, setAlarmConfig] = useState<RegisterAlarmConfig>(
@@ -392,7 +406,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugRunningStep(0)
     setDebugVerificationRequestedAt(0)
     setDebugOAuthStartedAt(0)
-    setDebugCpaOAuthState("")
+    setDebugOAuthBinding(null)
     setDebugCallbackUrl("")
     setStatus("注册调试状态已清空")
   }
@@ -420,9 +434,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     })
     setRunningEmail(accountKey)
     setStatus(options.runningStatus)
-    log.info(
-      `[注册调试][${accountLabel}] Step ${options.step} 开始`
-    )
+    log.info(`[注册调试][${accountLabel}] Step ${options.step} 开始`)
     options.beforeRun?.()
     patchAccountState(accountKey, {
       progress: options.runningProgress,
@@ -502,9 +514,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             message: "未选择账号"
           }
         }
-        const preparedResult = await prepareRegisterAccountEmail(
-          selectedDebugAccount
-        )
+        const preparedResult =
+          await prepareRegisterAccountEmail(selectedDebugAccount)
         if (!preparedResult.ok || !preparedResult.account?.email) {
           return preparedResult
         }
@@ -595,22 +606,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleCompleteRegisterOAuthLogin = async () => {
-    const normalizedCpaUrl = String(cpaUrl || "").trim()
-    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
-
     if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
-    if (!normalizedCpaUrl) {
-      setStatus("请先填写 CPA 地址")
-      log.warn("[注册调试] Step 5 缺少 CPA 地址")
-      return
-    }
-
-    if (!normalizedCpaManagementKey) {
-      setStatus("请先填写 CPA 管理密钥")
-      log.warn("[注册调试] Step 5 缺少 CPA 管理密钥")
+    if (!hasRequiredOAuthIntegrationConfig(integration)) {
+      setStatus("请先完善 OAuth 接入配置")
+      log.warn("[注册调试] Step 5 OAuth 接入配置不完整")
       return
     }
 
@@ -620,6 +622,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugRunningStep(5)
     setDebugProgress((current) => Math.max(current, 4))
     setRunningEmail(accountKey)
+    setDebugOAuthBinding(null)
+    setDebugCallbackUrl("")
     setStatus("正在完成 OAuth 登录")
     log.info(`[注册调试][${accountLabel}] Step 5 开始`)
     patchAccountState(accountKey, {
@@ -629,10 +633,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     })
 
     try {
-      const refreshResult = await refreshRegisterOAuthAndLogin(
-        normalizedCpaUrl,
-        normalizedCpaManagementKey
-      )
+      const refreshResult = await refreshRegisterOAuthAndLogin(integration)
       if (
         !refreshResult.ok ||
         typeof refreshResult.targetTab?.id !== "number"
@@ -649,8 +650,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       const result = await completeRegisterOAuthLogin(
         refreshResult.targetTab.id,
         selectedDebugAccount,
-        normalizedCpaUrl,
-        normalizedCpaManagementKey,
+        integration,
         (message) => {
           log.info(`[注册调试][${accountLabel}] ${message}`)
         }
@@ -673,8 +673,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       setDebugOAuthStartedAt(
         result.oauthStartedAt || refreshResult.oauthStartedAt || Date.now()
       )
-      setDebugCpaOAuthState(
-        result.cpaOAuthState || refreshResult.cpaOAuthState || ""
+      setDebugOAuthBinding(
+        result.oauthBinding || refreshResult.oauthBinding || null
       )
       setDebugCallbackUrl("")
       setDebugProgress(5)
@@ -804,10 +804,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           return
         }
 
-        const normalizedCpaUrl = String(cpaUrl || "").trim()
-        const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
-        if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
-          const message = `${result.message}；缺少 CPA 地址或管理密钥，无法重新执行 Step 5`
+        if (!hasRequiredOAuthIntegrationConfig(integration)) {
+          const message = `${result.message}；OAuth 接入配置不完整，无法重新执行 Step 5`
           setStatus("手机号验证失败")
           log.warn(`[注册调试][${accountLabel}] ${message}`)
           patchAccountState(accountKey, {
@@ -819,6 +817,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
         oauthAttemptCount += 1
         setStatus("正在重新执行 Step 5")
+        setDebugOAuthBinding(null)
+        setDebugCallbackUrl("")
         log.warn(
           `[注册调试][${accountLabel}] ${result.message}；正在重新执行 Step 5（OAuth URL ${oauthAttemptCount}/${REGISTER_PHONE_MAX_OAUTH_ATTEMPTS}）`
         )
@@ -829,8 +829,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         })
 
         const refreshResult = await refreshRegisterOAuthAndLogin(
-          normalizedCpaUrl,
-          normalizedCpaManagementKey,
+          integration,
           tabId
         )
         if (
@@ -850,8 +849,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         const loginResult = await completeRegisterOAuthLogin(
           refreshResult.targetTab.id,
           selectedDebugAccount,
-          normalizedCpaUrl,
-          normalizedCpaManagementKey,
+          integration,
           (message) => {
             log.info(`[注册调试][${accountLabel}] ${message}`)
           }
@@ -874,8 +872,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
           Date.now()
         setDebugRegisterTabId(String(tabId))
         setDebugOAuthStartedAt(oauthStartedAt)
-        setDebugCpaOAuthState(
-          loginResult.cpaOAuthState || refreshResult.cpaOAuthState || ""
+        setDebugOAuthBinding(
+          loginResult.oauthBinding || refreshResult.oauthBinding || null
         )
         setDebugCallbackUrl("")
       }
@@ -894,16 +892,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
-  const handleSubmitRegisterOAuthCallbackToCpa = async () => {
+  const handleSubmitRegisterOAuthCallback = async () => {
     if (isBatchRunning || isDebugRunning || !selectedDebugAccount) {
       return
     }
 
-    const normalizedCpaUrl = String(cpaUrl || "").trim()
-    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
-    if (!normalizedCpaUrl || !normalizedCpaManagementKey) {
-      setStatus("请先填写 CPA 地址和管理密钥")
-      log.warn("[注册调试] Step 7 缺少 CPA 地址或管理密钥")
+    if (!hasRequiredOAuthIntegrationConfig(integration)) {
+      setStatus("请先完善 OAuth 接入配置")
+      log.warn("[注册调试] Step 7 OAuth 接入配置不完整")
+      return
+    }
+    if (!debugOAuthBinding) {
+      setStatus("请先执行 Step 5 获取 OAuth 会话")
+      log.warn("[注册调试] Step 7 缺少 OAuth 来源绑定信息")
       return
     }
 
@@ -924,26 +925,26 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugRunningStep(7)
     setDebugProgress((current) => Math.max(current, 6))
     setRunningEmail(accountKey)
-    setStatus("正在回填 CPA")
+    setStatus("正在提交 OAuth callback")
     log.info(`[注册调试][${accountLabel}] Step 7 开始`)
     patchAccountState(accountKey, {
       progress: 6,
       status: "running",
-      lastMessage: "正在把 OAuth 回调地址提交回 CPA"
+      lastMessage: "正在向管理端提交 OAuth callback"
     })
 
     try {
-      const result = await submitRegisterOAuthCallbackToCpa(
-        normalizedCpaUrl,
-        normalizedCpaManagementKey,
+      const result = await submitRegisterOAuthCallback(
+        integration,
+        debugOAuthBinding,
         normalizedCallbackUrl,
         callbackTabId,
-        debugCpaOAuthState
+        selectedDebugAccount.email
       )
 
       if (!result.ok) {
-        const message = `CPA 回填失败；手机号验证码已提交，手机号验证可能已经完成，请人工处理 CPA 回填；${result.message}`
-        setStatus("CPA 回填需要人工处理")
+        const message = `OAuth callback 提交失败；手机号验证可能已经完成，请人工检查管理端；${result.message}`
+        setStatus("OAuth callback 需要人工处理")
         log.warn(`[注册调试][${accountLabel}] ${message}`)
         patchAccountState(accountKey, {
           progress: 7,
@@ -954,7 +955,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }
 
       setDebugProgress(REGISTER_STEP_COUNT)
-      setStatus("已完成 CPA 回填")
+      setStatus("已提交 OAuth callback")
       log.info(`[注册调试][${accountLabel}] Step 7 ${result.message}`)
       patchAccountState(accountKey, {
         progress: REGISTER_STEP_COUNT as ManagedAccountProgress,
@@ -962,8 +963,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         lastMessage: result.message
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : "CPA 回填异常"
-      setStatus("CPA 回填异常")
+      const message =
+        error instanceof Error ? error.message : "OAuth callback 提交异常"
+      setStatus("OAuth callback 提交异常")
       log.warn(`[注册调试][${accountLabel}] ${message}`)
       patchAccountState(accountKey, {
         status: "failed",
@@ -1095,17 +1097,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleStartBatch = async () => {
-    const normalizedCpaUrl = String(cpaUrl || "").trim()
-    const normalizedCpaManagementKey = String(cpaManagementKey || "").trim()
-    if (!normalizedCpaUrl) {
-      setStatus("请先填写 CPA 地址")
-      log.warn("未填写 CPA 地址")
-      return
-    }
-
-    if (!normalizedCpaManagementKey) {
-      setStatus("请先填写 CPA 管理密钥")
-      log.warn("未填写 CPA 管理密钥")
+    if (!hasRequiredOAuthIntegrationConfig(integration)) {
+      setStatus("请先完善 OAuth 接入配置")
+      log.warn("OAuth 接入配置不完整")
       return
     }
 
@@ -1264,7 +1258,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
   const disabled = isBatchRunning || isDebugRunning
   const hasBatchConfig = Boolean(
-    cpaUrl.trim() && cpaManagementKey.trim() && heroSms.hasRequiredConfig
+    hasRequiredOAuthIntegrationConfig(integration) && heroSms.hasRequiredConfig
   )
   const alarmLastTriggeredLabel = appliedAlarmConfig.lastTriggeredAt
     ? new Date(appliedAlarmConfig.lastTriggeredAt).toLocaleString()
@@ -1311,7 +1305,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
           </p>
           <p>
-            推荐选择“成功则完成回填”：如果当前手机号失败就停止，不再换号；如果验证成功，就完成 CPA 回填后停止。
+            推荐选择“成功则完成回填”：如果当前手机号失败就停止，不再换号；如果验证成功，就向当前管理端提交
+            OAuth callback 后停止。
           </p>
         </div>
       </Modal>
@@ -1561,7 +1556,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
       <HeroSmsConfigPanel heroSms={heroSms} disabled={isDebugRunning} />
 
-      <CpaConfigPanel
+      <OAuthConfigPanel
+        target={oauthTarget}
         cpaUrl={cpaUrl}
         cpaManagementKey={cpaManagementKey}
         disabled={disabled}
@@ -1623,12 +1619,11 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                           setDebugRunningStep(0)
                           setDebugVerificationRequestedAt(0)
                           setDebugOAuthStartedAt(0)
-                          setDebugCpaOAuthState("")
+                          setDebugOAuthBinding(null)
                           setDebugCallbackUrl("")
                         }}
                         disabled={
-                          disabled ||
-                          filteredDebugAccounts.length === 0
+                          disabled || filteredDebugAccounts.length === 0
                         }
                       />
                     </div>
@@ -1685,8 +1680,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                     disabled={
                       disabled ||
                       !selectedDebugAccount ||
-                      !cpaUrl.trim() ||
-                      !cpaManagementKey.trim()
+                      !hasRequiredOAuthIntegrationConfig(integration)
                     }>
                     5 完成 OAuth 登录
                   </Button>
@@ -1702,17 +1696,17 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                   <Button
                     type={getDebugStepButtonType(7)}
                     onClick={() => {
-                      void handleSubmitRegisterOAuthCallbackToCpa()
+                      void handleSubmitRegisterOAuthCallback()
                     }}
                     loading={isDebugRunning && debugRunningStep === 7}
                     disabled={
                       disabled ||
                       !selectedDebugAccount ||
                       !debugCallbackUrl ||
-                      !cpaUrl.trim() ||
-                      !cpaManagementKey.trim()
+                      !hasRequiredOAuthIntegrationConfig(integration) ||
+                      !debugOAuthBinding
                     }>
-                    7 回填 CPA
+                    7 提交 OAuth callback
                   </Button>
                 </Space>
               </div>
