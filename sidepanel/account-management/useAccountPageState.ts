@@ -300,8 +300,7 @@ export const useAccountPageState = ({
       accounts.find((account) => {
         return getManagedAccountKey(account) === previousEditingId
       }) || null
-    const shouldPreserveAccountState = Boolean(existingAccount)
-    const nextAccount = shouldPreserveAccountState
+    const nextAccount: ManagedAccount = existingAccount
       ? {
           ...existingAccount,
           mailProvider,

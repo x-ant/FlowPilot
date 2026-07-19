@@ -6,6 +6,7 @@
   "author": "xuhq",
   "scripts": {
     "dev": "plasmo dev",
+    "typecheck": "tsc --noEmit --incremental false",
     "build": "plasmo build",
     "package": "plasmo package"
   },

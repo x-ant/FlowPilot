@@ -181,7 +181,11 @@ export const findNewMatchingTab = async (
   const tabs = await chrome.tabs.query({})
 
   return tabs.find((tab) => {
-    return Boolean(tab.id) && !beforeTabIds.has(tab.id) && matcher(tab)
+    return (
+      typeof tab.id === "number" &&
+      !beforeTabIds.has(tab.id) &&
+      matcher(tab)
+    )
   })
 }
 

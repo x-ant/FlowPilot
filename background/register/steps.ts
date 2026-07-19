@@ -2011,7 +2011,7 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
 
       if (lastState.state === "oauth_consent_ready") {
         const consentResult = await confirmCodexOAuthConsent(tabId)
-        if (consentResult.ok) {
+        if (consentResult.ok && consentResult.callbackUrl) {
           return {
             ok: true,
             state: "callback",
@@ -2024,7 +2024,9 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
           ...lastState,
           ok: false,
           releaseActivation: false,
-          message: `手机验证码已通过并进入授权确认页，但未能完成授权继续：${consentResult.message}`
+          message: consentResult.ok
+            ? `手机验证码已通过并进入授权确认页，但未捕获到 localhost 回调地址：${consentResult.message}`
+            : `手机验证码已通过并进入授权确认页，但未能完成授权继续：${consentResult.message}`
         }
       }
 
