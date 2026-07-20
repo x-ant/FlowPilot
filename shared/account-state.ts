@@ -1,3 +1,5 @@
+import { readLocalStorage, writeLocalStorage } from "../platform/chrome/storage"
+
 export type AccountFormValues = {
   mailProvider?: MailProvider
   emailGenerator?: EmailGenerator
@@ -90,25 +92,8 @@ export type AccountRunResult = {
 
 export const STEP_COUNT = 6
 
-export const LOGIN_STORAGE_KEYS: AccountPageStorageKeys = {
-  cpaUrl: "flowpilot:login:cpa-url",
-  cpaManagementKey: "flowpilot:login:cpa-management-key",
-  accounts: "flowpilot:login:accounts"
-}
-export const LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY =
-  "flowpilot:login:account-form-draft"
-export const REGISTER_STORAGE_KEYS: AccountPageStorageKeys = {
-  cpaUrl: "flowpilot:register:cpa-url",
-  cpaManagementKey: "flowpilot:register:cpa-management-key",
-  accounts: "flowpilot:register:accounts"
-}
-export const REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY =
-  "flowpilot:register:account-form-draft"
 export const REGISTER_ALARM_NAME = "flowpilot:register:auto-run"
-export const REGISTER_ALARM_STORAGE_KEY = "flowpilot:register:alarm-config"
-export const REGISTER_RUN_LOCK_STORAGE_KEY = "flowpilot:register:run-lock"
 export const REGISTER_RUN_LOCK_STALE_MS = 2 * 60 * 60 * 1000
-export const RUNTIME_SETTINGS_STORAGE_KEY = "flowpilot:runtime-settings"
 export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = {
   keepAwakeDuringRun: true
 }
@@ -326,19 +311,6 @@ export const getAccountProgressSummary = (
   }
 
   return `待执行：${stepLabel}`
-}
-
-/**
- * 获取 Chrome 本地存储对象。
- *
- * @return 扩展环境中返回 `chrome.storage.local`；普通网页环境中返回 null。
- */
-export const getStorage = () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) {
-    return null
-  }
-
-  return chrome.storage.local
 }
 
 /**
@@ -815,32 +787,23 @@ export const loadAccountPageState = async (
   keys: AccountPageStorageKeys,
   options: { requireEmailGenerator?: boolean } = {}
 ): Promise<AccountPageState> => {
-  const storage = getStorage()
-  if (!storage) {
-    return EMPTY_PAGE_STATE
+  const result = await readLocalStorage([
+    keys.cpaUrl,
+    keys.cpaManagementKey,
+    keys.accounts
+  ])
+  const rawAccounts = Array.isArray(result[keys.accounts])
+    ? (result[keys.accounts] as unknown[])
+    : []
+  const accounts = rawAccounts
+    .map((account) => normalizeStoredAccount(account, options))
+    .filter((account): account is ManagedAccount => Boolean(account))
+
+  return {
+    cpaUrl: String(result[keys.cpaUrl] || "").trim(),
+    cpaManagementKey: String(result[keys.cpaManagementKey] || "").trim(),
+    accounts
   }
-
-  return new Promise<AccountPageState>((resolve) => {
-    storage.get(
-      [keys.cpaUrl, keys.cpaManagementKey, keys.accounts],
-      (result) => {
-        const rawAccounts = Array.isArray(result?.[keys.accounts])
-          ? (result?.[keys.accounts] as unknown[])
-          : []
-        const accounts = rawAccounts
-          .map((account) => normalizeStoredAccount(account, options))
-          .filter((account): account is ManagedAccount => Boolean(account))
-
-        resolve({
-          cpaUrl: String(result?.[keys.cpaUrl] || "").trim(),
-          cpaManagementKey: String(
-            result?.[keys.cpaManagementKey] || ""
-          ).trim(),
-          accounts
-        })
-      }
-    )
-  })
 }
 
 /**
@@ -853,8 +816,7 @@ export const saveAccountPageState = (
   keys: AccountPageStorageKeys,
   state: AccountPageState
 ) => {
-  const storage = getStorage()
-  storage?.set({
+  void writeLocalStorage({
     [keys.cpaUrl]: state.cpaUrl,
     [keys.cpaManagementKey]: state.cpaManagementKey,
     [keys.accounts]: state.accounts

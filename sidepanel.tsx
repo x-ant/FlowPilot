@@ -25,16 +25,14 @@ import {
 import "antd/dist/reset.css"
 import "./sidepanel.css"
 
+import { getLocalStorage } from "./platform/chrome/storage"
 import {
   DEFAULT_RUNTIME_SETTINGS,
-  getStorage,
   normalizeRuntimeSettings,
-  RUNTIME_SETTINGS_STORAGE_KEY,
   type RuntimeSettings
 } from "./shared/account-state"
 import {
   createUiLogger,
-  EXECUTION_LOG_STORAGE_KEY,
   getTimeLabel,
   LOG_LEVEL_META,
   mergeLogLists,
@@ -45,6 +43,10 @@ import {
 } from "./shared/logging"
 import {
   ACTIVE_PAGE_STORAGE_KEY,
+  EXECUTION_LOG_STORAGE_KEY,
+  RUNTIME_SETTINGS_STORAGE_KEY
+} from "./shared/storage-keys"
+import {
   CodexLoginPage,
   CodexRegisterPage,
   FLOW_PAGE_ITEMS,
@@ -142,7 +144,7 @@ function SidePanel() {
    * @param item 新增日志。
    */
   const appendLogToStorage = useCallback((item: LogItem) => {
-    const storage = getStorage()
+    const storage = getLocalStorage()
     if (!storage) {
       return
     }
@@ -255,7 +257,7 @@ function SidePanel() {
   }, [])
 
   useEffect(() => {
-    const storage = getStorage()
+    const storage = getLocalStorage()
     storage?.get(
       [
         ACTIVE_PAGE_STORAGE_KEY,
@@ -325,7 +327,7 @@ function SidePanel() {
     const nextPage: FlowPage =
       value === "flowpilot-register" ? "flowpilot-register" : "flowpilot-login"
     setActivePage(nextPage)
-    getStorage()?.set({
+    getLocalStorage()?.set({
       [ACTIVE_PAGE_STORAGE_KEY]: nextPage
     })
     setStatus(
@@ -341,7 +343,7 @@ function SidePanel() {
     shouldFollowLogsRef.current = true
     logScrollIntentRef.current = false
     setLogAtBottomSafely(true)
-    getStorage()?.set({
+    getLocalStorage()?.set({
       [EXECUTION_LOG_STORAGE_KEY]: []
     })
     setStatus("日志已清空")
@@ -358,7 +360,7 @@ function SidePanel() {
       ...patch
     })
     setRuntimeSettings(nextSettings)
-    getStorage()?.set({
+    getLocalStorage()?.set({
       [RUNTIME_SETTINGS_STORAGE_KEY]: nextSettings
     })
     setStatus("运行设置已保存")

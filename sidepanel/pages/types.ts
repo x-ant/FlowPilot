@@ -8,8 +8,6 @@ export type PageProps = {
   onBusyChange?: (busy: boolean) => void
 }
 
-export const ACTIVE_PAGE_STORAGE_KEY = "flowpilot:active-page"
-
 export const FLOW_PAGE_ITEMS: Array<{ key: FlowPage; label: string }> = [
   {
     key: "flowpilot-login",

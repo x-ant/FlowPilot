@@ -1,10 +1,14 @@
 import {
+  readLocalStorage,
+  writeLocalStorage
+} from "../../platform/chrome/storage"
+import {
   DEFAULT_REGISTER_ALARM_CONFIG,
   normalizeRegisterAlarmConfig,
   REGISTER_ALARM_NAME,
-  REGISTER_ALARM_STORAGE_KEY,
   type RegisterAlarmConfig
 } from "../../shared/account-state"
+import { REGISTER_ALARM_STORAGE_KEY } from "../../shared/storage-keys"
 import type { RegisterStopStrategy } from "./batch-runner"
 import {
   logRegisterBackground,
@@ -17,22 +21,8 @@ import {
   stopRegisterBatchJob
 } from "./run-controller"
 
-const readStorage = (keys: string[]) => {
-  return new Promise<Record<string, unknown>>((resolve) => {
-    chrome.storage.local.get(keys, resolve)
-  })
-}
-
-const writeStorage = (items: Record<string, unknown>) => {
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.set(items, () => {
-      resolve()
-    })
-  })
-}
-
 const getRegisterAlarmConfig = async () => {
-  const result = await readStorage([REGISTER_ALARM_STORAGE_KEY])
+  const result = await readLocalStorage([REGISTER_ALARM_STORAGE_KEY])
   return normalizeRegisterAlarmConfig(
     result[REGISTER_ALARM_STORAGE_KEY] || DEFAULT_REGISTER_ALARM_CONFIG
   )
@@ -40,7 +30,7 @@ const getRegisterAlarmConfig = async () => {
 
 const saveRegisterAlarmConfig = async (config: RegisterAlarmConfig) => {
   const normalizedConfig = normalizeRegisterAlarmConfig(config)
-  await writeStorage({
+  await writeLocalStorage({
     [REGISTER_ALARM_STORAGE_KEY]: Object.fromEntries(
       Object.entries(normalizedConfig).filter(([, value]) => {
         return value !== undefined

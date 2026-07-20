@@ -1,8 +1,9 @@
+import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   DEFAULT_RUNTIME_SETTINGS,
-  normalizeRuntimeSettings,
-  RUNTIME_SETTINGS_STORAGE_KEY
+  normalizeRuntimeSettings
 } from "../../shared/account-state"
+import { RUNTIME_SETTINGS_STORAGE_KEY } from "../../shared/storage-keys"
 
 const KEEP_AWAKE_REASON_TTL_MS = 5 * 60 * 60 * 1000
 const keepAwakeReasons = new Map<string, number>()
@@ -111,7 +112,7 @@ export const releasePowerKeepAwake = (reason: string) => {
  * 注册侧边栏发来的保持唤醒消息。
  */
 export const setupPowerKeepAwake = () => {
-  chrome.storage.local.get([RUNTIME_SETTINGS_STORAGE_KEY], (result) => {
+  getLocalStorage()?.get([RUNTIME_SETTINGS_STORAGE_KEY], (result) => {
     keepAwakeDuringRun = normalizeRuntimeSettings(
       result?.[RUNTIME_SETTINGS_STORAGE_KEY]
     ).keepAwakeDuringRun

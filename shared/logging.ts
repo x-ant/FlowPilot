@@ -42,7 +42,6 @@ export type ConsoleLogger = {
   debug: (...args: unknown[]) => void
 }
 
-export const EXECUTION_LOG_STORAGE_KEY = "flowpilot:execution-logs"
 export const EXECUTION_LOG_LIMIT = 6000
 
 export const LOG_LEVEL_META: Record<LogLevel, LogLevelMeta> = {

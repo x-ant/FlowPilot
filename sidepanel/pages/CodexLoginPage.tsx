@@ -16,8 +16,6 @@ import {
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
   isManagedAccountDone,
-  LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
-  LOGIN_STORAGE_KEYS,
   matchesManagedAccountVisibilityFilter,
   resetManagedAccountState,
   STEP_COUNT,
@@ -28,6 +26,10 @@ import {
   type ManagedAccount,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import {
+  LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
+  LOGIN_STORAGE_KEYS
+} from "../../shared/storage-keys"
 import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,

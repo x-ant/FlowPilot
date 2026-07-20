@@ -5,10 +5,10 @@ import type {
   DuckEmailResult,
   FetchDuckEmailOptions
 } from "../../background/integrations/duck-email"
+import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   EMPTY_ACCOUNT_FORM,
   EMPTY_ACCOUNT_FORM_DRAFT,
-  getStorage,
   normalizeAccountFormDraft,
   normalizeEmailGenerator,
   normalizeMailProvider,
@@ -100,7 +100,7 @@ export function AccountFormPanel({
     }
 
     let isUnmounted = false
-    const storage = getStorage()
+    const storage = getLocalStorage()
     storage?.get([draftStorageKey], (result) => {
       if (isUnmounted) {
         return
@@ -183,7 +183,7 @@ export function AccountFormPanel({
       email: shouldPreserveDraftEmail(values) ? values.email : ""
     })
     setDraftValues(nextDraftValues)
-    getStorage()?.set({
+    getLocalStorage()?.set({
       [draftStorageKey]: nextDraftValues
     })
   }

@@ -1,3 +1,6 @@
+import { readLocalStorage, writeLocalStorage } from "../platform/chrome/storage"
+import { OAUTH_TARGET_STORAGE_KEYS } from "./storage-keys"
+
 export type OAuthSource = "cpa" | "sub2api"
 
 export type Sub2ApiConfig = {
@@ -44,11 +47,6 @@ export const DEFAULT_SUB2API_CONFIG: Sub2ApiConfig = {
   groupName: "codex",
   proxyId: null
 }
-
-export const OAUTH_TARGET_STORAGE_KEYS = {
-  login: "flowpilot:login:oauth-target",
-  register: "flowpilot:register:oauth-target"
-} as const
 
 /**
  * 规范化本地存储中的 OAuth 接入设置。
@@ -139,11 +137,8 @@ export const loadOAuthTargetSettings = async (
   scope: keyof typeof OAUTH_TARGET_STORAGE_KEYS
 ): Promise<OAuthTargetSettings> => {
   const storageKey = OAUTH_TARGET_STORAGE_KEYS[scope]
-  return new Promise((resolve) => {
-    chrome.storage.local.get([storageKey], (result) => {
-      resolve(normalizeOAuthTargetSettings(result?.[storageKey]))
-    })
-  })
+  const result = await readLocalStorage([storageKey])
+  return normalizeOAuthTargetSettings(result[storageKey])
 }
 
 /**
@@ -158,12 +153,7 @@ export const saveOAuthTargetSettings = async (
   settings: OAuthTargetSettings
 ) => {
   const storageKey = OAUTH_TARGET_STORAGE_KEYS[scope]
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.set(
-      {
-        [storageKey]: normalizeOAuthTargetSettings(settings)
-      },
-      resolve
-    )
+  await writeLocalStorage({
+    [storageKey]: normalizeOAuthTargetSettings(settings)
   })
 }

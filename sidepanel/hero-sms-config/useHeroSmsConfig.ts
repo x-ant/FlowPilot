@@ -6,13 +6,17 @@ import {
   type HeroSmsCountryOption,
   type HeroSmsPhoneVerificationOptions
 } from "../../background/register/phone-verification"
+import {
+  readLocalStorage,
+  writeLocalStorage
+} from "../../platform/chrome/storage"
 import type { UiLogger } from "../../shared/logging"
+import {
+  REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY,
+  REGISTER_HERO_SMS_OPERATORS_CACHE_KEY,
+  REGISTER_HERO_SMS_STORAGE_KEY
+} from "../../shared/storage-keys"
 
-const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
-const REGISTER_HERO_SMS_COUNTRIES_CACHE_KEY =
-  "flowpilot:register:hero-sms-countries-cache"
-const REGISTER_HERO_SMS_OPERATORS_CACHE_KEY =
-  "flowpilot:register:hero-sms-operators-cache"
 const HERO_SMS_COUNTRIES_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const HERO_SMS_OPERATORS_CACHE_TTL_MS = 60 * 60 * 1000
 
@@ -57,20 +61,6 @@ const DEFAULT_HERO_SMS_SETTINGS: HeroSmsSettings = {
   mockEnabled: false,
   maxPrice: "",
   fixedPrice: ""
-}
-
-const readLocalStorage = (keys: string[]) => {
-  return new Promise<Record<string, unknown>>((resolve) => {
-    chrome.storage.local.get(keys, resolve)
-  })
-}
-
-const writeLocalStorage = (items: Record<string, unknown>) => {
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.set(items, () => {
-      resolve()
-    })
-  })
 }
 
 const isFreshCache = (updatedAt: unknown, ttlMs: number) => {
@@ -141,8 +131,8 @@ export const useHeroSmsConfig = ({
   const [isOperatorsLoading, setIsOperatorsLoading] = useState(false)
 
   useEffect(() => {
-    void chrome.storage.local.get([REGISTER_HERO_SMS_STORAGE_KEY], (result) => {
-      const stored = result?.[REGISTER_HERO_SMS_STORAGE_KEY] as
+    void readLocalStorage([REGISTER_HERO_SMS_STORAGE_KEY]).then((result) => {
+      const stored = result[REGISTER_HERO_SMS_STORAGE_KEY] as
         | Partial<HeroSmsSettings>
         | undefined
       setSettings({
@@ -164,7 +154,7 @@ export const useHeroSmsConfig = ({
         ...current,
         ...patch
       }
-      void chrome.storage.local.set({
+      void writeLocalStorage({
         [REGISTER_HERO_SMS_STORAGE_KEY]: next
       })
       return next

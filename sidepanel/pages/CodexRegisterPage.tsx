@@ -35,6 +35,7 @@ import {
   submitRegisterProfile,
   type CodexRegisterStepResponse
 } from "../../background/register/steps"
+import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   buildAccountInvalidLastMessage,
   DEFAULT_REGISTER_ALARM_CONFIG,
@@ -43,11 +44,7 @@ import {
   matchesManagedAccountVisibilityFilter,
   normalizeRegisterAlarmConfig,
   normalizeRegisterRunLock,
-  REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
-  REGISTER_ALARM_STORAGE_KEY,
   REGISTER_RUN_LOCK_STALE_MS,
-  REGISTER_RUN_LOCK_STORAGE_KEY,
-  REGISTER_STORAGE_KEYS,
   type AccountVisibilityFilter,
   type ManagedAccount,
   type ManagedAccountProgress,
@@ -55,6 +52,12 @@ import {
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../../shared/account-state"
+import {
+  REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
+  REGISTER_ALARM_STORAGE_KEY,
+  REGISTER_RUN_LOCK_STORAGE_KEY,
+  REGISTER_STORAGE_KEYS
+} from "../../shared/storage-keys"
 import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,
@@ -284,7 +287,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   useEffect(() => {
-    chrome.storage.local.get(
+    getLocalStorage()?.get(
       [REGISTER_ALARM_STORAGE_KEY, REGISTER_RUN_LOCK_STORAGE_KEY],
       (result) => {
         const nextAlarmConfig = normalizeRegisterAlarmConfig(

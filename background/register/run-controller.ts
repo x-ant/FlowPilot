@@ -1,12 +1,20 @@
 import {
+  readLocalStorage,
+  removeLocalStorage,
+  writeLocalStorage
+} from "../../platform/chrome/storage"
+import {
   loadAccountPageState,
   normalizeRegisterRunLock,
   REGISTER_RUN_LOCK_STALE_MS,
-  REGISTER_RUN_LOCK_STORAGE_KEY,
-  REGISTER_STORAGE_KEYS,
   saveAccountPageState,
   type RegisterRunLock
 } from "../../shared/account-state"
+import {
+  REGISTER_HERO_SMS_STORAGE_KEY,
+  REGISTER_RUN_LOCK_STORAGE_KEY,
+  REGISTER_STORAGE_KEYS
+} from "../../shared/storage-keys"
 import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,
@@ -19,8 +27,6 @@ import {
   writeRegisterExecutionLog
 } from "./execution-log"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
-
-const REGISTER_HERO_SMS_STORAGE_KEY = "flowpilot:register:hero-sms-settings"
 
 let activeRegisterRun: {
   runId: string
@@ -50,34 +56,12 @@ export type StartRegisterBatchJobOptions = {
   onDailyAlarmFinished?: () => Promise<void>
 }
 
-const readStorage = (keys: string[]) => {
-  return new Promise<Record<string, unknown>>((resolve) => {
-    chrome.storage.local.get(keys, resolve)
-  })
-}
-
-const writeStorage = (items: Record<string, unknown>) => {
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.set(items, () => {
-      resolve()
-    })
-  })
-}
-
-const removeStorage = (keys: string[]) => {
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.remove(keys, () => {
-      resolve()
-    })
-  })
-}
-
 const createRunId = () => {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 const getRegisterRunLock = async () => {
-  const result = await readStorage([REGISTER_RUN_LOCK_STORAGE_KEY])
+  const result = await readLocalStorage([REGISTER_RUN_LOCK_STORAGE_KEY])
   return normalizeRegisterRunLock(result[REGISTER_RUN_LOCK_STORAGE_KEY])
 }
 
@@ -88,7 +72,7 @@ const isFreshRunLock = (lock: RegisterRunLock | null) => {
 }
 
 const saveRegisterRunLock = async (lock: RegisterRunLock) => {
-  await writeStorage({
+  await writeLocalStorage({
     [REGISTER_RUN_LOCK_STORAGE_KEY]: lock
   })
 }
@@ -112,7 +96,7 @@ const patchRegisterRunLock = async (
 const releaseRegisterRunLock = async (runId: string) => {
   const lock = await getRegisterRunLock()
   if (lock?.runId === runId) {
-    await removeStorage([REGISTER_RUN_LOCK_STORAGE_KEY])
+    await removeLocalStorage([REGISTER_RUN_LOCK_STORAGE_KEY])
   }
 }
 
@@ -120,7 +104,7 @@ const buildHeroSmsOptions = async (
   logPrefix: string,
   onPhoneVerificationPhase?: HeroSmsPhoneVerificationOptions["onPhoneVerificationPhase"]
 ): Promise<HeroSmsPhoneVerificationOptions> => {
-  const result = await readStorage([REGISTER_HERO_SMS_STORAGE_KEY])
+  const result = await readLocalStorage([REGISTER_HERO_SMS_STORAGE_KEY])
   const settings =
     (result[REGISTER_HERO_SMS_STORAGE_KEY] as HeroSmsSettings | undefined) || {}
   const apiKey = String(settings.apiKey || "").trim()
@@ -300,7 +284,7 @@ export const startRegisterBatchJob = async ({
       })
       await writeRegisterExecutionLog("info", result.message)
 
-      await writeStorage({
+      await writeLocalStorage({
         [REGISTER_STORAGE_KEYS.cpaUrl]: cpaUrl,
         [REGISTER_STORAGE_KEYS.cpaManagementKey]: cpaManagementKey,
         [REGISTER_STORAGE_KEYS.accounts]: latestAccounts
