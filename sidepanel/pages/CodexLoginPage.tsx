@@ -1,4 +1,4 @@
-﻿import { Button, Collapse, Dropdown, Segmented, Select, Space, Tag } from "antd"
+﻿import { Button, Dropdown, Space } from "antd"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
@@ -41,8 +41,8 @@ import {
   AccountListPanel,
   useAccountPageState
 } from "../account-management"
-import { DebugTabControl } from "../components/DebugTabControl"
 import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
+import { LoginDebugPanel } from "../login-debug"
 import type { PageProps } from "./types"
 
 const setPowerKeepAwake = async (action: "acquire" | "release") => {
@@ -118,9 +118,6 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
   const parsedDebugAuthTabId = Number.parseInt(debugAuthTabId, 10)
   const hasDebugAuthTabId =
     Number.isFinite(parsedDebugAuthTabId) && parsedDebugAuthTabId > 0
-  const getDebugStepButtonType = (step: DebugStep) => {
-    return step <= debugProgress ? "primary" : "default"
-  }
 
   useEffect(() => {
     onBusyChange?.(isBatchRunning || isDebugRunning)
@@ -172,6 +169,15 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugCallbackUrl("")
     setDebugOAuthBinding(null)
     setStatus("调试状态已清空")
+  }
+
+  const handleDebugAccountChange = (accountId: string) => {
+    setDebugEmail(accountId)
+    setDebugProgress(0)
+    setDebugRunningStep(0)
+    setDebugVerificationRequestedAt(0)
+    setDebugCallbackUrl("")
+    setDebugOAuthBinding(null)
   }
 
   const handleRunDebugStep = async (step: DebugStep) => {
@@ -589,155 +595,33 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         preserveDraftEmail
       />
 
-      <Collapse
-        className="panel-card"
-        items={[
-          {
-            key: "debug",
-            label: "调试控制台",
-            extra: (
-              <Tag color="default">{`当前进度 ${debugProgress}/${STEP_COUNT}`}</Tag>
-            ),
-            children: (
-              <div className="debug-panel">
-                <div className="debug-field debug-field--inline">
-                  <span className="debug-label">账号范围</span>
-                  <Segmented<AccountVisibilityFilter>
-                    size="small"
-                    value={debugAccountFilter}
-                    options={[
-                      { label: "未完成", value: "pending" },
-                      { label: "已完成", value: "done" },
-                      { label: "失效", value: "invalid" },
-                      { label: "全部", value: "all" }
-                    ]}
-                    onChange={setDebugAccountFilter}
-                    disabled={disabled}
-                  />
-                </div>
-                <DebugTabControl
-                  disabled={disabled}
-                  label="Auth tab"
-                  leadingContent={
-                    <div className="debug-field">
-                      <span className="debug-label">账号</span>
-                      <Select
-                        value={debugEmail || undefined}
-                        placeholder="选择账号"
-                        options={filteredDebugAccounts.map((account) => {
-                          return {
-                            label: getManagedAccountDisplayLabel(account),
-                            value: getManagedAccountKey(account)
-                          }
-                        })}
-                        onChange={(value) => {
-                          setDebugEmail(value)
-                          setDebugProgress(0)
-                          setDebugRunningStep(0)
-                          setDebugVerificationRequestedAt(0)
-                          setDebugCallbackUrl("")
-                          setDebugOAuthBinding(null)
-                        }}
-                        disabled={
-                          disabled || filteredDebugAccounts.length === 0
-                        }
-                      />
-                    </div>
-                  }
-                  value={debugAuthTabId}
-                  onChange={setDebugAuthTabId}
-                  onUseActiveTab={handleUseActiveTabAsDebugAuthTab}
-                  onClear={handleClearDebugState}
-                />
-
-                <Space size={8} wrap>
-                  <Button
-                    type="primary"
-                    onClick={handleRunNextDebugStep}
-                    loading={isDebugRunning}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasOAuthConfig
-                    }>
-                    下一步
-                  </Button>
-                </Space>
-
-                <Space size={8} wrap>
-                  <Button
-                    type={getDebugStepButtonType(1)}
-                    onClick={() => {
-                      void handleRunDebugStep(1)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 1}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasOAuthConfig
-                    }>
-                    {getFlowStepLabel(1)}
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(2)}
-                    onClick={() => {
-                      void handleRunDebugStep(2)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 2}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
-                    }>
-                    {getFlowStepLabel(2)}
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(3)}
-                    onClick={() => {
-                      void handleRunDebugStep(3)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 3}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
-                    }>
-                    {getFlowStepLabel(3)}
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(4)}
-                    onClick={() => {
-                      void handleRunDebugStep(4)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 4}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
-                    }>
-                    {getFlowStepLabel(4)}
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(5)}
-                    onClick={() => {
-                      void handleRunDebugStep(5)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 5}
-                    disabled={
-                      disabled || !selectedDebugAccount || !hasDebugAuthTabId
-                    }>
-                    {getFlowStepLabel(5)}
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(6)}
-                    onClick={() => {
-                      void handleRunDebugStep(6)
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 6}
-                    disabled={
-                      disabled ||
-                      !selectedDebugAccount ||
-                      !hasDebugAuthTabId ||
-                      !debugCallbackUrl ||
-                      !hasOAuthConfig
-                    }>
-                    {getFlowStepLabel(6)}
-                  </Button>
-                </Space>
-              </div>
-            )
+      <LoginDebugPanel
+        disabled={disabled}
+        accountFilter={debugAccountFilter}
+        onAccountFilterChange={setDebugAccountFilter}
+        accountOptions={filteredDebugAccounts.map((account) => {
+          return {
+            label: getManagedAccountDisplayLabel(account),
+            value: getManagedAccountKey(account)
           }
-        ]}
+        })}
+        selectedAccountId={debugEmail}
+        onSelectedAccountChange={handleDebugAccountChange}
+        tabId={debugAuthTabId}
+        onTabIdChange={setDebugAuthTabId}
+        onUseActiveTab={handleUseActiveTabAsDebugAuthTab}
+        onClear={handleClearDebugState}
+        progress={debugProgress}
+        isRunning={isDebugRunning}
+        runningStep={debugRunningStep}
+        hasSelectedAccount={Boolean(selectedDebugAccount)}
+        hasOAuthConfig={hasOAuthConfig}
+        hasAuthTab={hasDebugAuthTabId}
+        hasCallbackUrl={Boolean(debugCallbackUrl)}
+        onRunNextStep={handleRunNextDebugStep}
+        onRunStep={(step) => {
+          void handleRunDebugStep(step)
+        }}
       />
     </>
   )
