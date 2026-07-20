@@ -10,6 +10,11 @@ export {
   type RegisterBatchValidationResult
 } from "./register-batch-validation"
 export {
+  markSelectedRegisterStage,
+  type RegisterStage,
+  type RegisterStageMarkingResult
+} from "./register-stage-marking"
+export {
   resolveRegisterTaskRuntimeState,
   useRegisterTaskControl,
   type RegisterRunStatus

@@ -46,6 +46,7 @@ import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
 import { RegisterDebugPanel, type RegisterDebugStep } from "../register-debug"
 import {
+  markSelectedRegisterStage,
   RegisterAutomationPanel,
   RegisterOrphanRunLockAlert,
   RegisterStopStrategyModal,
@@ -921,44 +922,22 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleMarkSelectedRegisterStage = (stage: "start" | "phone") => {
-    if (selectedEmails.length === 0) {
-      setStatus("请先选择要标记阶段的账号")
-      log.warn("请先选择要标记阶段的账号")
-      return
-    }
-
-    const selectedSet = new Set(selectedEmails)
-    const nextProgress = stage === "phone" ? 4 : 0
-    const nextMessage =
-      stage === "phone"
-        ? "已手动标记为从手机号验证开始（下一步从 Step 5 刷新 OAuth 开始）"
-        : "已手动标记为从头开始"
-    let changedCount = 0
-    const now = Date.now()
-    const nextAccounts = accounts.map((account) => {
-      if (!selectedSet.has(getManagedAccountKey(account))) {
-        return account
-      }
-
-      changedCount += 1
-      return {
-        ...account,
-        progress: nextProgress as ManagedAccountProgress,
-        status: "idle" as const,
-        lastMessage: nextMessage,
-        updatedAt: now
-      }
+    const result = markSelectedRegisterStage({
+      accounts,
+      selectedAccountIds: selectedEmails,
+      stage,
+      updatedAt: Date.now()
     })
 
-    if (changedCount === 0) {
-      setStatus("未找到选中的账号")
-      log.warn("未找到选中的账号，无法标记阶段")
+    if (!result.ok) {
+      setStatus(result.statusMessage)
+      log.warn(result.logMessage)
       return
     }
 
-    syncAccounts(nextAccounts, cpaUrl, cpaManagementKey)
-    setStatus(`已标记 ${changedCount} 个账号阶段`)
-    log.info(`已标记 ${changedCount} 个账号：${nextMessage}`)
+    syncAccounts(result.accounts, cpaUrl, cpaManagementKey)
+    setStatus(result.statusMessage)
+    log.info(result.logMessage)
   }
 
   const disabled = isBatchRunning || isDebugRunning
