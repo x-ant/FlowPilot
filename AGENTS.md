@@ -143,6 +143,7 @@ AI 在动代码前先快速过一遍：
 - `background/login/batch-runner.ts`：登录账号筛选、六步串联、批量循环和账号状态回调。
 - `background/login/steps.ts`：登录流程的后台步骤。
 - `background/register/steps.ts`：注册流程的后台步骤。
+- `background/register/register-profile-page.ts`：注入 OpenAI 注册资料页的姓名和年龄/生日填写脚本。
 - `background/register/batch-runner.ts`：注册批量执行器，供侧边栏手动执行和后台自动任务复用。
 - `background/register/alarm.ts`：注册自动触发、任务锁、停止策略和后台消息处理。
 - `background/register/phone-verification.ts`：HeroSMS 买号、价格校验、验证码轮询和订单状态处理。
@@ -246,9 +247,10 @@ npm run build
 18. `sidepanel/register-task/RegisterTaskStatus.tsx`：理解残留锁提示和停止策略选择。
 19. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
 20. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
-21. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
-22. `background/register/phone-verification-page.ts`：理解手机号如何填写到 OpenAI 验证页面。
-23. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
+21. `background/register/register-profile-page.ts`：理解姓名和年龄/生日如何填写到注册资料页。
+22. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
+23. `background/register/phone-verification-page.ts`：理解手机号如何填写到 OpenAI 验证页面。
+24. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
 
 ## 协作者背景
 
