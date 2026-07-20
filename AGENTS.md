@@ -123,6 +123,7 @@ AI 在动代码前先快速过一遍：
 - `platform/chrome/storage.ts`：统一的 Chrome 本地存储 get/read/write/remove 适配层。
 - `platform/chrome/runtime-messaging.ts`：统一的类型安全 runtime 消息发送和响应适配层。
 - `sidepanel/account-management/`：登录页和注册页复用的账号列表、账号表单、账号状态 hook。
+- `sidepanel/account-management/account-status-marking.ts`：账号批量标记完成或失效时的纯状态变换规则。
 - `sidepanel/register-task/useRegisterTaskControl.ts`：注册自动触发配置、后台任务锁和启动/停止消息的侧边栏 Hook。
 - `sidepanel/register-task/register-batch-validation.ts`：手动批量注册启动前的有序校验和可执行账号计数。
 - `sidepanel/register-task/register-stage-marking.ts`：批量标记注册起始阶段的纯状态变换和结果提示。
@@ -228,19 +229,20 @@ npm run build
 4. `shared/flow-contracts.ts`：理解登录、注册步骤之间传递的响应数据。
 5. `shared/account-state.ts`：理解账号状态、进度模型、自动触发配置和运行设置。
 6. `sidepanel/account-management/useAccountPageState.ts`：理解账号增删改查和本地保存。
-7. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
-8. `background/login/steps.ts`：理解登录流程每一步做什么。
-9. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置和执行前校验。
-10. `sidepanel/register-debug/RegisterDebugPanel.tsx`：理解注册调试状态和七步按钮如何展示。
-11. `sidepanel/register-task/register-batch-validation.ts`：理解手动批量注册为什么允许或拒绝启动。
-12. `sidepanel/register-task/register-stage-marking.ts`：理解手动切换注册起始阶段时账号状态如何变化。
-13. `sidepanel/register-task/useRegisterTaskControl.ts`：理解自动触发配置和后台任务状态如何同步到页面。
-14. `sidepanel/register-task/RegisterAutomationPanel.tsx`：理解自动触发表单字段和页面事件。
-15. `sidepanel/register-task/RegisterTaskStatus.tsx`：理解残留锁提示和停止策略选择。
-16. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
-17. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
-18. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
-19. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
+7. `sidepanel/account-management/account-status-marking.ts`：理解批量标记完成或失效时账号状态如何变化。
+8. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
+9. `background/login/steps.ts`：理解登录流程每一步做什么。
+10. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置和执行前校验。
+11. `sidepanel/register-debug/RegisterDebugPanel.tsx`：理解注册调试状态和七步按钮如何展示。
+12. `sidepanel/register-task/register-batch-validation.ts`：理解手动批量注册为什么允许或拒绝启动。
+13. `sidepanel/register-task/register-stage-marking.ts`：理解手动切换注册起始阶段时账号状态如何变化。
+14. `sidepanel/register-task/useRegisterTaskControl.ts`：理解自动触发配置和后台任务状态如何同步到页面。
+15. `sidepanel/register-task/RegisterAutomationPanel.tsx`：理解自动触发表单字段和页面事件。
+16. `sidepanel/register-task/RegisterTaskStatus.tsx`：理解残留锁提示和停止策略选择。
+17. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
+18. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
+19. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
+20. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
 
 ## 协作者背景
 

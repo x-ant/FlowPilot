@@ -17,10 +17,10 @@ import {
   upsertManagedAccount,
   type AccountFormValues,
   type AccountPageStorageKeys,
-  type ManagedAccount,
-  type ManagedAccountProgress
+  type ManagedAccount
 } from "../../shared/account-state"
 import type { UiLogger } from "../../shared/logging"
+import { markSelectedAccountStatus } from "./account-status-marking"
 
 type UseAccountPageStateOptions = {
   storageKeys: AccountPageStorageKeys
@@ -431,87 +431,45 @@ export const useAccountPageState = ({
     syncAccounts(nextAccounts)
   }
 
+  const handleMarkSelectedAccounts = (target: "done" | "invalid") => {
+    if (selectedEmails.length === 0) {
+      setStatus("请先选择要标记的账号")
+      log.warn("请先选择要标记的账号")
+      return
+    }
+
+    const result = markSelectedAccountStatus({
+      accounts,
+      selectedAccountIds: selectedEmails,
+      target,
+      stepCount,
+      updatedAt: Date.now()
+    })
+
+    if (result.changedCount === 0) {
+      setStatus("未找到选中的账号")
+      log.warn("未找到选中的账号，无法标记")
+      return
+    }
+
+    const targetLabel = target === "done" ? "已完成" : "失效"
+    syncAccounts(result.accounts)
+    setStatus(`已标记 ${result.changedCount} 个账号为${targetLabel}`)
+    log.info(`已标记 ${result.changedCount} 个账号为${targetLabel}`)
+  }
+
   /**
    * 把选中的账号手动标记为已完成。
    */
   const handleMarkSelectedAccountsDone = () => {
-    if (selectedEmails.length === 0) {
-      setStatus("请先选择要标记的账号")
-      log.warn("请先选择要标记的账号")
-      return
-    }
-
-    const selectedSet = new Set(selectedEmails)
-    let changedCount = 0
-    const now = Date.now()
-    const doneProgress = Math.min(
-      Math.max(0, stepCount),
-      STEP_COUNT + 1
-    ) as ManagedAccountProgress
-    const nextAccounts: ManagedAccount[] = accounts.map((account) => {
-      if (!selectedSet.has(getManagedAccountKey(account))) {
-        return account
-      }
-
-      changedCount += 1
-      return {
-        ...account,
-        progress: doneProgress,
-        status: "done" as const,
-        lastMessage: "已手动标为已完成",
-        updatedAt: now
-      }
-    })
-
-    if (changedCount === 0) {
-      setStatus("未找到选中的账号")
-      log.warn("未找到选中的账号，无法标记")
-      return
-    }
-
-    syncAccounts(nextAccounts)
-    setStatus(`已标记 ${changedCount} 个账号为已完成`)
-    log.info(`已标记 ${changedCount} 个账号为已完成`)
+    handleMarkSelectedAccounts("done")
   }
 
   /**
-   * 把选中的账号手动标记为失效。
-   *
-   * 这里只改账号状态，不改当前步骤进度，便于之后申诉成功后手动重试。
+   * 把选中的账号手动标记为失效，并保留当前步骤进度。
    */
   const handleMarkSelectedAccountsInvalid = () => {
-    if (selectedEmails.length === 0) {
-      setStatus("请先选择要标记的账号")
-      log.warn("请先选择要标记的账号")
-      return
-    }
-
-    const selectedSet = new Set(selectedEmails)
-    let changedCount = 0
-    const now = Date.now()
-    const nextAccounts: ManagedAccount[] = accounts.map((account) => {
-      if (!selectedSet.has(getManagedAccountKey(account))) {
-        return account
-      }
-
-      changedCount += 1
-      return {
-        ...account,
-        status: "invalid" as const,
-        lastMessage: "已手动标为失效",
-        updatedAt: now
-      }
-    })
-
-    if (changedCount === 0) {
-      setStatus("未找到选中的账号")
-      log.warn("未找到选中的账号，无法标记")
-      return
-    }
-
-    syncAccounts(nextAccounts)
-    setStatus(`已标记 ${changedCount} 个账号为失效`)
-    log.info(`已标记 ${changedCount} 个账号为失效`)
+    handleMarkSelectedAccounts("invalid")
   }
 
   /**
