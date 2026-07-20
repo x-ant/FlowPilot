@@ -31,33 +31,19 @@ import {
   submitRegisterOAuthCallback,
   submitRegisterProfile
 } from "../../background/register/steps"
-import { sendRuntimeMessage } from "../../platform/chrome/runtime-messaging"
-import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   buildAccountInvalidLastMessage,
-  DEFAULT_REGISTER_ALARM_CONFIG,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
   matchesManagedAccountVisibilityFilter,
-  normalizeRegisterAlarmConfig,
-  normalizeRegisterRunLock,
-  REGISTER_RUN_LOCK_STALE_MS,
   type AccountVisibilityFilter,
   type ManagedAccount,
   type ManagedAccountProgress,
-  type ManagedAccountStatus,
-  type RegisterAlarmConfig,
-  type RegisterRunLock
+  type ManagedAccountStatus
 } from "../../shared/account-state"
 import type { CodexRegisterStepResponse } from "../../shared/flow-contracts"
 import {
-  RUNTIME_MESSAGE_TYPES,
-  type RegisterStopStrategy
-} from "../../shared/runtime-messages"
-import {
   REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
-  REGISTER_ALARM_STORAGE_KEY,
-  REGISTER_RUN_LOCK_STORAGE_KEY,
   REGISTER_STORAGE_KEYS
 } from "../../shared/storage-keys"
 import {
@@ -73,6 +59,7 @@ import {
 import { DebugTabControl } from "../components/DebugTabControl"
 import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
+import { useRegisterTaskControl } from "../register-task"
 import type { PageProps } from "./types"
 
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
@@ -113,12 +100,6 @@ type RegisterDebugStepOptions = {
   exceptionStatus: string
   exceptionMessage: string
   beforeRun?: () => void
-}
-
-type RegisterRunStatus = {
-  lock: RegisterRunLock | null
-  activeInMemory: boolean
-  stale: boolean
 }
 
 const closeTabQuietly = async (tabId?: number) => {
@@ -179,20 +160,24 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     useState<OAuthBinding | null>(null)
   const [debugCallbackUrl, setDebugCallbackUrl] = useState("")
   const heroSms = useHeroSmsConfig({ log, setStatus })
-  const [alarmConfig, setAlarmConfig] = useState<RegisterAlarmConfig>(
-    DEFAULT_REGISTER_ALARM_CONFIG
-  )
-  const [appliedAlarmConfig, setAppliedAlarmConfig] =
-    useState<RegisterAlarmConfig>(DEFAULT_REGISTER_ALARM_CONFIG)
-  const [registerRunLock, setRegisterRunLock] =
-    useState<RegisterRunLock | null>(null)
-  const [registerRunStatus, setRegisterRunStatus] =
-    useState<RegisterRunStatus | null>(null)
-  const [isClearingRunLock, setIsClearingRunLock] = useState(false)
-  const [isAlarmSaving, setIsAlarmSaving] = useState(false)
-  const [isAlarmTesting, setIsAlarmTesting] = useState(false)
-  const [isBatchStopping, setIsBatchStopping] = useState(false)
-  const [isStopStrategyModalOpen, setIsStopStrategyModalOpen] = useState(false)
+  const registerTask = useRegisterTaskControl({
+    log,
+    setStatus,
+    setRunningEmail
+  })
+  const {
+    alarmConfig,
+    setAlarmConfig,
+    appliedAlarmConfig,
+    registerRunLock,
+    isBatchRunning,
+    hasOrphanRegisterRunLock,
+    isClearingRunLock,
+    isAlarmSaving,
+    isAlarmTesting,
+    isBatchStopping,
+    isStopStrategyModalOpen
+  } = registerTask
 
   const filteredDebugAccounts = useMemo(() => {
     return accounts.filter((account) => {
@@ -211,24 +196,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }) || null
     )
   }, [debugEmail, filteredDebugAccounts])
-  const isRegisterRunLockFresh = Boolean(
-    registerRunLock &&
-      Date.now() - registerRunLock.startedAt < REGISTER_RUN_LOCK_STALE_MS
-  )
-  const isRegisterRunStatusMatched = Boolean(
-    registerRunStatus &&
-      registerRunLock &&
-      registerRunStatus.lock?.runId === registerRunLock.runId
-  )
-  const isBatchRunning = isRegisterRunStatusMatched
-    ? Boolean(registerRunStatus?.activeInMemory)
-    : isRegisterRunLockFresh
-  const hasOrphanRegisterRunLock = Boolean(
-    registerRunLock &&
-      registerRunStatus &&
-      isRegisterRunStatusMatched &&
-      !registerRunStatus.activeInMemory
-  )
   const getDebugStepButtonType = (step: number) => {
     return step <= debugProgress ? "primary" : "default"
   }
@@ -255,83 +222,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       onBusyChange?.(false)
     }
   }, [isBatchRunning, isDebugRunning, onBusyChange])
-
-  const refreshRegisterRunStatus = async () => {
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerRunStatus
-      })
-      setRegisterRunStatus({
-        lock: response.lock,
-        activeInMemory: Boolean(response.activeInMemory),
-        stale: Boolean(response.stale)
-      })
-      setRegisterRunLock(response.lock)
-    } catch (error) {
-      log.warn(error instanceof Error ? error.message : "读取注册任务状态失败")
-    }
-  }
-
-  useEffect(() => {
-    getLocalStorage()?.get(
-      [REGISTER_ALARM_STORAGE_KEY, REGISTER_RUN_LOCK_STORAGE_KEY],
-      (result) => {
-        const nextAlarmConfig = normalizeRegisterAlarmConfig(
-          result[REGISTER_ALARM_STORAGE_KEY]
-        )
-        setAlarmConfig(nextAlarmConfig)
-        setAppliedAlarmConfig(nextAlarmConfig)
-        setRegisterRunLock(
-          normalizeRegisterRunLock(result[REGISTER_RUN_LOCK_STORAGE_KEY])
-        )
-        void refreshRegisterRunStatus()
-      }
-    )
-  }, [])
-
-  useEffect(() => {
-    const handleStorageChanged = (
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string
-    ) => {
-      if (areaName !== "local") {
-        return
-      }
-
-      if (changes[REGISTER_ALARM_STORAGE_KEY]) {
-        const nextAlarmConfig = normalizeRegisterAlarmConfig(
-          changes[REGISTER_ALARM_STORAGE_KEY].newValue
-        )
-        setAlarmConfig(nextAlarmConfig)
-        setAppliedAlarmConfig(nextAlarmConfig)
-      }
-
-      if (changes[REGISTER_RUN_LOCK_STORAGE_KEY]) {
-        setRegisterRunLock(
-          normalizeRegisterRunLock(
-            changes[REGISTER_RUN_LOCK_STORAGE_KEY].newValue
-          )
-        )
-        void refreshRegisterRunStatus()
-      }
-    }
-
-    chrome.storage.onChanged.addListener(handleStorageChanged)
-    return () => {
-      chrome.storage.onChanged.removeListener(handleStorageChanged)
-    }
-  }, [])
-
-  useEffect(() => {
-    setRunningEmail(isBatchRunning ? registerRunLock?.currentEmail || "" : "")
-  }, [isBatchRunning, registerRunLock?.currentEmail, setRunningEmail])
-
-  useEffect(() => {
-    if (!isBatchRunning) {
-      setIsBatchStopping(false)
-      setIsStopStrategyModalOpen(false)
-    }
-  }, [isBatchRunning])
 
   const handleOpenRegisterEntry = async () => {
     if (isBatchRunning || isDebugRunning) {
@@ -967,84 +857,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
-  const handleSaveAlarmConfig = async () => {
-    const nextConfig = normalizeRegisterAlarmConfig({
-      ...alarmConfig,
-      selectedEmails: []
-    })
-
-    setIsAlarmSaving(true)
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerAlarmSave,
-        config: nextConfig
-      })
-      const savedConfig = normalizeRegisterAlarmConfig(
-        response.config || nextConfig
-      )
-      setAlarmConfig(savedConfig)
-      setAppliedAlarmConfig(savedConfig)
-      setStatus(response.message)
-      log.info(
-        `${response.message}；模式 ${
-          savedConfig.mode === "interval"
-            ? `${savedConfig.intervalMinutes} 分钟间隔`
-            : `每天 ${savedConfig.dailyTime}`
-        }；账号间隔 ${savedConfig.accountIntervalMinSeconds}~${savedConfig.accountIntervalMaxSeconds} 秒`
-      )
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "保存自动触发配置失败"
-      setStatus("保存自动触发配置失败")
-      log.warn(message)
-    } finally {
-      setIsAlarmSaving(false)
-    }
-  }
-
-  const handleTestAlarmRun = async () => {
-    setIsAlarmTesting(true)
-    setStatus("正在触发单次注册")
-    log.info("[注册流程] 正在触发单次注册")
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerAlarmRunNow
-      })
-      if (!response?.ok) {
-        throw new Error(response?.message || "单次注册触发失败")
-      }
-
-      setStatus(response.message)
-      log.info(response.message)
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "触发单次注册失败"
-      setStatus("触发单次注册失败")
-      log.warn(message)
-    } finally {
-      setIsAlarmTesting(false)
-    }
-  }
-
-  const handleClearRegisterRunLock = async () => {
-    setIsClearingRunLock(true)
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerClearRunLock
-      })
-      setStatus(response.message)
-      log[response.ok ? "info" : "warn"](response.message)
-      await refreshRegisterRunStatus()
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "清除注册任务锁失败"
-      setStatus("清除注册任务锁失败")
-      log.warn(message)
-    } finally {
-      setIsClearingRunLock(false)
-    }
-  }
-
   /**
    * 注册页账号管理里手动生成 Duck 邮箱。
    *
@@ -1124,72 +936,10 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    setIsBatchStopping(false)
-    setIsStopStrategyModalOpen(false)
-
-    const batchLabel = "选中账号"
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerBatchStart,
-        selectedEmails
-      })
-      setStatus(response.message)
-      log[response.ok ? "info" : "warn"](
-        `${response.message}；计划执行 ${runnableCount} 个${batchLabel}`
-      )
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "提交注册任务到后台失败"
-      setStatus("提交注册任务到后台失败")
-      log.warn(message)
-    }
-  }
-
-  const requestStopBatch = async (
-    strategy: Exclude<RegisterStopStrategy, "none">
-  ) => {
-    if (isBatchStopping) {
-      return
-    }
-
-    setIsBatchStopping(true)
-    try {
-      const response = await sendRuntimeMessage({
-        type: RUNTIME_MESSAGE_TYPES.registerBatchStop,
-        strategy
-      })
-      setStatus(response.message)
-      log.warn(response.message)
-      if (!response.ok) {
-        setIsBatchStopping(false)
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "发送停止请求失败"
-      setStatus("发送停止请求失败")
-      log.warn(message)
-      setIsBatchStopping(false)
-    }
-  }
-
-  const handleStopBatch = () => {
-    if (isBatchStopping) {
-      return
-    }
-
-    if (registerRunLock?.phonePhase === "phone_submitted") {
-      setIsStopStrategyModalOpen(true)
-      return
-    }
-
-    void requestStopBatch("immediate")
-  }
-
-  const handleChooseStopStrategy = (
-    strategy: Exclude<RegisterStopStrategy, "none">
-  ) => {
-    setIsStopStrategyModalOpen(false)
-    void requestStopBatch(strategy)
+    await registerTask.startBatch({
+      selectedEmails,
+      runnableCount
+    })
   }
 
   const handleMarkSelectedRegisterStage = (stage: "start" | "phone") => {
@@ -1262,7 +1012,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             disabled={isBatchStopping}
             loading={isBatchStopping}
             onClick={() => {
-              handleChooseStopStrategy("immediate")
+              registerTask.chooseStopStrategy("immediate")
             }}>
             直接停止
           </Button>,
@@ -1271,7 +1021,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
             type="primary"
             disabled={isBatchStopping}
             onClick={() => {
-              handleChooseStopStrategy("finish_current_if_phone_success")
+              registerTask.chooseStopStrategy("finish_current_if_phone_success")
             }}>
             成功则完成回填
           </Button>
@@ -1321,7 +1071,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               danger
               disabled={isBatchStopping}
               loading={isBatchStopping}
-              onClick={handleStopBatch}>
+              onClick={registerTask.stopBatch}>
               {isBatchStopping ? "正在停止" : "停止当前流程"}
             </Button>
           ) : (
@@ -1354,7 +1104,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
               size="small"
               loading={isClearingRunLock}
               onClick={() => {
-                void handleClearRegisterRunLock()
+                void registerTask.clearRunLock()
               }}>
               清除残留锁
             </Button>
@@ -1509,7 +1259,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                       loading={isAlarmSaving}
                       disabled={disabled || isAlarmSaving}
                       onClick={() => {
-                        void handleSaveAlarmConfig()
+                        void registerTask.saveAlarmConfig()
                       }}>
                       应用定时设置
                     </Button>
@@ -1519,7 +1269,7 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
                         disabled || isAlarmTesting || hasOrphanRegisterRunLock
                       }
                       onClick={() => {
-                        void handleTestAlarmRun()
+                        void registerTask.runAlarmNow()
                       }}>
                       单次触发
                     </Button>

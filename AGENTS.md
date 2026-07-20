@@ -123,6 +123,7 @@ AI 在动代码前先快速过一遍：
 - `platform/chrome/storage.ts`：统一的 Chrome 本地存储 get/read/write/remove 适配层。
 - `platform/chrome/runtime-messaging.ts`：统一的类型安全 runtime 消息发送和响应适配层。
 - `sidepanel/account-management/`：登录页和注册页复用的账号列表、账号表单、账号状态 hook。
+- `sidepanel/register-task/useRegisterTaskControl.ts`：注册自动触发配置、后台任务锁和启动/停止消息的侧边栏 Hook。
 - `sidepanel/components/DebugTabControl.tsx`：调试区域里复用的 tab 控制组件。
 - `sidepanel/pages/CodexLoginPage.tsx`：登录页 UI、批量登录和登录调试步骤。
 - `sidepanel/pages/CodexRegisterPage.tsx`：注册页 UI、注册调试步骤、自动触发配置入口和停止策略入口。
@@ -223,11 +224,12 @@ npm run build
 6. `sidepanel/account-management/useAccountPageState.ts`：理解账号增删改查和本地保存。
 7. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
 8. `background/login/steps.ts`：理解登录流程每一步做什么。
-9. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置、自动触发和停止策略。
-10. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
-11. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
-12. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
-13. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
+9. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置和执行前校验。
+10. `sidepanel/register-task/useRegisterTaskControl.ts`：理解自动触发配置和后台任务状态如何同步到页面。
+11. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
+12. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
+13. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
+14. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
 
 ## 协作者背景
 

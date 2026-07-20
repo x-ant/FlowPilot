@@ -38,7 +38,7 @@ npm run build
 ## 主要入口
 
 - `sidepanel.tsx`：Chrome 侧边栏主界面。
-- `sidepanel/`：侧边栏页面、配置表单和账号管理组件。
+- `sidepanel/`：侧边栏页面、配置表单、账号管理和注册任务控制 Hook。
 - `background/`：登录、注册、验证码读取、手机号验证和后台任务逻辑。
 - `platform/chrome/`：Chrome API 适配层，包含统一的本地存储和 runtime 消息访问方法。
 - `shared/`：账号状态、流程响应契约、Storage Key、runtime 消息契约和日志。
