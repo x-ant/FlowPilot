@@ -1,4 +1,5 @@
 ﻿import type { ManagedAccount } from "../../shared/account-state"
+import type { CodexRegisterStepResponse } from "../../shared/flow-contracts"
 import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
 import {
   createMailVerificationRunner,
@@ -104,22 +105,6 @@ const isRegisterOAuthLoginFlowUrl = (rawUrl?: string) => {
     "oauth_consent",
     "oauth_callback"
   ].includes(state)
-}
-
-export type CodexRegisterStepResponse = {
-  ok: boolean
-  message: string
-  needRefreshOAuth?: boolean
-  needsManualReview?: boolean
-  accountInvalid?: boolean
-  verificationRequestedAt?: number
-  oauthStartedAt?: number
-  oauthBinding?: OAuthBinding
-  callbackUrl?: string
-  targetTab?: {
-    id?: number
-    url?: string
-  }
 }
 
 type RegisterPhoneVerificationSubmitState = {

@@ -1,8 +1,8 @@
-﻿import {
+﻿import type { BrowserTabInfo } from "../../shared/flow-contracts"
+import {
   performPageActionInPage,
   type PageActionConfig
 } from "../page-scripts/page-script"
-import type { BrowserTabInfo } from "../types"
 import {
   findOrOpenTab,
   waitForTabLoaded,

@@ -1,4 +1,4 @@
-import type { PageActionResult } from "../types"
+import type { PageActionResult } from "../../shared/flow-contracts"
 
 export type ExtractCodexOAuthUrlResult = {
   ok: boolean

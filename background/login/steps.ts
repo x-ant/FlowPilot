@@ -1,4 +1,11 @@
 ﻿import type { ManagedAccount } from "../../shared/account-state"
+import type {
+  CodexAuthProgressStepResponse,
+  ConfirmCodexOAuthConsentResponse,
+  FetchAndSubmitCodexVerificationCodeResponse,
+  OpenCodexAuthLinkApiResponse,
+  SubmitCodexOAuthCallbackResponse
+} from "../../shared/flow-contracts"
 import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
 import {
   createMailVerificationRunner,
@@ -12,13 +19,6 @@ import {
   detectCodexAuthPageStateInPage,
   type DetectCodexAuthPageState
 } from "../page-scripts/page-script"
-import type {
-  CodexAuthProgressStepResponse,
-  ConfirmCodexOAuthConsentResponse,
-  FetchAndSubmitCodexVerificationCodeResponse,
-  OpenCodexAuthLinkApiResponse,
-  SubmitCodexOAuthCallbackResponse
-} from "../types"
 import { abortableSleep, raceWithAbort, throwIfAborted } from "../utils/abort"
 import {
   clearOpenTabSiteStorageForUrls,

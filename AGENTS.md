@@ -116,6 +116,7 @@ AI 在动代码前先快速过一遍：
 - `sidepanel.tsx`：侧边栏总入口，负责页面切换、顶部状态、运行设置和执行日志。
 - `sidepanel.css`：侧边栏全局样式。
 - `shared/account-state.ts`：账号类型、状态规范化、进度工具、自动触发配置和运行设置。
+- `shared/flow-contracts.ts`：登录、注册和页面动作跨模块复用的响应类型契约。
 - `shared/storage-keys.ts`：`chrome.storage.local` key 的唯一声明位置；修改 key 前必须确认迁移策略。
 - `shared/runtime-messages.ts`：侧边栏与 background 的 runtime 消息名称、请求和响应类型契约。
 - `shared/logging.ts`：UI 日志和 console 日志工具。
@@ -130,7 +131,6 @@ AI 在动代码前先快速过一遍：
 - `background.ts`：后台 service worker 模块启动入口。
 - `background/app/side-panel.ts`：扩展图标点击时打开侧边栏。
 - `background/app/power.ts`：执行期间保持唤醒相关逻辑。
-- `background/types.ts`：后台步骤响应和页面动作结果类型。
 - `background/login/steps.ts`：登录流程的后台步骤。
 - `background/register/steps.ts`：注册流程的后台步骤。
 - `background/register/batch-runner.ts`：注册批量执行器，供侧边栏手动执行和后台自动任务复用。
@@ -218,15 +218,16 @@ npm run build
 1. `sidepanel.tsx`：理解侧边栏如何组织页面、运行设置和日志。
 2. `shared/storage-keys.ts`：理解所有本地存储 key 和兼容边界。
 3. `shared/runtime-messages.ts`：理解侧边栏与 background 之间的消息协议。
-4. `shared/account-state.ts`：理解账号状态、进度模型、自动触发配置和运行设置。
-5. `sidepanel/account-management/useAccountPageState.ts`：理解账号增删改查和本地保存。
-6. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
-7. `background/login/steps.ts`：理解登录流程每一步做什么。
-8. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置、自动触发和停止策略。
-9. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
-10. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
-11. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
-12. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
+4. `shared/flow-contracts.ts`：理解登录、注册步骤之间传递的响应数据。
+5. `shared/account-state.ts`：理解账号状态、进度模型、自动触发配置和运行设置。
+6. `sidepanel/account-management/useAccountPageState.ts`：理解账号增删改查和本地保存。
+7. `sidepanel/pages/CodexLoginPage.tsx`：理解登录页面如何发起批量流程。
+8. `background/login/steps.ts`：理解登录流程每一步做什么。
+9. `sidepanel/pages/CodexRegisterPage.tsx`：理解注册页面、HeroSMS 配置、自动触发和停止策略。
+10. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
+11. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
+12. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
+13. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
 
 ## 协作者背景
 

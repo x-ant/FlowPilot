@@ -2,7 +2,7 @@ import {
   getManagedAccountLabel,
   type ManagedAccount
 } from "../../shared/account-state"
-import type { BrowserTabInfo } from "../types"
+import type { BrowserTabInfo } from "../../shared/flow-contracts"
 import type { RunContext } from "../utils/run-context"
 import { createMail163Runner } from "./mail-163"
 import { createMail2925Runner } from "./mail-2925"

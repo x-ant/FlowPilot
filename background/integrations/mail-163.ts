@@ -1,4 +1,4 @@
-import type { BrowserTabInfo } from "../types"
+import type { BrowserTabInfo } from "../../shared/flow-contracts"
 import { raceWithAbort, throwIfAborted } from "../utils/abort"
 import type { RunContext } from "../utils/run-context"
 import { findOrOpenMatchedTab, waitForTabLoaded } from "../utils/tab-utils"

@@ -29,8 +29,7 @@ import {
   prepareRegisterAccountEmail,
   refreshRegisterOAuthAndLogin,
   submitRegisterOAuthCallback,
-  submitRegisterProfile,
-  type CodexRegisterStepResponse
+  submitRegisterProfile
 } from "../../background/register/steps"
 import { sendRuntimeMessage } from "../../platform/chrome/runtime-messaging"
 import { getLocalStorage } from "../../platform/chrome/storage"
@@ -50,6 +49,7 @@ import {
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../../shared/account-state"
+import type { CodexRegisterStepResponse } from "../../shared/flow-contracts"
 import {
   RUNTIME_MESSAGE_TYPES,
   type RegisterStopStrategy
