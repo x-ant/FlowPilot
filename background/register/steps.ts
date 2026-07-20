@@ -40,10 +40,10 @@ import {
   pollHeroSmsCode,
   requestHeroSmsActivation,
   setHeroSmsActivationStatus,
-  submitPhoneNumberInPage,
   type HeroSmsActivation,
   type HeroSmsPhoneVerificationOptions
 } from "./phone-verification"
+import { submitPhoneNumberInPage } from "./phone-verification-page"
 
 const CHATGPT_SIGNUP_ENTRY_URL = "https://chatgpt.com/"
 const OPENAI_SESSION_CLEANUP_URLS = [

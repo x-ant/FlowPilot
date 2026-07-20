@@ -143,7 +143,8 @@ AI 在动代码前先快速过一遍：
 - `background/register/steps.ts`：注册流程的后台步骤。
 - `background/register/batch-runner.ts`：注册批量执行器，供侧边栏手动执行和后台自动任务复用。
 - `background/register/alarm.ts`：注册自动触发、任务锁、停止策略和后台消息处理。
-- `background/register/phone-verification.ts`：HeroSMS 买号、价格校验、验证码轮询、手机号提交和订单状态处理。
+- `background/register/phone-verification.ts`：HeroSMS 买号、价格校验、验证码轮询和订单状态处理。
+- `background/register/phone-verification-page.ts`：注入 OpenAI 手机号验证页的号码填写和提交脚本。
 - `background/integrations/cpa-management-api.ts`：CPA 管理接口。
 - `background/integrations/mail-verification.ts`：邮箱验证码读取的统一入口。
 - `background/integrations/mail-2925.ts`、`background/integrations/mail-2925-page-code.ts`：2925 邮箱登录和验证码读取。
@@ -242,7 +243,8 @@ npm run build
 17. `background/register/batch-runner.ts`：理解注册批量任务如何筛选账号、更新状态和处理中断。
 18. `background/register/steps.ts`：理解注册流程每一步如何操作页面。
 19. `background/register/phone-verification.ts`：理解 HeroSMS 价格、买号、验证码轮询和订单状态。
-20. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
+20. `background/register/phone-verification-page.ts`：理解手机号如何填写到 OpenAI 验证页面。
+21. `background/register/alarm.ts`：理解后台自动触发、任务锁和消息处理。
 
 ## 协作者背景
 
