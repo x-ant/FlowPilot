@@ -24,7 +24,6 @@ import {
   getManagedAccountKey,
   matchesManagedAccountVisibilityFilter,
   type AccountVisibilityFilter,
-  type ManagedAccount,
   type ManagedAccountProgress,
   type ManagedAccountStatus
 } from "../../shared/account-state"
@@ -50,7 +49,8 @@ import {
   RegisterAutomationPanel,
   RegisterOrphanRunLockAlert,
   RegisterStopStrategyModal,
-  useRegisterTaskControl
+  useRegisterTaskControl,
+  validateRegisterBatchStart
 } from "../register-task"
 import type { PageProps } from "./types"
 
@@ -107,10 +107,6 @@ const closeTabQuietly = async (tabId?: number) => {
   }
 }
 
-const isRegisterAccountDone = (account: ManagedAccount) => {
-  return account.status === "done" || account.progress >= REGISTER_STEP_COUNT
-}
-
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const accountPage = useAccountPageState({
     storageKeys: REGISTER_STORAGE_KEYS,
@@ -124,7 +120,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     cpaManagementKey,
     cpaUrl,
     selectedEmails,
-    selectedEmailSet,
     selectedCount,
     syncAccounts,
     patchAccountState,
@@ -899,57 +894,29 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   }
 
   const handleStartBatch = async () => {
-    if (!hasRequiredOAuthIntegrationConfig(integration)) {
-      setStatus("请先完善 OAuth 接入配置")
-      log.warn("OAuth 接入配置不完整")
-      return
-    }
-
-    if (accounts.length === 0) {
-      setStatus("请先添加至少一个账号")
-      log.warn("账号列表为空")
-      return
-    }
-
-    if (isBatchRunning && registerRunLock) {
-      setStatus("注册任务正在后台执行")
-      log.warn(registerRunLock.message || "注册任务正在后台执行")
-      return
-    }
-
-    if (isDebugRunning) {
-      return
-    }
-
-    if (selectedEmails.length === 0) {
-      setStatus("请先选择要执行的账号")
-      log.info("请先选择要执行的账号")
-      return
-    }
-
-    if (!heroSms.hasRequiredConfig) {
-      setStatus("请先填写 HeroSMS 接码配置")
-      log.warn("注册执行缺少 HeroSMS 接码配置")
-      return
-    }
-
-    const runnableCount = accounts.filter((account) => {
-      return (
-        selectedEmailSet.has(getManagedAccountKey(account)) &&
-        !isRegisterAccountDone(account) &&
-        account.status !== "needs_review"
-      )
-    }).length
-    if (runnableCount === 0) {
-      const emptyMessage = "选中的账号没有可执行项"
-      setStatus(emptyMessage)
-      log.info(emptyMessage)
+    const validation = validateRegisterBatchStart({
+      hasOAuthConfig: hasRequiredOAuthIntegrationConfig(integration),
+      accounts,
+      isBatchRunning,
+      registerRunLock,
+      isDebugRunning,
+      selectedAccountIds: selectedEmails,
+      hasHeroSmsConfig: heroSms.hasRequiredConfig,
+      stepCount: REGISTER_STEP_COUNT
+    })
+    if (!validation.ok) {
+      if (validation.statusMessage) {
+        setStatus(validation.statusMessage)
+      }
+      if (validation.log) {
+        log[validation.log.level](validation.log.message)
+      }
       return
     }
 
     await registerTask.startBatch({
       selectedEmails,
-      runnableCount
+      runnableCount: validation.runnableCount
     })
   }
 
