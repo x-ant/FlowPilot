@@ -1,4 +1,4 @@
-﻿import { Button, Collapse, Segmented, Select, Space, Tag } from "antd"
+import { Button } from "antd"
 import { useEffect, useMemo, useState } from "react"
 
 import {
@@ -43,9 +43,9 @@ import {
   AccountListPanel,
   useAccountPageState
 } from "../account-management"
-import { DebugTabControl } from "../components/DebugTabControl"
 import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
+import { RegisterDebugPanel, type RegisterDebugStep } from "../register-debug"
 import {
   RegisterAutomationPanel,
   RegisterOrphanRunLockAlert,
@@ -188,10 +188,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
       }) || null
     )
   }, [debugEmail, filteredDebugAccounts])
-  const getDebugStepButtonType = (step: number) => {
-    return step <= debugProgress ? "primary" : "default"
-  }
-
   useEffect(() => {
     if (filteredDebugAccounts.length === 0) {
       setDebugEmail("")
@@ -280,6 +276,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setDebugOAuthBinding(null)
     setDebugCallbackUrl("")
     setStatus("注册调试状态已清空")
+  }
+
+  const handleDebugAccountChange = (accountId: string) => {
+    setDebugEmail(accountId)
+    setDebugProgress(0)
+    setDebugRunningStep(0)
+    setDebugVerificationRequestedAt(0)
+    setDebugOAuthStartedAt(0)
+    setDebugOAuthBinding(null)
+    setDebugCallbackUrl("")
   }
 
   const runRegisterDebugStep = async (options: RegisterDebugStepOptions) => {
@@ -849,6 +855,19 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
+  const handleRunRegisterDebugStep = (step: RegisterDebugStep) => {
+    const actions: Record<RegisterDebugStep, () => Promise<void>> = {
+      1: handleOpenRegisterEntry,
+      2: handleSubmitRegisterEmail,
+      3: handleSubmitRegisterVerificationCode,
+      4: handleSubmitRegisterProfile,
+      5: handleCompleteRegisterOAuthLogin,
+      6: handleCompleteRegisterPhoneVerification,
+      7: handleSubmitRegisterOAuthCallback
+    }
+    void actions[step]()
+  }
+
   /**
    * 注册页账号管理里手动生成 Duck 邮箱。
    *
@@ -1077,147 +1096,34 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         onFetchDuckEmail={handleFetchDuckEmail}
       />
 
-      <Collapse
-        className="panel-card"
-        items={[
-          {
-            key: "debug",
-            label: "调试控制台",
-            extra: (
-              <Tag color="default">{`当前进度 ${debugProgress}/${REGISTER_STEP_COUNT}`}</Tag>
-            ),
-            children: (
-              <div className="debug-panel">
-                <div className="debug-field debug-field--inline">
-                  <span className="debug-label">账号范围</span>
-                  <Segmented<AccountVisibilityFilter>
-                    size="small"
-                    value={debugAccountFilter}
-                    options={[
-                      { label: "未完成", value: "pending" },
-                      { label: "已完成", value: "done" },
-                      { label: "失效", value: "invalid" },
-                      { label: "全部", value: "all" }
-                    ]}
-                    onChange={setDebugAccountFilter}
-                    disabled={disabled}
-                  />
-                </div>
-                <DebugTabControl
-                  disabled={disabled}
-                  label="注册 tab"
-                  leadingContent={
-                    <div className="debug-field">
-                      <span className="debug-label">账号</span>
-                      <Select
-                        value={debugEmail || undefined}
-                        placeholder="选择账号"
-                        options={filteredDebugAccounts.map((account) => {
-                          return {
-                            label: getManagedAccountDisplayLabel(account),
-                            value: getManagedAccountKey(account)
-                          }
-                        })}
-                        onChange={(value) => {
-                          setDebugEmail(value)
-                          setDebugProgress(0)
-                          setDebugRunningStep(0)
-                          setDebugVerificationRequestedAt(0)
-                          setDebugOAuthStartedAt(0)
-                          setDebugOAuthBinding(null)
-                          setDebugCallbackUrl("")
-                        }}
-                        disabled={
-                          disabled || filteredDebugAccounts.length === 0
-                        }
-                      />
-                    </div>
-                  }
-                  value={debugRegisterTabId}
-                  onChange={setDebugRegisterTabId}
-                  onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
-                  onClear={handleClearDebugState}
-                />
-
-                <Space size={8} wrap>
-                  <Button
-                    type={getDebugStepButtonType(1)}
-                    onClick={() => {
-                      void handleOpenRegisterEntry()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 1}
-                    disabled={disabled}>
-                    1 打开 GPT 页面
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(2)}
-                    onClick={() => {
-                      void handleSubmitRegisterEmail()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 2}
-                    disabled={disabled || !selectedDebugAccount}>
-                    2 点击注册并提交邮箱
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(3)}
-                    onClick={() => {
-                      void handleSubmitRegisterVerificationCode()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 3}
-                    disabled={disabled || !selectedDebugAccount}>
-                    3 提交验证码
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(4)}
-                    onClick={() => {
-                      void handleSubmitRegisterProfile()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 4}
-                    disabled={disabled || !selectedDebugAccount}>
-                    4 填写名称年龄并继续
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(5)}
-                    onClick={() => {
-                      void handleCompleteRegisterOAuthLogin()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 5}
-                    disabled={
-                      disabled ||
-                      !selectedDebugAccount ||
-                      !hasRequiredOAuthIntegrationConfig(integration)
-                    }>
-                    5 完成 OAuth 登录
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(6)}
-                    onClick={() => {
-                      void handleCompleteRegisterPhoneVerification()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 6}
-                    disabled={disabled || !selectedDebugAccount}>
-                    6 手机号验证
-                  </Button>
-                  <Button
-                    type={getDebugStepButtonType(7)}
-                    onClick={() => {
-                      void handleSubmitRegisterOAuthCallback()
-                    }}
-                    loading={isDebugRunning && debugRunningStep === 7}
-                    disabled={
-                      disabled ||
-                      !selectedDebugAccount ||
-                      !debugCallbackUrl ||
-                      !hasRequiredOAuthIntegrationConfig(integration) ||
-                      !debugOAuthBinding
-                    }>
-                    7 提交 OAuth callback
-                  </Button>
-                </Space>
-              </div>
-            )
+      <RegisterDebugPanel
+        disabled={disabled}
+        accountFilter={debugAccountFilter}
+        onAccountFilterChange={setDebugAccountFilter}
+        accountOptions={filteredDebugAccounts.map((account) => {
+          return {
+            label: getManagedAccountDisplayLabel(account),
+            value: getManagedAccountKey(account)
           }
-        ]}
+        })}
+        selectedAccountId={debugEmail}
+        onSelectedAccountChange={handleDebugAccountChange}
+        tabId={debugRegisterTabId}
+        onTabIdChange={setDebugRegisterTabId}
+        onUseActiveTab={handleUseActiveTabAsDebugRegisterTab}
+        onClear={handleClearDebugState}
+        progress={debugProgress}
+        isRunning={isDebugRunning}
+        runningStep={debugRunningStep}
+        hasSelectedAccount={Boolean(selectedDebugAccount)}
+        hasOAuthConfig={hasRequiredOAuthIntegrationConfig(integration)}
+        canSubmitCallback={Boolean(
+          selectedDebugAccount &&
+            debugCallbackUrl &&
+            hasRequiredOAuthIntegrationConfig(integration) &&
+            debugOAuthBinding
+        )}
+        onRunStep={handleRunRegisterDebugStep}
       />
     </>
   )
