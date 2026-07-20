@@ -18,10 +18,7 @@ import {
   fetchDuckEmail,
   type FetchDuckEmailOptions
 } from "../../background/integrations/duck-email"
-import {
-  REGISTER_STEP_COUNT,
-  type RegisterStopStrategy
-} from "../../background/register/batch-runner"
+import { REGISTER_STEP_COUNT } from "../../background/register/batch-runner"
 import {
   clickRegisterAndSubmitEmail,
   clickRegisterReadyContinue,
@@ -35,6 +32,7 @@ import {
   submitRegisterProfile,
   type CodexRegisterStepResponse
 } from "../../background/register/steps"
+import { sendRuntimeMessage } from "../../platform/chrome/runtime-messaging"
 import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   buildAccountInvalidLastMessage,
@@ -52,6 +50,10 @@ import {
   type RegisterAlarmConfig,
   type RegisterRunLock
 } from "../../shared/account-state"
+import {
+  RUNTIME_MESSAGE_TYPES,
+  type RegisterStopStrategy
+} from "../../shared/runtime-messages"
 import {
   REGISTER_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
   REGISTER_ALARM_STORAGE_KEY,
@@ -134,20 +136,6 @@ const closeTabQuietly = async (tabId?: number) => {
 
 const isRegisterAccountDone = (account: ManagedAccount) => {
   return account.status === "done" || account.progress >= REGISTER_STEP_COUNT
-}
-
-const sendRegisterAlarmMessage = <T,>(message: unknown) => {
-  return new Promise<T>((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      const error = chrome.runtime.lastError
-      if (error) {
-        reject(new Error(error.message))
-        return
-      }
-
-      resolve(response as T)
-    })
-  })
 }
 
 export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
@@ -270,10 +258,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
   const refreshRegisterRunStatus = async () => {
     try {
-      const response = await sendRegisterAlarmMessage<
-        RegisterRunStatus & { ok: boolean }
-      >({
-        type: "flowpilot:register:run-status"
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerRunStatus
       })
       setRegisterRunStatus({
         lock: response.lock,
@@ -989,12 +975,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
     setIsAlarmSaving(true)
     try {
-      const response = await sendRegisterAlarmMessage<{
-        ok: boolean
-        message: string
-        config?: RegisterAlarmConfig
-      }>({
-        type: "flowpilot:register:alarm-save",
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerAlarmSave,
         config: nextConfig
       })
       const savedConfig = normalizeRegisterAlarmConfig(
@@ -1025,11 +1007,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     setStatus("正在触发单次注册")
     log.info("[注册流程] 正在触发单次注册")
     try {
-      const response = await sendRegisterAlarmMessage<{
-        ok: boolean
-        message: string
-      }>({
-        type: "flowpilot:register:alarm-run-now"
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerAlarmRunNow
       })
       if (!response?.ok) {
         throw new Error(response?.message || "单次注册触发失败")
@@ -1050,11 +1029,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const handleClearRegisterRunLock = async () => {
     setIsClearingRunLock(true)
     try {
-      const response = await sendRegisterAlarmMessage<{
-        ok: boolean
-        message: string
-      }>({
-        type: "flowpilot:register:clear-run-lock"
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerClearRunLock
       })
       setStatus(response.message)
       log[response.ok ? "info" : "warn"](response.message)
@@ -1153,11 +1129,8 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
 
     const batchLabel = "选中账号"
     try {
-      const response = await sendRegisterAlarmMessage<{
-        ok: boolean
-        message: string
-      }>({
-        type: "flowpilot:register:batch-start",
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerBatchStart,
         selectedEmails
       })
       setStatus(response.message)
@@ -1172,18 +1145,17 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     }
   }
 
-  const requestStopBatch = async (strategy: RegisterStopStrategy) => {
+  const requestStopBatch = async (
+    strategy: Exclude<RegisterStopStrategy, "none">
+  ) => {
     if (isBatchStopping) {
       return
     }
 
     setIsBatchStopping(true)
     try {
-      const response = await sendRegisterAlarmMessage<{
-        ok: boolean
-        message: string
-      }>({
-        type: "flowpilot:register:batch-stop",
+      const response = await sendRuntimeMessage({
+        type: RUNTIME_MESSAGE_TYPES.registerBatchStop,
         strategy
       })
       setStatus(response.message)
@@ -1213,7 +1185,9 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
     void requestStopBatch("immediate")
   }
 
-  const handleChooseStopStrategy = (strategy: RegisterStopStrategy) => {
+  const handleChooseStopStrategy = (
+    strategy: Exclude<RegisterStopStrategy, "none">
+  ) => {
     setIsStopStrategyModalOpen(false)
     void requestStopBatch(strategy)
   }

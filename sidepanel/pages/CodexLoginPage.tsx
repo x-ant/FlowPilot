@@ -10,6 +10,7 @@ import {
   submitCodexLoginPasswordAndWait,
   submitCodexOAuthCallback
 } from "../../background/login/steps"
+import { sendRuntimeMessage } from "../../platform/chrome/runtime-messaging"
 import {
   getFlowStepLabel,
   getFlowStepName,
@@ -26,6 +27,7 @@ import {
   type ManagedAccount,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import { RUNTIME_MESSAGE_TYPES } from "../../shared/runtime-messages"
 import {
   LOGIN_ACCOUNT_FORM_DRAFT_STORAGE_KEY,
   LOGIN_STORAGE_KEYS
@@ -154,8 +156,8 @@ const runManagedAccountFlow = async (
 
 const setPowerKeepAwake = async (action: "acquire" | "release") => {
   try {
-    await chrome.runtime.sendMessage({
-      type: "flowpilot:power-keep-awake",
+    await sendRuntimeMessage({
+      type: RUNTIME_MESSAGE_TYPES.powerKeepAwake,
       action,
       reason: "login-batch"
     })

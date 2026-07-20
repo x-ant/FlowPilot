@@ -8,6 +8,7 @@
   type ManagedAccountProgress,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import type { RegisterStopStrategy } from "../../shared/runtime-messages"
 import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
 import { abortableSleep } from "../utils/abort"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
@@ -18,10 +19,7 @@ const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
 const DEFAULT_ACCOUNT_INTERVAL_MIN_SECONDS = 240
 const DEFAULT_ACCOUNT_INTERVAL_MAX_SECONDS = 600
 
-export type RegisterStopStrategy =
-  | "none"
-  | "immediate"
-  | "finish_current_if_phone_success"
+export type { RegisterStopStrategy } from "../../shared/runtime-messages"
 
 type RegisterStepResult = {
   ok: boolean

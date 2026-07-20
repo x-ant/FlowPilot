@@ -1,8 +1,13 @@
+import { sendRuntimeMessageResponse } from "../../platform/chrome/runtime-messaging"
 import { getLocalStorage } from "../../platform/chrome/storage"
 import {
   DEFAULT_RUNTIME_SETTINGS,
   normalizeRuntimeSettings
 } from "../../shared/account-state"
+import {
+  isRuntimeMessageOfType,
+  RUNTIME_MESSAGE_TYPES
+} from "../../shared/runtime-messages"
 import { RUNTIME_SETTINGS_STORAGE_KEY } from "../../shared/storage-keys"
 
 const KEEP_AWAKE_REASON_TTL_MS = 5 * 60 * 60 * 1000
@@ -131,24 +136,25 @@ export const setupPowerKeepAwake = () => {
   })
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "flowpilot:power-keep-awake") {
+    const messageType = RUNTIME_MESSAGE_TYPES.powerKeepAwake
+    if (!isRuntimeMessageOfType(message, messageType)) {
       return false
     }
 
     const reason = String(message.reason || "sidepanel")
     if (message.action === "acquire") {
       requestPowerKeepAwake(reason)
-      sendResponse({ ok: true })
+      sendRuntimeMessageResponse(sendResponse, messageType, { ok: true })
       return true
     }
 
     if (message.action === "release") {
       releasePowerKeepAwake(reason)
-      sendResponse({ ok: true })
+      sendRuntimeMessageResponse(sendResponse, messageType, { ok: true })
       return true
     }
 
-    sendResponse({
+    sendRuntimeMessageResponse(sendResponse, messageType, {
       ok: false,
       message: "未知保持唤醒操作"
     })

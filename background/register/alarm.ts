@@ -1,3 +1,4 @@
+import { sendRuntimeMessageResponse } from "../../platform/chrome/runtime-messaging"
 import {
   readLocalStorage,
   writeLocalStorage
@@ -8,8 +9,12 @@ import {
   REGISTER_ALARM_NAME,
   type RegisterAlarmConfig
 } from "../../shared/account-state"
+import {
+  isRuntimeMessageOfType,
+  RUNTIME_MESSAGE_TYPES,
+  type RegisterStopStrategy
+} from "../../shared/runtime-messages"
 import { REGISTER_ALARM_STORAGE_KEY } from "../../shared/storage-keys"
-import type { RegisterStopStrategy } from "./batch-runner"
 import {
   logRegisterBackground,
   writeRegisterExecutionLog
@@ -172,28 +177,42 @@ export const setupRegisterAlarm = () => {
     }
   })
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "flowpilot:register:alarm-save") {
+    if (
+      isRuntimeMessageOfType(message, RUNTIME_MESSAGE_TYPES.registerAlarmSave)
+    ) {
       void (async () => {
         const config = normalizeRegisterAlarmConfig(message.config)
         await saveRegisterAlarmConfig(config)
         await scheduleRegisterAlarm()
-        sendResponse({
-          ok: true,
-          config,
-          message: config.enabled ? "自动触发已保存" : "自动触发已停用"
-        })
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerAlarmSave,
+          {
+            ok: true,
+            config,
+            message: config.enabled ? "自动触发已保存" : "自动触发已停用"
+          }
+        )
       })()
       return true
     }
 
-    if (message?.type === "flowpilot:register:alarm-run-now") {
+    if (
+      isRuntimeMessageOfType(message, RUNTIME_MESSAGE_TYPES.registerAlarmRunNow)
+    ) {
       void (async () => {
-        sendResponse(await runRegisterAlarmNow("手动测试"))
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerAlarmRunNow,
+          await runRegisterAlarmNow("手动测试")
+        )
       })()
       return true
     }
 
-    if (message?.type === "flowpilot:register:batch-start") {
+    if (
+      isRuntimeMessageOfType(message, RUNTIME_MESSAGE_TYPES.registerBatchStart)
+    ) {
       void (async () => {
         const config = await getRegisterAlarmConfig()
         const selectedEmails = Array.isArray(message.selectedEmails)
@@ -208,35 +227,60 @@ export const setupRegisterAlarm = () => {
           targetAllWhenNoSelection: false,
           triggerLabel: "手动注册"
         })
-        sendResponse(result)
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerBatchStart,
+          result
+        )
       })()
       return true
     }
 
-    if (message?.type === "flowpilot:register:batch-stop") {
+    if (
+      isRuntimeMessageOfType(message, RUNTIME_MESSAGE_TYPES.registerBatchStop)
+    ) {
       void (async () => {
         const strategy: RegisterStopStrategy =
           message.strategy === "finish_current_if_phone_success"
             ? message.strategy
             : "immediate"
-        sendResponse(await stopRegisterBatchJob(strategy))
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerBatchStop,
+          await stopRegisterBatchJob(strategy)
+        )
       })()
       return true
     }
 
-    if (message?.type === "flowpilot:register:run-status") {
+    if (
+      isRuntimeMessageOfType(message, RUNTIME_MESSAGE_TYPES.registerRunStatus)
+    ) {
       void (async () => {
-        sendResponse({
-          ok: true,
-          ...(await getRegisterRunStatus())
-        })
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerRunStatus,
+          {
+            ok: true,
+            ...(await getRegisterRunStatus())
+          }
+        )
       })()
       return true
     }
 
-    if (message?.type === "flowpilot:register:clear-run-lock") {
+    if (
+      isRuntimeMessageOfType(
+        message,
+        RUNTIME_MESSAGE_TYPES.registerClearRunLock
+      )
+    ) {
       void (async () => {
-        sendResponse(await clearStaleRegisterRunLock())
+        sendRuntimeMessageResponse(
+          sendResponse,
+          RUNTIME_MESSAGE_TYPES.registerClearRunLock,
+          await clearStaleRegisterRunLock()
+        )
       })()
       return true
     }

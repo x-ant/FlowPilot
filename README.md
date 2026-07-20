@@ -40,8 +40,8 @@ npm run build
 - `sidepanel.tsx`：Chrome 侧边栏主界面。
 - `sidepanel/`：侧边栏页面、配置表单和账号管理组件。
 - `background/`：登录、注册、验证码读取、手机号验证和后台任务逻辑。
-- `platform/chrome/`：Chrome API 适配层，当前包含统一的本地存储访问方法。
-- `shared/`：账号状态、Storage Key、日志和共享类型。
+- `platform/chrome/`：Chrome API 适配层，包含统一的本地存储和 runtime 消息访问方法。
+- `shared/`：账号状态、Storage Key、runtime 消息契约、日志和共享类型。
 - `assets/`：扩展图标和静态资源。
 
 ## 使用提醒
