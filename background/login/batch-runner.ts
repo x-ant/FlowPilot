@@ -11,7 +11,7 @@ import {
   type ManagedAccount,
   type ManagedAccountStatus
 } from "../../shared/account-state"
-import type { OAuthIntegrationConfig } from "../../shared/sub2api"
+import type { OAuthIntegrationConfig } from "../../shared/oauth-integration"
 import { createCodexLoginRunner } from "./steps"
 
 export type LoginFlowRunner = Pick<

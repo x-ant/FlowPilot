@@ -1,4 +1,4 @@
-import type { OAuthBinding } from "./sub2api"
+import type { OAuthBinding } from "./oauth-integration"
 
 /** 浏览器标签页的最小跨模块信息。 */
 export type BrowserTabInfo = {

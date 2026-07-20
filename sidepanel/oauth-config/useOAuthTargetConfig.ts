@@ -6,7 +6,7 @@ import {
   saveOAuthTargetSettings,
   type OAuthTargetSettings,
   type Sub2ApiConfig
-} from "../../shared/sub2api"
+} from "../../shared/oauth-integration"
 
 /**
  * 管理登录页或注册页各自的 OAuth 来源设置。

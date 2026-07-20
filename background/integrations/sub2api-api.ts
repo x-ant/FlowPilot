@@ -1,4 +1,4 @@
-import type { OAuthBinding, Sub2ApiConfig } from "../../shared/sub2api"
+import type { OAuthBinding, Sub2ApiConfig } from "../../shared/oauth-integration"
 
 type RequestOptions = {
   method?: "GET" | "POST"

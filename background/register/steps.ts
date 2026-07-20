@@ -1,6 +1,6 @@
 ﻿import type { ManagedAccount } from "../../shared/account-state"
 import type { CodexRegisterStepResponse } from "../../shared/flow-contracts"
-import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/oauth-integration"
 import {
   createMailVerificationRunner,
   type VerificationCodeResult

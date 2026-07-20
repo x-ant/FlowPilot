@@ -35,13 +35,13 @@ import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,
   type OAuthBinding
-} from "../../shared/sub2api"
+} from "../../shared/oauth-integration"
 import {
   AccountFormPanel,
   AccountListPanel,
   useAccountPageState
 } from "../account-management"
-import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
+import { OAuthConfigPanel, useOAuthTargetConfig } from "../oauth-config"
 import { LoginDebugPanel } from "../login-debug"
 import type { PageProps } from "./types"
 

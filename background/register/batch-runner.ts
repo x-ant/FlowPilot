@@ -9,7 +9,7 @@
   type ManagedAccountStatus
 } from "../../shared/account-state"
 import type { RegisterStopStrategy } from "../../shared/runtime-messages"
-import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/oauth-integration"
 import { abortableSleep } from "../utils/abort"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 import { createCodexRegisterRunner } from "./steps"

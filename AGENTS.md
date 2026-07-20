@@ -135,7 +135,7 @@ AI 在动代码前先快速过一遍：
 - `sidepanel/components/DebugTabControl.tsx`：调试区域里复用的 tab 控制组件。
 - `sidepanel/pages/CodexLoginPage.tsx`：登录页 UI、批量入口与状态，以及登录调试步骤。
 - `sidepanel/pages/CodexRegisterPage.tsx`：注册页 UI、注册调试步骤、自动触发配置入口和停止策略入口。
-- `sidepanel/cpa-config/`：CPA 地址和管理密钥表单。
+- `sidepanel/oauth-config/`：CPA 与 Sub2API 共用的 OAuth 接入配置表单。
 - `sidepanel/hero-sms-config/`：HeroSMS 接码配置、国家/运营商加载和 Mock 开关。
 - `background.ts`：后台 service worker 模块启动入口。
 - `background/app/side-panel.ts`：扩展图标点击时打开侧边栏。

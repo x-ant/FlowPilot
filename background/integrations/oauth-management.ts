@@ -1,4 +1,4 @@
-import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/sub2api"
+import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/oauth-integration"
 import {
   requestCpaOAuthUrl,
   submitCpaOAuthCallback

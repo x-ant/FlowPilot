@@ -19,7 +19,7 @@ import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,
   loadOAuthTargetSettings
-} from "../../shared/sub2api"
+} from "../../shared/oauth-integration"
 import { releasePowerKeepAwake, requestPowerKeepAwake } from "../app/power"
 import { runRegisterBatch, type RegisterStopStrategy } from "./batch-runner"
 import {

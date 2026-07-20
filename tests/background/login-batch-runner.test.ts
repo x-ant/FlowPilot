@@ -7,7 +7,7 @@ import {
   type LoginFlowRunner
 } from "../../background/login/batch-runner"
 import type { ManagedAccount } from "../../shared/account-state"
-import type { OAuthIntegrationConfig } from "../../shared/sub2api"
+import type { OAuthIntegrationConfig } from "../../shared/oauth-integration"
 
 const integration: OAuthIntegrationConfig = {
   source: "cpa",
