@@ -18,7 +18,6 @@ import {
   isOpenAiAddPhoneUrl,
   isOpenAiChooseAccountUrl,
   isOpenAiCodexConsentUrl,
-  isOpenAiEmailVerificationUrl,
   isOpenAiPhoneVerificationUrl,
   isOpenAiRegisterPasswordUrl,
   isOpenAiRegisterProfileUrl
@@ -931,17 +930,6 @@ const OPENAI_VERIFICATION_INPUT_SELECTORS = [
 ]
 
 const OPENAI_READY_CONTINUE_BUTTON_TEXTS = ["继续", "continue"]
-
-const OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS = [
-  "continue",
-  "next",
-  "submit",
-  "sign in",
-  "log in",
-  "登录",
-  "继续",
-  "下一步"
-]
 
 const OPENAI_AUTH_DIALOG_CONTAINER = {
   selectors: [
@@ -2578,83 +2566,6 @@ export const createCodexRegisterRunner = (context: RunContext = {}) => {
         .join("；"),
       verificationRequestedAt: passwordResult.verificationRequestedAt,
       targetTab: passwordResult.targetTab || submitResult.tab
-    }
-  }
-
-  /**
-   * 登录版 Step 2：点击 GPT 登录入口，并提交登录邮箱。
-   *
-   * 该方法给 Step 5 缺账号卡片时复用，区别于注册版 Step 2 的注册入口点击。
-   *
-   * @param email 要登录的邮箱。
-   * @param tabId GPT 页面标签页 ID。
-   * @return 登录邮箱提交结果。
-   */
-  const clickLoginAndSubmitEmail = async (
-    email: string,
-    tabId: number
-  ): Promise<CodexRegisterStepResponse> => {
-    throwIfRunAborted()
-
-    const normalizedEmail = String(email || "").trim()
-    if (!normalizedEmail) {
-      return {
-        ok: false,
-        message: "缺少登录邮箱"
-      }
-    }
-
-    try {
-      await chrome.tabs.get(tabId)
-    } catch {
-      return {
-        ok: false,
-        message: "未找到 GPT 页面，请重新执行打开 GPT 页面"
-      }
-    }
-
-    const entryResult = await runPageActionInTab(tabId, {
-      button: {
-        texts: LOGIN_ENTRY_BUTTON_TEXTS
-      },
-      timeoutMs: 10000,
-      successMessage: "已点击 GPT 登录入口",
-      failureMessage: "未找到 GPT 页面上的登录入口"
-    })
-
-    const submitResult = await runPageActionInTab(tabId, {
-      container: OPENAI_AUTH_DIALOG_CONTAINER,
-      fields: [
-        {
-          selectors: OPENAI_EMAIL_INPUT_SELECTORS,
-          value: normalizedEmail
-        }
-      ],
-      button: {
-        texts: OPENAI_LOGIN_EMAIL_CONTINUE_BUTTON_TEXTS,
-        triggerMode: "requestSubmit"
-      },
-      timeoutMs: 20000,
-      successMessage: "已填写登录邮箱并点击继续",
-      failureMessage: "未找到登录弹窗里的邮箱输入框或继续按钮"
-    })
-
-    if (!submitResult.ok) {
-      return {
-        ok: false,
-        message: entryResult.ok
-          ? submitResult.message
-          : `${entryResult.message}；${submitResult.message}`,
-        targetTab: submitResult.tab
-      }
-    }
-
-    return {
-      ok: true,
-      message: entryResult.ok
-        ? `${entryResult.message}；${submitResult.message}`
-        : submitResult.message,
-      targetTab: submitResult.tab
     }
   }
 

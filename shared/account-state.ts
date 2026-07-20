@@ -1,8 +1,3 @@
-export type LoginFormValues = {
-  cpaUrl?: string
-  cpaManagementKey?: string
-}
-
 export type AccountFormValues = {
   mailProvider?: MailProvider
   emailGenerator?: EmailGenerator

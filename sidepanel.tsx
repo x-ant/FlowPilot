@@ -34,7 +34,6 @@ import {
 } from "./shared/account-state"
 import {
   createUiLogger,
-  EXECUTION_LOG_LIMIT,
   EXECUTION_LOG_STORAGE_KEY,
   getTimeLabel,
   LOG_LEVEL_META,

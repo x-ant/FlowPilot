@@ -123,16 +123,6 @@ export const isOpenAiRegisterPasswordUrl = (rawUrl?: string) => {
 }
 
 /**
- * 判断是否是邮箱验证码页。
- *
- * @param rawUrl 浏览器标签页当前 URL。
- * @return 位于 OpenAI 邮箱验证码页时返回 true。
- */
-export const isOpenAiEmailVerificationUrl = (rawUrl?: string) => {
-  return getOpenAiAuthUrlState(rawUrl) === "email_verification"
-}
-
-/**
  * 判断是否是注册资料页。
  *
  * @param rawUrl 浏览器标签页当前 URL。
