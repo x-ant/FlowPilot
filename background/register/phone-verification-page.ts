@@ -268,3 +268,206 @@ export const submitPhoneNumberInPage = (
     }
   })()
 }
+
+export const requestHistoryBackInPage = () => {
+  if (window.history.length <= 1) {
+    return {
+      ok: false,
+      message: "当前页面没有可回退的历史记录"
+    }
+  }
+
+  window.history.back()
+  return {
+    ok: true,
+    message: "已触发页面回退"
+  }
+}
+
+export const waitForPhoneInputInPage = async () => {
+  const selectors = [
+    "input[type='tel']",
+    "input[name*='phone' i]:not([type='hidden'])",
+    "input[id*='phone' i]:not([type='hidden'])",
+    "input[autocomplete='tel']"
+  ]
+  const waitForDelay = (timeoutMs: number) => {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, timeoutMs)
+    })
+  }
+  const isVisible = (element: Element | null) => {
+    if (!element) {
+      return false
+    }
+
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    )
+  }
+  const findPhoneInput = () => {
+    return selectors
+      .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+      .find((element) => {
+        const input = element as HTMLInputElement
+        return (
+          input instanceof HTMLInputElement &&
+          !input.disabled &&
+          isVisible(input)
+        )
+      })
+  }
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 15000) {
+    if (findPhoneInput()) {
+      return {
+        ok: true,
+        message: "页面已回到手机号输入页"
+      }
+    }
+
+    await waitForDelay(300)
+  }
+
+  return {
+    ok: false,
+    message: "回退后未等到手机号输入框"
+  }
+}
+
+export const getPhoneNumberSubmitFailureInPage = () => {
+  const selectors = [
+    "input[type='tel']",
+    "input[name*='phone' i]:not([type='hidden'])",
+    "input[id*='phone' i]:not([type='hidden'])",
+    "input[autocomplete='tel']"
+  ]
+  const isVisible = (element: Element | null) => {
+    if (!element) {
+      return false
+    }
+
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden"
+    )
+  }
+  const phoneInput = selectors
+    .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+    .find((element) => {
+      return element instanceof HTMLInputElement && isVisible(element)
+    })
+  const addPhoneForm =
+    phoneInput?.closest("form") ||
+    document.querySelector("form[action*='/add-phone' i]")
+  const errorRoot = addPhoneForm || document
+  const messages: string[] = []
+  const errorSelectors = [
+    ".react-aria-FieldError",
+    "[slot='errorMessage']",
+    "[id$='-error']",
+    "ul[class*='errors' i]",
+    "li[class*='error' i]",
+    "[role='alert']",
+    "[aria-live='assertive']",
+    "[aria-live='polite']",
+    "[data-invalid='true'] + *",
+    "[aria-invalid='true'] + *",
+    "[class*='error' i]",
+    "[class*='danger' i]",
+    "[class*='alert' i]"
+  ]
+  const pushText = (value: unknown) => {
+    const text = String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+    if (text && !messages.includes(text)) {
+      messages.push(text)
+    }
+  }
+
+  errorSelectors.forEach((selector) => {
+    errorRoot.querySelectorAll(selector).forEach((element) => {
+      pushText(element.textContent)
+    })
+  })
+
+  const invalidElements = [
+    ...(addPhoneForm?.matches("[aria-invalid='true'], [data-invalid='true']")
+      ? [addPhoneForm]
+      : []),
+    ...Array.from(
+      errorRoot.querySelectorAll("[aria-invalid='true'], [data-invalid='true']")
+    )
+  ]
+  invalidElements.forEach((element) => {
+    const describedIds = [
+      element.getAttribute("aria-describedby"),
+      element.getAttribute("aria-errormessage")
+    ]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(/\s+/))
+
+    describedIds.forEach((id) => {
+      const describedElement = document.getElementById(id)
+      if (describedElement) {
+        pushText(describedElement.textContent)
+      }
+    })
+
+    if (element instanceof HTMLInputElement) {
+      pushText(element.closest("form, [data-rac], div")?.textContent)
+    }
+  })
+
+  return {
+    hasFailure: messages.length > 0,
+    message: messages[0] || ""
+  }
+}
+
+export const getOpenAiAuthPageErrorInPage = () => {
+  const text = String(
+    document.body?.innerText || document.body?.textContent || ""
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (!text) {
+    return {
+      hasError: false,
+      message: ""
+    }
+  }
+
+  if (/failed to fetch/i.test(text)) {
+    return {
+      hasError: true,
+      message: "OpenAI 手机号提交请求失败：Failed to fetch"
+    }
+  }
+
+  if (/糟糕.*出错|出错了/i.test(text)) {
+    return {
+      hasError: true,
+      message: "OpenAI 手机号提交后显示错误页"
+    }
+  }
+
+  return {
+    hasError: false,
+    message: ""
+  }
+}
