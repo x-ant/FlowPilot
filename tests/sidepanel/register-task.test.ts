@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import type { RegisterRunLock } from "../../shared/account-state"
-import { resolveRegisterTaskRuntimeState } from "../../sidepanel/register-task"
+import {
+  DEFAULT_REGISTER_ALARM_CONFIG,
+  type RegisterRunLock
+} from "../../shared/account-state"
+import { getRegisterAlarmSummary } from "../../sidepanel/register-task/automation-summary"
+import { resolveRegisterTaskRuntimeState } from "../../sidepanel/register-task/useRegisterTaskControl"
 
 const NOW = 1_000_000
 
@@ -75,5 +79,24 @@ describe("register task runtime state", () => {
       isBatchRunning: false,
       hasOrphanRegisterRunLock: false
     })
+  })
+})
+
+describe("register automation summary", () => {
+  it("按间隔和每天两种模式生成标题摘要", () => {
+    expect(
+      getRegisterAlarmSummary({
+        ...DEFAULT_REGISTER_ALARM_CONFIG,
+        mode: "interval",
+        intervalMinutes: 45
+      })
+    ).toBe("每 45 分钟")
+    expect(
+      getRegisterAlarmSummary({
+        ...DEFAULT_REGISTER_ALARM_CONFIG,
+        mode: "daily",
+        dailyTime: "03:30"
+      })
+    ).toBe("每天 03:30")
   })
 })

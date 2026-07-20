@@ -2,14 +2,10 @@
   Alert,
   Button,
   Collapse,
-  Input,
-  InputNumber,
   Modal,
-  Radio,
   Segmented,
   Select,
   Space,
-  Switch,
   Tag
 } from "antd"
 import { useEffect, useMemo, useState } from "react"
@@ -59,7 +55,10 @@ import {
 import { DebugTabControl } from "../components/DebugTabControl"
 import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
-import { useRegisterTaskControl } from "../register-task"
+import {
+  RegisterAutomationPanel,
+  useRegisterTaskControl
+} from "../register-task"
 import type { PageProps } from "./types"
 
 const REGISTER_PHONE_MAX_OAUTH_ATTEMPTS = 3
@@ -987,13 +986,6 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasBatchConfig = Boolean(
     hasRequiredOAuthIntegrationConfig(integration) && heroSms.hasRequiredConfig
   )
-  const alarmLastTriggeredLabel = appliedAlarmConfig.lastTriggeredAt
-    ? new Date(appliedAlarmConfig.lastTriggeredAt).toLocaleString()
-    : "尚未触发"
-  const alarmSummary =
-    appliedAlarmConfig.mode === "interval"
-      ? `每 ${appliedAlarmConfig.intervalMinutes} 分钟`
-      : `每天 ${appliedAlarmConfig.dailyTime}`
   const orphanLockStartedLabel = registerRunLock?.startedAt
     ? new Date(registerRunLock.startedAt).toLocaleString()
     : ""
@@ -1112,173 +1104,16 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         />
       ) : null}
 
-      <Collapse
-        className="panel-card"
-        items={[
-          {
-            key: "register-alarm",
-            label: "自动触发",
-            extra: (
-              <Tag
-                color={appliedAlarmConfig.enabled ? "processing" : "default"}>
-                {appliedAlarmConfig.enabled ? alarmSummary : "未启用"}
-              </Tag>
-            ),
-            children: (
-              <div className="debug-panel">
-                <Space
-                  orientation="vertical"
-                  size={12}
-                  style={{ width: "100%" }}>
-                  <Space size={12} wrap>
-                    <Switch
-                      checked={alarmConfig.enabled}
-                      disabled={disabled || isAlarmSaving}
-                      onChange={(checked) => {
-                        setAlarmConfig((current) => ({
-                          ...current,
-                          enabled: checked
-                        }))
-                      }}
-                    />
-                    <Radio.Group
-                      value={alarmConfig.mode}
-                      disabled={disabled || isAlarmSaving}
-                      onChange={(event) => {
-                        setAlarmConfig((current) => ({
-                          ...current,
-                          mode:
-                            event.target.value === "daily"
-                              ? "daily"
-                              : "interval"
-                        }))
-                      }}>
-                      <Radio.Button value="interval">间隔</Radio.Button>
-                      <Radio.Button value="daily">每天</Radio.Button>
-                    </Radio.Group>
-                  </Space>
-
-                  {alarmConfig.mode === "interval" ? (
-                    <Space size={8} wrap>
-                      <span className="debug-label">间隔分钟</span>
-                      <InputNumber
-                        min={1}
-                        precision={0}
-                        value={alarmConfig.intervalMinutes}
-                        disabled={disabled || isAlarmSaving}
-                        onChange={(value) => {
-                          setAlarmConfig((current) => ({
-                            ...current,
-                            intervalMinutes: Math.max(1, Number(value || 1))
-                          }))
-                        }}
-                      />
-                    </Space>
-                  ) : (
-                    <Space size={8} wrap>
-                      <span className="debug-label">每天时间</span>
-                      <Input
-                        type="time"
-                        value={alarmConfig.dailyTime}
-                        disabled={disabled || isAlarmSaving}
-                        onChange={(event) => {
-                          setAlarmConfig((current) => ({
-                            ...current,
-                            dailyTime: event.target.value || "02:00"
-                          }))
-                        }}
-                      />
-                    </Space>
-                  )}
-
-                  <Space size={8} wrap>
-                    <span className="debug-label">账号间隔范围</span>
-                    <Space.Compact>
-                      <InputNumber
-                        min={0}
-                        precision={0}
-                        value={alarmConfig.accountIntervalMinSeconds}
-                        disabled={disabled || isAlarmSaving}
-                        onChange={(value) => {
-                          setAlarmConfig((current) => {
-                            const nextMinSeconds = Math.max(
-                              0,
-                              Number(value || 0)
-                            )
-                            return {
-                              ...current,
-                              accountIntervalMinSeconds: nextMinSeconds,
-                              accountIntervalMaxSeconds: Math.max(
-                                nextMinSeconds,
-                                current.accountIntervalMaxSeconds
-                              )
-                            }
-                          })
-                        }}
-                      />
-                      <Button tabIndex={-1} style={{ pointerEvents: "none" }}>
-                        秒
-                      </Button>
-                    </Space.Compact>
-                    <span className="debug-label">至</span>
-                    <Space.Compact>
-                      <InputNumber
-                        min={0}
-                        precision={0}
-                        value={alarmConfig.accountIntervalMaxSeconds}
-                        disabled={disabled || isAlarmSaving}
-                        onChange={(value) => {
-                          setAlarmConfig((current) => ({
-                            ...current,
-                            accountIntervalMaxSeconds: Math.max(
-                              current.accountIntervalMinSeconds,
-                              Number(value || 0)
-                            )
-                          }))
-                        }}
-                      />
-                      <Button tabIndex={-1} style={{ pointerEvents: "none" }}>
-                        秒
-                      </Button>
-                    </Space.Compact>
-                  </Space>
-
-                  <Space size={8} wrap>
-                    <Tag color="default">{`上次 ${alarmLastTriggeredLabel}`}</Tag>
-                  </Space>
-
-                  {appliedAlarmConfig.lastMessage ? (
-                    <div className="debug-label">
-                      {appliedAlarmConfig.lastMessage}
-                    </div>
-                  ) : null}
-
-                  <Space size={8} wrap>
-                    <Button
-                      type="primary"
-                      loading={isAlarmSaving}
-                      disabled={disabled || isAlarmSaving}
-                      onClick={() => {
-                        void registerTask.saveAlarmConfig()
-                      }}>
-                      应用定时设置
-                    </Button>
-                    <Button
-                      loading={isAlarmTesting}
-                      disabled={
-                        disabled || isAlarmTesting || hasOrphanRegisterRunLock
-                      }
-                      onClick={() => {
-                        void registerTask.runAlarmNow()
-                      }}>
-                      单次触发
-                    </Button>
-                  </Space>
-                </Space>
-              </div>
-            )
-          }
-        ]}
+      <RegisterAutomationPanel
+        config={alarmConfig}
+        appliedConfig={appliedAlarmConfig}
+        disabled={disabled}
+        isSaving={isAlarmSaving}
+        isTesting={isAlarmTesting}
+        hasOrphanRunLock={hasOrphanRegisterRunLock}
+        onConfigChange={setAlarmConfig}
+        onSave={registerTask.saveAlarmConfig}
+        onRunNow={registerTask.runAlarmNow}
       />
 
       <HeroSmsConfigPanel heroSms={heroSms} disabled={isDebugRunning} />
