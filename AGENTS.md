@@ -144,7 +144,8 @@ AI 在动代码前先快速过一遍：
 - `background/login/steps.ts`：登录流程的后台步骤。
 - `background/register/steps.ts`：注册流程的后台步骤。
 - `background/register/register-profile-page.ts`：注入 OpenAI 注册资料页的姓名和年龄/生日填写脚本。
-- `background/register/batch-runner.ts`：注册批量执行器，供侧边栏手动执行和后台自动任务复用。
+- `background/register/batch-runner.ts`：注册批量执行器，供侧边栏手动执行和后台自动任务复用；测试可注入本地 runner，避免打开页面或请求外部服务。
+- `tests/background/register-batch-runner.test.ts`：注册账号筛选、Step 5 续跑、失败继续和人工停止状态的无外部调用测试。
 - `background/register/alarm.ts`：注册自动触发、任务锁、停止策略和后台消息处理。
 - `background/register/phone-verification.ts`：HeroSMS 买号、价格校验、验证码轮询和订单状态处理。
 - `background/register/phone-verification-page.ts`：注入 OpenAI 手机号验证页的号码填写、错误检测和页面回退脚本。

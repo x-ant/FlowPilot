@@ -8,8 +8,11 @@
   type ManagedAccountProgress,
   type ManagedAccountStatus
 } from "../../shared/account-state"
+import type {
+  OAuthBinding,
+  OAuthIntegrationConfig
+} from "../../shared/oauth-integration"
 import type { RegisterStopStrategy } from "../../shared/runtime-messages"
-import type { OAuthBinding, OAuthIntegrationConfig } from "../../shared/oauth-integration"
 import { abortableSleep } from "../utils/abort"
 import type { HeroSmsPhoneVerificationOptions } from "./phone-verification"
 import { createCodexRegisterRunner } from "./steps"
@@ -20,6 +23,8 @@ const DEFAULT_ACCOUNT_INTERVAL_MIN_SECONDS = 240
 const DEFAULT_ACCOUNT_INTERVAL_MAX_SECONDS = 600
 
 export type { RegisterStopStrategy } from "../../shared/runtime-messages"
+
+export type RegisterFlowRunner = ReturnType<typeof createCodexRegisterRunner>
 
 type RegisterStepResult = {
   ok: boolean
@@ -48,6 +53,7 @@ type RunRegisterBatchOptions = {
   getStopStrategy?: () => RegisterStopStrategy
   isManualPhoneStop?: () => boolean
   shouldCancel?: () => boolean
+  runner?: RegisterFlowRunner
   onAccountsChange?: (accounts: ManagedAccount[]) => void
   onLog?: (level: "info" | "warn", message: string) => void
   onRunningEmail?: (email: string) => void
@@ -124,7 +130,7 @@ export const runManagedRegisterFlow = async (
   integration: OAuthIntegrationConfig,
   account: ManagedAccount,
   heroSmsOptions: HeroSmsPhoneVerificationOptions,
-  runner: ReturnType<typeof createCodexRegisterRunner>,
+  runner: RegisterFlowRunner,
   getStopStrategy: () => RegisterStopStrategy,
   onStage: (progress: ManagedAccountProgress, message: string) => void,
   onProgressLog?: (message: string) => void,
@@ -399,6 +405,7 @@ export const runManagedRegisterFlow = async (
  * @param options.getStopStrategy 获取当前停止策略的函数。
  * @param options.isManualPhoneStop 判断是否为人工接管手机号验证码的停止。
  * @param options.shouldCancel 判断是否需要立即取消批量流程。
+ * @param options.runner 可选的注册流程 runner；生产环境省略，测试时可注入无外部调用实现。
  * @param options.onAccountsChange 账号列表变化回调。
  * @param options.onLog 执行日志回调。
  * @param options.onRunningEmail 当前运行账号 ID 回调；沿用旧字段名但内容是账号 ID。
@@ -418,6 +425,7 @@ export const runRegisterBatch = async ({
   getStopStrategy = () => "none",
   isManualPhoneStop = () => false,
   shouldCancel = () => false,
+  runner,
   onAccountsChange,
   onLog,
   onRunningEmail,
@@ -451,7 +459,7 @@ export const runRegisterBatch = async ({
     }
   }
 
-  const registerRunner = createCodexRegisterRunner({ abortSignal })
+  const registerRunner = runner || createCodexRegisterRunner({ abortSignal })
   let workingAccounts = accounts.map((account) => {
     if (!isTargetAccount(account)) {
       return account
