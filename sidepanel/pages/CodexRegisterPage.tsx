@@ -1,13 +1,4 @@
-﻿import {
-  Alert,
-  Button,
-  Collapse,
-  Modal,
-  Segmented,
-  Select,
-  Space,
-  Tag
-} from "antd"
+﻿import { Button, Collapse, Segmented, Select, Space, Tag } from "antd"
 import { useEffect, useMemo, useState } from "react"
 
 import {
@@ -57,6 +48,8 @@ import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import { HeroSmsConfigPanel, useHeroSmsConfig } from "../hero-sms-config"
 import {
   RegisterAutomationPanel,
+  RegisterOrphanRunLockAlert,
+  RegisterStopStrategyModal,
   useRegisterTaskControl
 } from "../register-task"
 import type { PageProps } from "./types"
@@ -986,49 +979,13 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
   const hasBatchConfig = Boolean(
     hasRequiredOAuthIntegrationConfig(integration) && heroSms.hasRequiredConfig
   )
-  const orphanLockStartedLabel = registerRunLock?.startedAt
-    ? new Date(registerRunLock.startedAt).toLocaleString()
-    : ""
-
   return (
     <>
-      <Modal
-        title="当前手机号已进入验证流程"
+      <RegisterStopStrategyModal
         open={isStopStrategyModalOpen}
-        closable={false}
-        mask={{ closable: false }}
-        footer={[
-          <Button
-            key="immediate"
-            danger
-            disabled={isBatchStopping}
-            loading={isBatchStopping}
-            onClick={() => {
-              registerTask.chooseStopStrategy("immediate")
-            }}>
-            直接停止
-          </Button>,
-          <Button
-            key="finish"
-            type="primary"
-            disabled={isBatchStopping}
-            onClick={() => {
-              registerTask.chooseStopStrategy("finish_current_if_phone_success")
-            }}>
-            成功则完成回填
-          </Button>
-        ]}>
-        <div>
-          <p>
-            当前手机号已经获取并可能已经提交到
-            OpenAI。直接停止会把当前手机号后续处理交给你人工负责。
-          </p>
-          <p>
-            推荐选择“成功则完成回填”：如果当前手机号失败就停止，不再换号；如果验证成功，就向当前管理端提交
-            OAuth callback 后停止。
-          </p>
-        </div>
-      </Modal>
+        isStopping={isBatchStopping}
+        onChoose={registerTask.chooseStopStrategy}
+      />
       <AccountListPanel
         accountPage={accountPage}
         disabled={disabled}
@@ -1083,26 +1040,12 @@ export function CodexRegisterPage({ log, setStatus, onBusyChange }: PageProps) {
         }
       />
 
-      {hasOrphanRegisterRunLock ? (
-        <Alert
-          type="warning"
-          showIcon
-          title="检测到残留注册任务锁"
-          description={`开始时间：${orphanLockStartedLabel || "未知"}；当前账号：${
-            registerRunLock?.currentEmail || "未知"
-          }；最后状态：${registerRunLock?.message || "未知"}`}
-          action={
-            <Button
-              size="small"
-              loading={isClearingRunLock}
-              onClick={() => {
-                void registerTask.clearRunLock()
-              }}>
-              清除残留锁
-            </Button>
-          }
-        />
-      ) : null}
+      <RegisterOrphanRunLockAlert
+        visible={hasOrphanRegisterRunLock}
+        registerRunLock={registerRunLock}
+        isClearing={isClearingRunLock}
+        onClear={registerTask.clearRunLock}
+      />
 
       <RegisterAutomationPanel
         config={alarmConfig}

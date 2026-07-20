@@ -5,6 +5,7 @@ import {
   type RegisterRunLock
 } from "../../shared/account-state"
 import { getRegisterAlarmSummary } from "../../sidepanel/register-task/automation-summary"
+import { getRegisterRunLockDisplay } from "../../sidepanel/register-task/task-status-display"
 import { resolveRegisterTaskRuntimeState } from "../../sidepanel/register-task/useRegisterTaskControl"
 
 const NOW = 1_000_000
@@ -98,5 +99,22 @@ describe("register automation summary", () => {
         dailyTime: "03:30"
       })
     ).toBe("每天 03:30")
+  })
+})
+
+describe("register run lock display", () => {
+  it("保留任务锁信息，并为缺失数据提供可读占位", () => {
+    const lock = createRunLock()
+
+    expect(getRegisterRunLockDisplay(lock)).toEqual({
+      startedAt: lock.startedAt,
+      currentAccount: "account-id",
+      lastMessage: "正在执行"
+    })
+    expect(getRegisterRunLockDisplay(null)).toEqual({
+      startedAt: undefined,
+      currentAccount: "未知",
+      lastMessage: "未知"
+    })
   })
 })
