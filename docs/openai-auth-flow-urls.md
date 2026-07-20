@@ -1,6 +1,6 @@
 # OpenAI Auth Flow URLs
 
-本文记录 FlowPilot 当前登录/注册流程里用到的 OpenAI 授权页面地址。实际判断以代码为准；当 OpenAI 页面变化时，优先更新这里再同步检查 URL 判断工具。
+本文记录 FlowPilot 当前登录/注册流程里用到的 OpenAI 授权页面地址。实际判断以代码为准；当 OpenAI 页面变化时，先核对 URL 判断工具和页面状态，再同步更新本文。
 
 ## 注册流程
 
@@ -28,7 +28,7 @@
 
 5. 完成 OAuth 登录。
 
-   - 进入方式：通过 CPA 管理接口获取 OAuth URL 并打开。
+   - 进入方式：通过当前选择的 OAuth 来源（CPA 或 Sub2API）获取 OAuth URL 并打开。
    - 如果已有 OpenAI 登录信息，通常进入：`https://auth.openai.com/choose-an-account`
    - 如果没有登录信息，先进入：`https://auth.openai.com/log-in`
    - 登录密码页可选：`https://auth.openai.com/log-in/password`
@@ -42,10 +42,10 @@
    - 提交手机号后进入：`https://auth.openai.com/phone-verification`
    - 填写手机验证码后进入：`https://auth.openai.com/sign-in-with-chatgpt/codex/consent`
 
-7. CPA 回填。
+7. 提交 OAuth callback。
    - 在 OAuth 授权确认页点击继续后进入 callback 地址。
    - callback 示例：`http://localhost:1455/auth/callback?...`
-   - 说明：拿到 callback 后回填给 CPA 管理接口。
+   - 说明：拿到 callback 后提交给生成本次 OAuth URL 的来源；CPA 执行回填，Sub2API 交换授权结果并创建账号。
 
 ## 登录流程
 
@@ -67,7 +67,7 @@
    - 地址：`https://auth.openai.com/sign-in-with-chatgpt/codex/consent`
    - 说明：点击继续完成授权。
 
-4. CPA 回填。
+4. 提交 OAuth callback。
    - 点击继续后进入 callback 地址。
    - callback 示例：`http://localhost:1455/auth/callback?...`
-   - 说明：拿到 callback 后回填给 CPA 管理接口。
+   - 说明：拿到 callback 后提交给生成本次 OAuth URL 的来源。
