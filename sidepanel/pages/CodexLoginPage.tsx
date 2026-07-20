@@ -2,8 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
+  getLoginBatchRunnableCount,
+  runLoginBatch
+} from "../../background/login/batch-runner"
+import {
   confirmCodexOAuthConsent,
-  createCodexLoginRunner,
   fetchAndSubmitCodexVerificationCode,
   openCodexAuthLink,
   submitCodexLoginEmailAndWait,
@@ -16,16 +19,12 @@ import {
   getFlowStepName,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
-  isManagedAccountDone,
   matchesManagedAccountVisibilityFilter,
-  resetManagedAccountState,
   STEP_COUNT,
-  type AccountRunResult,
   type AccountVisibilityFilter,
   type BatchRunMode,
   type DebugStep,
-  type ManagedAccount,
-  type ManagedAccountStatus
+  type ManagedAccount
 } from "../../shared/account-state"
 import { RUNTIME_MESSAGE_TYPES } from "../../shared/runtime-messages"
 import {
@@ -35,8 +34,7 @@ import {
 import {
   createOAuthIntegrationConfig,
   hasRequiredOAuthIntegrationConfig,
-  type OAuthBinding,
-  type OAuthIntegrationConfig
+  type OAuthBinding
 } from "../../shared/sub2api"
 import {
   AccountFormPanel,
@@ -46,113 +44,6 @@ import {
 import { DebugTabControl } from "../components/DebugTabControl"
 import { OAuthConfigPanel, useOAuthTargetConfig } from "../cpa-config"
 import type { PageProps } from "./types"
-
-const runManagedAccountFlow = async (
-  integration: OAuthIntegrationConfig,
-  account: ManagedAccount,
-  runner: ReturnType<typeof createCodexLoginRunner>,
-  onStage: (progress: DebugStep, message: string) => void
-): Promise<AccountRunResult> => {
-  const step1Result = await runner.openCodexAuthLink(integration)
-  if (!step1Result.ok || !step1Result.targetTab?.id) {
-    return {
-      ok: false,
-      message: step1Result.message || "步骤 1 执行失败"
-    }
-  }
-
-  onStage(1, step1Result.message)
-
-  const authTabId = step1Result.targetTab.id
-  const step2Result = await runner.submitCodexLoginEmailAndWait(
-    authTabId,
-    account.email
-  )
-  if (!step2Result.ok) {
-    return {
-      ok: false,
-      message: step2Result.message || "步骤 2 执行失败"
-    }
-  }
-
-  onStage(2, step2Result.message)
-
-  let verificationRequestedAt = step2Result.verificationRequestedAt || 0
-  const step3Result = await runner.submitCodexLoginPasswordAndWait(
-    authTabId,
-    account.password
-  )
-  if (!step3Result.ok) {
-    return {
-      ok: false,
-      message: step3Result.message || "步骤 3 执行失败"
-    }
-  }
-  verificationRequestedAt =
-    step3Result.verificationRequestedAt || verificationRequestedAt
-
-  onStage(3, step3Result.message)
-
-  const step4Result = await runner.fetchAndSubmitCodexVerificationCode(
-    authTabId,
-    account,
-    verificationRequestedAt
-  )
-  if (!step4Result.ok) {
-    return {
-      ok: false,
-      message: step4Result.message || "步骤 4 执行失败"
-    }
-  }
-
-  onStage(4, step4Result.message)
-
-  const step5Result = await runner.confirmCodexOAuthConsent(authTabId)
-  if (!step5Result.ok || !step5Result.callbackUrl) {
-    return {
-      ok: false,
-      message: step5Result.message || "步骤 5 执行失败"
-    }
-  }
-
-  onStage(5, step5Result.message)
-
-  if (!step1Result.oauthBinding) {
-    return {
-      ok: false,
-      message: "步骤 1 未返回 OAuth 来源绑定信息"
-    }
-  }
-  const step6Result = await runner.submitCodexOAuthCallback(
-    integration,
-    step1Result.oauthBinding,
-    step5Result.callbackUrl,
-    authTabId,
-    account.email
-  )
-  if (!step6Result.ok) {
-    return {
-      ok: false,
-      message: step6Result.message || "步骤 6 执行失败"
-    }
-  }
-
-  onStage(6, step6Result.message)
-
-  return {
-    ok: true,
-    message: [
-      step1Result.message,
-      step2Result.message,
-      step3Result.message,
-      step4Result.message,
-      step5Result.message,
-      step6Result.message
-    ]
-      .filter(Boolean)
-      .join("；")
-  }
-}
 
 const setPowerKeepAwake = async (action: "acquire" | "release") => {
   try {
@@ -177,9 +68,7 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     cpaManagementKey,
     accounts,
     selectedEmails,
-    selectedEmailSet,
     selectedCount,
-    setAccounts,
     syncAccounts,
     setRunningEmail,
     patchAccountState
@@ -572,15 +461,11 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
       return
     }
 
-    const isTargetAccount = (account: ManagedAccount) => {
-      const accountKey = getManagedAccountKey(account)
-      if (mode === "all") {
-        return selectedEmailSet.has(accountKey)
-      }
-
-      return selectedEmailSet.has(accountKey) && !isManagedAccountDone(account)
-    }
-    const runnableCount = accounts.filter(isTargetAccount).length
+    const runnableCount = getLoginBatchRunnableCount(
+      accounts,
+      selectedEmails,
+      mode
+    )
     if (runnableCount === 0) {
       const emptyMessage =
         mode === "pending" ? "选中的账号都已完成" : "没有需要执行的账号"
@@ -593,131 +478,27 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
     setIsBatchStopping(false)
     const batchAbortController = new AbortController()
     batchAbortControllerRef.current = batchAbortController
-    const codexLoginRunner = createCodexLoginRunner({
-      abortSignal: batchAbortController.signal
-    })
     setIsBatchRunning(true)
     setRunningEmail("")
     await setPowerKeepAwake("acquire")
 
-    const batchLabel = mode === "all" ? "选中账号" : "选中的未完成账号"
     try {
-      let workingAccounts = accounts.map((account) => {
-        return !isTargetAccount(account)
-          ? account
-          : resetManagedAccountState(account)
-      })
-      syncAccounts(workingAccounts, cpaUrl, cpaManagementKey)
-
-      setStatus(`开始执行 ${runnableCount} 个${batchLabel}`)
-      log.info(`开始执行 ${runnableCount} 个${batchLabel}`)
-
-      let currentRunnableIndex = 0
-      for (let index = 0; index < workingAccounts.length; index += 1) {
-        if (batchCancelRef.current) {
-          setStatus("已停止批量执行")
-          log.warn("批量执行已停止")
-          break
-        }
-
-        const currentAccount = workingAccounts[index]
-        const currentAccountKey = getManagedAccountKey(currentAccount)
-        const currentAccountLabel =
-          getManagedAccountDisplayLabel(currentAccount)
-        if (!isTargetAccount(currentAccount)) {
-          continue
-        }
-
-        currentRunnableIndex += 1
-        setRunningEmail(currentAccountKey)
-        setStatus(
-          `正在处理 ${currentAccountLabel}（${currentRunnableIndex}/${runnableCount}）`
-        )
-        log.info(`开始处理账号 ${currentAccountLabel}`)
-
-        const updateCurrentAccount = (
-          patch: Partial<ManagedAccount>
-        ): ManagedAccount[] => {
-          const nextAccounts = [...workingAccounts]
-          nextAccounts[index] = {
-            ...nextAccounts[index],
-            ...patch,
-            updatedAt: Date.now()
-          }
-          workingAccounts = nextAccounts
-          setAccounts(nextAccounts)
+      await runLoginBatch({
+        integration,
+        accounts,
+        selectedAccountIds: selectedEmails,
+        mode,
+        abortSignal: batchAbortController.signal,
+        shouldCancel: () => batchCancelRef.current,
+        onAccountsChange: (nextAccounts) => {
           syncAccounts(nextAccounts, cpaUrl, cpaManagementKey)
-          return nextAccounts
-        }
-
-        updateCurrentAccount({
-          status: "running",
-          lastMessage: "正在打开登录页"
-        })
-
-        let runResult: AccountRunResult
-        try {
-          runResult = await runManagedAccountFlow(
-            integration,
-            currentAccount,
-            codexLoginRunner,
-            (progress, message) => {
-              const nextStatus: ManagedAccountStatus =
-                progress === STEP_COUNT ? "done" : "running"
-              updateCurrentAccount({
-                progress,
-                status: nextStatus,
-                lastMessage: message
-              })
-              setStatus(
-                `账号 ${currentAccountLabel} 已完成「${getFlowStepLabel(progress)}」`
-              )
-              log.info(`[${currentAccountLabel}] ${message}`)
-            }
-          )
-        } catch (error) {
-          runResult = {
-            ok: false,
-            message:
-              error instanceof Error ? error.message : "账号自动执行时发生异常"
-          }
-        }
-
-        if (batchCancelRef.current) {
-          updateCurrentAccount({
-            status: "failed",
-            lastMessage: runResult.message || "已停止当前流程"
-          })
-          setStatus("已停止当前流程")
-          log.warn(
-            `[${currentAccountLabel}] ${runResult.message || "已停止当前流程"}`
-          )
-          break
-        }
-
-        if (runResult.ok) {
-          updateCurrentAccount({
-            progress: STEP_COUNT,
-            status: "done",
-            lastMessage: runResult.message
-          })
-          log.info(`[${currentAccountLabel}] ${runResult.message}`)
-          continue
-        }
-
-        const currentState = workingAccounts[index]
-        updateCurrentAccount({
-          progress: currentState.progress,
-          status: "failed",
-          lastMessage: runResult.message
-        })
-        setStatus(`账号 ${currentAccountLabel} 执行失败`)
-        log.warn(`[${currentAccountLabel}] ${runResult.message}`)
-      }
-
-      setStatus(
-        batchCancelRef.current ? "已停止批量执行" : `${batchLabel}执行已结束`
-      )
+        },
+        onLog: (level, message) => {
+          log[level](message)
+        },
+        onRunningEmail: setRunningEmail,
+        onStatus: setStatus
+      })
     } finally {
       await setPowerKeepAwake("release")
       setRunningEmail("")
