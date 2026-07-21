@@ -17,6 +17,10 @@ import {
   type EmailGenerator,
   type MailProvider
 } from "../../shared/account-state"
+import {
+  getMailProviderDefinition,
+  MAIL_PROVIDER_OPTIONS
+} from "../../shared/mail-provider"
 import type { AccountPageState } from "./useAccountPageState"
 
 type AccountFormPanelAccountPage = Pick<
@@ -197,10 +201,7 @@ export function AccountFormPanel({
     const mailProvider = normalizeMailProvider(
       form.getFieldValue("mailProvider")
     )
-    const url =
-      mailProvider === "163"
-        ? "https://mail.163.com/"
-        : "https://2925.com/#/mailList"
+    const url = getMailProviderDefinition(mailProvider).loginUrl
     void chrome.tabs.create({
       active: true,
       url
@@ -210,7 +211,7 @@ export function AccountFormPanel({
   /**
    * 切换邮箱服务时清空注册邮箱和注册密码。
    *
-   * 2925 和 163 是不同来源的账号配置，切换服务时不复用上一种服务的输入，
+   * 不同邮箱服务是不同来源的账号配置，切换服务时不复用上一种服务的输入，
    * 避免保存账号时把两个服务的数据串在一起。
    *
    * @param mailProvider 用户新选择的邮箱服务。
@@ -362,10 +363,7 @@ export function AccountFormPanel({
                     <Select
                       disabled={disabled}
                       onChange={handleMailProviderChange}
-                      options={[
-                        { label: "2925 邮箱", value: "2925" },
-                        { label: "163 邮箱", value: "163" }
-                      ]}
+                      options={MAIL_PROVIDER_OPTIONS}
                     />
                   </Form.Item>
                   <Button onClick={handleLoginMailbox} disabled={disabled}>

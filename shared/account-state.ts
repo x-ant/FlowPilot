@@ -1,4 +1,14 @@
 import { readLocalStorage, writeLocalStorage } from "../platform/chrome/storage"
+import {
+  DEFAULT_MAIL_PROVIDER,
+  getMailProviderDefinition,
+  isMailProvider,
+  type MailProvider
+} from "./mail-provider"
+
+export type { MailProvider } from "./mail-provider"
+
+export type EmailGenerator = "duckduckgo" | "custom"
 
 export type AccountFormValues = {
   mailProvider?: MailProvider
@@ -7,9 +17,6 @@ export type AccountFormValues = {
   mailboxEmail?: string
   password?: string
 }
-
-export type MailProvider = "2925" | "163"
-export type EmailGenerator = "duckduckgo" | "custom"
 
 export type AccountFormDraftValues = Pick<
   AccountFormValues,
@@ -108,7 +115,7 @@ export const DEFAULT_REGISTER_ALARM_CONFIG: RegisterAlarmConfig = {
 }
 
 export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
-  mailProvider: "2925",
+  mailProvider: DEFAULT_MAIL_PROVIDER,
   emailGenerator: undefined,
   email: "",
   mailboxEmail: "",
@@ -116,7 +123,7 @@ export const EMPTY_ACCOUNT_FORM: AccountFormValues = {
 }
 
 export const EMPTY_ACCOUNT_FORM_DRAFT: AccountFormDraftValues = {
-  mailProvider: "2925",
+  mailProvider: DEFAULT_MAIL_PROVIDER,
   emailGenerator: undefined,
   email: "",
   password: ""
@@ -332,7 +339,7 @@ export const normalizeEmail = (value: string) => {
  * @return 支持的邮箱服务；无法识别时返回 2925。
  */
 export const normalizeMailProvider = (value: unknown): MailProvider => {
-  return value === "163" ? "163" : "2925"
+  return isMailProvider(value) ? value : DEFAULT_MAIL_PROVIDER
 }
 
 /**
@@ -392,11 +399,7 @@ export const normalizeAccountFormDraft = (
  * @return 有效邮箱服务；缺失或无法识别时返回 null。
  */
 const readStoredMailProvider = (value: unknown): MailProvider | null => {
-  if (value === "2925" || value === "163") {
-    return value
-  }
-
-  return null
+  return isMailProvider(value) ? value : null
 }
 
 /**
@@ -456,23 +459,24 @@ export const getManagedAccountProviderLabel = (
   account: Pick<ManagedAccount, "mailProvider" | "emailGenerator">,
   options: { showEmailGenerator?: boolean } = {}
 ) => {
+  const providerDefinition = getMailProviderDefinition(account.mailProvider)
   if (account.mailProvider !== "163") {
-    return "2925"
+    return providerDefinition.shortLabel
   }
 
   if (options.showEmailGenerator === false) {
-    return "163"
+    return providerDefinition.shortLabel
   }
 
   if (account.emailGenerator === "duckduckgo") {
-    return "163 + DDG"
+    return `${providerDefinition.shortLabel} + DDG`
   }
 
   if (account.emailGenerator === "custom") {
-    return "163 + 自定义邮箱"
+    return `${providerDefinition.shortLabel} + 自定义邮箱`
   }
 
-  return "163 + 缺少邮箱生成"
+  return `${providerDefinition.shortLabel} + 缺少邮箱生成`
 }
 
 /**

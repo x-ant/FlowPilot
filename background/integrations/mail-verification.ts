@@ -18,6 +18,10 @@ export type FetchVerificationCodeOptions = {
   excludeCodes?: string[]
 }
 
+const assertUnsupportedMailProvider = (mailProvider: never): never => {
+  throw new Error(`不支持的邮箱服务：${String(mailProvider)}`)
+}
+
 /**
  * 创建统一邮箱验证码读取 runner。
  *
@@ -52,18 +56,21 @@ export const createMailVerificationRunner = (context: RunContext = {}) => {
       }
     }
 
-    if (account.mailProvider === "163") {
-      return fetchMail163VerificationCode({
-        targetEmail,
-        verificationRequestedAt: options.verificationRequestedAt,
-        excludeCodes: options.excludeCodes
-      })
+    switch (account.mailProvider) {
+      case "2925":
+        return fetchMail2925VerificationCode(
+          account.mailboxEmail || targetEmail,
+          options
+        )
+      case "163":
+        return fetchMail163VerificationCode({
+          targetEmail,
+          verificationRequestedAt: options.verificationRequestedAt,
+          excludeCodes: options.excludeCodes
+        })
+      default:
+        return assertUnsupportedMailProvider(account.mailProvider)
     }
-
-    return fetchMail2925VerificationCode(account.mailboxEmail || targetEmail, {
-      verificationRequestedAt: options.verificationRequestedAt,
-      excludeCodes: options.excludeCodes
-    })
   }
 
   return {
