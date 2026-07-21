@@ -1,26 +1,6 @@
-﻿import {
-  Button,
-  Card,
-  Collapse,
-  ConfigProvider,
-  Empty,
-  Segmented,
-  Space,
-  Switch,
-  Tabs,
-  Tag,
-  theme,
-  Typography
-} from "antd"
+﻿import { Collapse, ConfigProvider, Space, Switch, Tabs, Tag, theme } from "antd"
 import zhCN from "antd/locale/zh_CN"
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import "antd/dist/reset.css"
 import "./sidepanel.css"
@@ -34,11 +14,9 @@ import {
 import {
   createUiLogger,
   getTimeLabel,
-  LOG_LEVEL_META,
   mergeLogLists,
   normalizeLogHighlights,
   normalizeStoredLogs,
-  splitLogMessageSegments,
   type LogItem
 } from "./shared/logging"
 import {
@@ -46,32 +24,13 @@ import {
   EXECUTION_LOG_STORAGE_KEY,
   RUNTIME_SETTINGS_STORAGE_KEY
 } from "./shared/storage-keys"
+import { LogPanel } from "./sidepanel/components/LogPanel"
 import {
   CodexLoginPage,
   CodexRegisterPage,
   FLOW_PAGE_ITEMS,
   type FlowPage
 } from "./sidepanel/pages"
-
-type LogLevelFilter = "all" | "warn-error" | "error"
-
-const LOG_LEVEL_FILTER_OPTIONS: Array<{
-  label: string
-  value: LogLevelFilter
-}> = [
-  {
-    label: "全部",
-    value: "all"
-  },
-  {
-    label: "WARN+ERROR",
-    value: "warn-error"
-  },
-  {
-    label: "ERROR",
-    value: "error"
-  }
-]
 
 /**
  * Chrome 扩展侧边栏入口。
@@ -85,19 +44,11 @@ function SidePanel() {
   const [activePage, setActivePage] = useState<FlowPage>("flowpilot-login")
   const [status, setStatus] = useState("准备就绪")
   const [logs, setLogs] = useState<LogItem[]>([])
-  const [logLevelFilter, setLogLevelFilter] = useState<LogLevelFilter>("all")
   const [logsLoaded, setLogsLoaded] = useState(false)
   const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>(
     DEFAULT_RUNTIME_SETTINGS
   )
   const [busy, setBusy] = useState(false)
-  const [isLogAtBottom, setIsLogAtBottom] = useState(true)
-  const logListRef = useRef<HTMLDivElement | null>(null)
-  const isLogAtBottomRef = useRef(true)
-  const shouldFollowLogsRef = useRef(true)
-  const isAutoScrollingLogsRef = useRef(false)
-  const logScrollIntentRef = useRef(false)
-  const logScrollIntentTimerRef = useRef<number | null>(null)
   const logWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   /**
@@ -203,59 +154,6 @@ function SidePanel() {
       log[level](`${prefix} ${message}`, options)
     })
   }, [activePage, log])
-  const visibleLogs = useMemo(() => {
-    if (logLevelFilter === "error") {
-      return logs.filter((item) => item.level === "error")
-    }
-
-    if (logLevelFilter === "warn-error") {
-      return logs.filter(
-        (item) => item.level === "warn" || item.level === "error"
-      )
-    }
-
-    return logs
-  }, [logLevelFilter, logs])
-
-  /**
-   * 同步日志是否停在底部的 React 状态。
-   *
-   * 日志追加时会频繁触发滚动检查；只有值真正变化时才 setState，
-   * 避免 useLayoutEffect 和滚动事件在日志写入时形成嵌套更新。
-   *
-   * @param nextValue 日志区域是否已经滚动到底部。
-   */
-  const setLogAtBottomSafely = useCallback((nextValue: boolean) => {
-    if (isLogAtBottomRef.current === nextValue) {
-      return
-    }
-
-    isLogAtBottomRef.current = nextValue
-    setIsLogAtBottom(nextValue)
-  }, [])
-
-  useLayoutEffect(() => {
-    const element = logListRef.current
-    if (!element || !shouldFollowLogsRef.current) {
-      return
-    }
-
-    isAutoScrollingLogsRef.current = true
-    element.scrollTop = element.scrollHeight
-    setLogAtBottomSafely(true)
-    window.setTimeout(() => {
-      isAutoScrollingLogsRef.current = false
-    }, 0)
-  }, [visibleLogs, setLogAtBottomSafely])
-
-  useEffect(() => {
-    return () => {
-      if (logScrollIntentTimerRef.current) {
-        window.clearTimeout(logScrollIntentTimerRef.current)
-      }
-    }
-  }, [])
-
   useEffect(() => {
     const storage = getLocalStorage()
     storage?.get(
@@ -340,9 +238,6 @@ function SidePanel() {
    */
   const handleClearLogs = () => {
     setLogs([])
-    shouldFollowLogsRef.current = true
-    logScrollIntentRef.current = false
-    setLogAtBottomSafely(true)
     getLocalStorage()?.set({
       [EXECUTION_LOG_STORAGE_KEY]: []
     })
@@ -364,63 +259,6 @@ function SidePanel() {
       [RUNTIME_SETTINGS_STORAGE_KEY]: nextSettings
     })
     setStatus("运行设置已保存")
-  }
-
-  /**
-   * 记录日志区域是否停在底部。
-   *
-   * 用户向上查看旧日志时暂停自动滚动，避免新日志把视图拉走。
-   */
-  const markLogScrollIntent = () => {
-    logScrollIntentRef.current = true
-    if (logScrollIntentTimerRef.current) {
-      window.clearTimeout(logScrollIntentTimerRef.current)
-    }
-    logScrollIntentTimerRef.current = window.setTimeout(() => {
-      logScrollIntentRef.current = false
-    }, 400)
-  }
-
-  const handleLogScroll = () => {
-    const element = logListRef.current
-    if (!element) {
-      return
-    }
-
-    const isAtBottom =
-      element.scrollHeight - element.scrollTop - element.clientHeight <= 24
-
-    if (isAtBottom) {
-      shouldFollowLogsRef.current = true
-      logScrollIntentRef.current = false
-      setLogAtBottomSafely(true)
-      return
-    }
-
-    if (isAutoScrollingLogsRef.current || !logScrollIntentRef.current) {
-      return
-    }
-
-    shouldFollowLogsRef.current = false
-    setLogAtBottomSafely(isAtBottom)
-  }
-
-  /**
-   * 手动把日志区域滚动到底部，并恢复自动跟随新日志。
-   */
-  const handleScrollLogsToBottom = () => {
-    const element = logListRef.current
-    if (!element) {
-      return
-    }
-    isAutoScrollingLogsRef.current = true
-    element.scrollTop = element.scrollHeight
-    shouldFollowLogsRef.current = true
-    logScrollIntentRef.current = false
-    setLogAtBottomSafely(true)
-    window.setTimeout(() => {
-      isAutoScrollingLogsRef.current = false
-    }, 0)
   }
 
   return (
@@ -495,85 +333,7 @@ function SidePanel() {
             ]}
           />
 
-          <Card
-            className="panel-card"
-            title="执行日志"
-            extra={
-              <Space size={8}>
-                <Button
-                  size="small"
-                  disabled={visibleLogs.length === 0 || isLogAtBottom}
-                  onClick={handleScrollLogsToBottom}>
-                  滚动到底
-                </Button>
-                <Button size="small" onClick={handleClearLogs}>
-                  清空
-                </Button>
-              </Space>
-            }>
-            <div className="log-toolbar">
-              <span className="debug-label">日志级别</span>
-              <Segmented<LogLevelFilter>
-                size="small"
-                options={LOG_LEVEL_FILTER_OPTIONS}
-                value={logLevelFilter}
-                onChange={setLogLevelFilter}
-              />
-            </div>
-            {visibleLogs.length > 0 ? (
-              <div
-                className="log-list"
-                ref={logListRef}
-                onMouseDown={markLogScrollIntent}
-                onTouchStart={markLogScrollIntent}
-                onWheel={markLogScrollIntent}
-                onScroll={handleLogScroll}>
-                {visibleLogs.map((logItem) => {
-                  const levelMeta = LOG_LEVEL_META[logItem.level]
-                  return (
-                    <div className="log-row" key={logItem.id}>
-                      <span className="log-time">{logItem.time}</span>
-                      <span className="log-content">
-                        <Tag
-                          className="log-level-tag"
-                          color={levelMeta.color}
-                          variant="filled">
-                          {levelMeta.label}
-                        </Tag>
-                        <span className="log-message">
-                          {splitLogMessageSegments(
-                            logItem.message,
-                            logItem.highlights
-                          ).map((segment, index) => {
-                            if (!segment.highlight) {
-                              return segment.text
-                            }
-
-                            return (
-                              <span
-                                className="log-message-highlight"
-                                key={`${index}-${segment.text}`}>
-                                {segment.text}
-                              </span>
-                            )
-                          })}
-                        </span>
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={
-                  <Typography.Text type="secondary">
-                    {logs.length > 0 ? "当前级别没有日志" : "暂无日志"}
-                  </Typography.Text>
-                }
-              />
-            )}
-          </Card>
+          <LogPanel logs={logs} onClear={handleClearLogs} />
 
           <Space size={8} wrap>
             <Tag>本地保存</Tag>

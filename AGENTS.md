@@ -133,6 +133,7 @@ AI 在动代码前先快速过一遍：
 - `sidepanel/register-debug/register-debug-steps.ts`：注册调试步骤顺序和按钮启用规则。
 - `sidepanel/login-debug/LoginDebugPanel.tsx`：登录调试账号、Auth tab、下一步和六步按钮的受控展示组件。
 - `sidepanel/components/DebugTabControl.tsx`：调试区域里复用的 tab 控制组件。
+- `sidepanel/components/LogPanel.tsx`：受控执行日志面板，负责级别筛选、日志渲染和滚动交互；日志数据及持久化仍由 `sidepanel.tsx` 管理。
 - `sidepanel/pages/CodexLoginPage.tsx`：登录页 UI、批量入口与状态，以及登录调试步骤。
 - `sidepanel/pages/CodexRegisterPage.tsx`：注册页 UI、注册调试步骤、自动触发配置入口和停止策略入口。
 - `sidepanel/oauth-config/`：CPA 与 Sub2API 共用的 OAuth 接入配置表单。
