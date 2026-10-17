@@ -109,8 +109,8 @@ export function OAuthConfigPanel({
                   style={{ width: "100%" }}
                   value={settings.source}
                   options={[
-                    { label: "CPA", value: "cpa" },
-                    { label: "Sub2API", value: "sub2api" }
+                    { label: "Sub2API", value: "sub2api" },
+                    { label: "CPA", value: "cpa" }
                   ]}
                   onChange={(source) => {
                     patchSettings({

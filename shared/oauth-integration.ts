@@ -67,7 +67,7 @@ export const normalizeOAuthTargetSettings = (
       : DEFAULT_SUB2API_CONFIG
 
   return {
-    source: source.source === "sub2api" ? "sub2api" : "cpa",
+    source: source.source === "cpa" ? "cpa" : "sub2api",
     sub2api: {
       url: String(sub2api.url || "").trim(),
       email: String(sub2api.email || "").trim(),

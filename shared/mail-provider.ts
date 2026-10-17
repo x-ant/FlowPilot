@@ -1,4 +1,4 @@
-export const MAIL_PROVIDER_KEYS = ["2925", "163"] as const
+export const MAIL_PROVIDER_KEYS = ["163", "2925"] as const
 
 export type MailProvider = (typeof MAIL_PROVIDER_KEYS)[number]
 
@@ -16,7 +16,7 @@ export type MailProviderDefinition = {
  */
 export const MAIL_PROVIDER_DEFINITIONS = {
   "2925": {
-    label: "2925 邮箱",
+    label: "2925 邮箱 (已被限制)",
     shortLabel: "2925",
     loginUrl: "https://2925.com/#/mailList"
   },

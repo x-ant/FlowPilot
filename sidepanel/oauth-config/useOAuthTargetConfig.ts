@@ -16,7 +16,7 @@ import {
  */
 export const useOAuthTargetConfig = (scope: "login" | "register") => {
   const [settings, setSettings] = useState<OAuthTargetSettings>({
-    source: "cpa",
+    source: "sub2api",
     sub2api: DEFAULT_SUB2API_CONFIG
   })
 

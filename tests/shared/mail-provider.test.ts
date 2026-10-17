@@ -9,8 +9,8 @@ import {
 describe("mail provider definitions", () => {
   it("为前端提供统一的邮箱选项和登录能力", () => {
     expect(MAIL_PROVIDER_OPTIONS).toEqual([
-      { label: "2925 邮箱", value: "2925" },
-      { label: "163 邮箱", value: "163" }
+      { label: "163 邮箱", value: "163" },
+      { label: "2925 邮箱 (已被限制)", value: "2925" }
     ])
     expect(getMailProviderDefinition("2925")).toMatchObject({
       loginUrl: "https://2925.com/#/mailList"
