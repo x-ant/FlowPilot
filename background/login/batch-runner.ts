@@ -1,5 +1,6 @@
 import {
   getFlowStepLabel,
+  buildAccountInvalidLastMessage,
   getManagedAccountDisplayLabel,
   getManagedAccountKey,
   isManagedAccountDone,
@@ -102,6 +103,7 @@ export const runManagedLoginFlow = async (
   if (!step2Result.ok) {
     return {
       ok: false,
+      accountInvalid: step2Result.accountInvalid,
       message: step2Result.message || "步骤 2 执行失败"
     }
   }
@@ -116,6 +118,7 @@ export const runManagedLoginFlow = async (
   if (!step3Result.ok) {
     return {
       ok: false,
+      accountInvalid: step3Result.accountInvalid,
       message: step3Result.message || "步骤 3 执行失败"
     }
   }
@@ -132,6 +135,7 @@ export const runManagedLoginFlow = async (
   if (!step4Result.ok) {
     return {
       ok: false,
+      accountInvalid: step4Result.accountInvalid,
       message: step4Result.message || "步骤 4 执行失败"
     }
   }
@@ -321,6 +325,17 @@ export const runLoginBatch = async ({
     }
 
     const currentState = workingAccounts[index]
+    if (runResult.accountInvalid) {
+      updateCurrentAccount({
+        progress: currentState.progress,
+        status: "invalid",
+        lastMessage: buildAccountInvalidLastMessage(runResult.message)
+      })
+      onStatus?.(`账号 ${currentAccountLabel} 已失效`)
+      onLog?.("warn", `[${currentAccountLabel}] ${runResult.message}`)
+      continue
+    }
+
     updateCurrentAccount({
       progress: currentState.progress,
       status: "failed",

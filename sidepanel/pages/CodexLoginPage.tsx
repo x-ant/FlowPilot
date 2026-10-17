@@ -15,6 +15,7 @@ import {
 } from "../../background/login/steps"
 import { sendRuntimeMessage } from "../../platform/chrome/runtime-messaging"
 import {
+  buildAccountInvalidLastMessage,
   getFlowStepLabel,
   getFlowStepName,
   getManagedAccountDisplayLabel,
@@ -332,10 +333,16 @@ export function CodexLoginPage({ log, setStatus, onBusyChange }: PageProps) {
         if (!result.ok) {
           patchAccountState(accountKey, {
             progress: Math.max(debugProgress, 3) as ManagedAccount["progress"],
-            status: "failed",
-            lastMessage: result.message || `${getFlowStepName(4)}失败`
+            status: result.accountInvalid ? "invalid" : "failed",
+            lastMessage: result.accountInvalid
+              ? buildAccountInvalidLastMessage(result.message)
+              : result.message || `${getFlowStepName(4)}失败`
           })
-          setStatus(`${getFlowStepName(4)}失败`)
+          setStatus(
+            result.accountInvalid
+              ? "账号已失效"
+              : `${getFlowStepName(4)}失败`
+          )
           log.warn(
             `[调试][${accountLabel}] ${result.message || `${getFlowStepName(4)}失败`}`
           )

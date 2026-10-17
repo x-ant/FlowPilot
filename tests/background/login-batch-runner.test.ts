@@ -125,6 +125,32 @@ describe("login batch runner", () => {
     expect(runner.fetchAndSubmitCodexVerificationCode).not.toHaveBeenCalled()
   })
 
+  it("验证码页确认账号不可用时标记账号失效", async () => {
+    const account = createAccount("deactivated")
+    const runner = createRunner({
+      fetchAndSubmitCodexVerificationCode: vi.fn(async () => ({
+        ok: false,
+        accountInvalid: true,
+        message:
+          "已填写邮箱验证码并继续；OpenAI 提示账号已被删除、停用或不可用，错误代码：account_deactivated"
+      }))
+    })
+
+    const result = await runLoginBatch({
+      integration,
+      accounts: [account],
+      selectedAccountIds: [account.id],
+      mode: "pending",
+      runner
+    })
+
+    expect(result.accounts[0]).toMatchObject({
+      status: "invalid",
+      progress: 3,
+      lastMessage: "错误代码：account_deactivated"
+    })
+  })
+
   it("待执行模式排除完成账号，全部模式保留完成账号", () => {
     const pending = createAccount("pending", { status: "failed", progress: 3 })
     const done = createAccount("done", { status: "done", progress: 6 })

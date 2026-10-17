@@ -354,7 +354,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         timeoutMs: 45000,
         intervalMs: 500,
         timeoutMessage: "45 秒内未确认验证码提交后的页面状态",
-        stopStates: ["extra_verification"]
+        stopStates: ["extra_verification", "account_unavailable"]
       }
     )
   }
@@ -578,7 +578,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         timeoutMs: 60000,
         intervalMs: 500,
         timeoutMessage: "60 秒内未进入密码页、邮箱验证码页或 OAuth 授权确认页",
-        stopStates: ["extra_verification"]
+        stopStates: ["extra_verification", "account_unavailable"]
       }
     )
 
@@ -590,6 +590,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         url: authStepState.url
       },
       authState: authStepState.state,
+      accountInvalid: authStepState.state === "account_unavailable",
       verificationRequestedAt:
         authStepState.state === "verification_pending"
           ? verificationRequestedAt
@@ -673,6 +674,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
           id: tabId,
           url: currentState.url
         },
+        accountInvalid: currentState.state === "account_unavailable",
         authState: currentState.state
       }
     }
@@ -696,7 +698,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         timeoutMs: 60000,
         intervalMs: 500,
         timeoutMessage: "60 秒内未进入邮箱验证码页或 OAuth 授权确认页",
-        stopStates: ["extra_verification"]
+        stopStates: ["extra_verification", "account_unavailable"]
       }
     )
 
@@ -708,6 +710,7 @@ export const createCodexLoginRunner = (context: RunContext = {}) => {
         url: verificationState.url
       },
       authState: verificationState.state,
+      accountInvalid: verificationState.state === "account_unavailable",
       verificationRequestedAt:
         verificationState.state === "verification_pending"
           ? verificationRequestedAt

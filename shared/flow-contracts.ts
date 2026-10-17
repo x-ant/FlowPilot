@@ -38,6 +38,7 @@ export type CodexAuthFlowState =
 
 /** 登录步骤 2/3 的响应，包含当前认证流状态。 */
 export type CodexAuthProgressStepResponse = CodexLoginStepResponseBase & {
+  accountInvalid?: boolean
   authState?: CodexAuthFlowState
   verificationRequestedAt?: number
   skipped?: boolean
